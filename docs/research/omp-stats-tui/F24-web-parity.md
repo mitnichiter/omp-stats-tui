@@ -37,7 +37,7 @@ two answers differ, that is a fact rather than an opinion.
 |---|---|---|---|---|---|---|
 | 1 | Costs · API-equivalent estimate | `view-models.ts:179` `totalCost += point.cost` | `resolve.ts` `sum` over `costSeries.cost` | **yes** | `parity.test.ts` "the estimate is the SUM" | fixed before audit; pinned |
 | 2 | Costs · Unpriced requests | `view-models.ts:201` `unpricedRequests += point.unpricedRequests` | `sum` over `costSeries.unpricedRequests` | **yes** | "unpriced requests are counted" | pinned |
-| 3 | Costs · **Average per day** | `view-models.ts:183` `totalCost / activeDays`, where `activeDays = new Set(timestamps).size` (`:148`) | was `op:"max"` → **max bucket cost** | **NO → FIXED** | fixture: web `28.833`, ours was `42`; test asserts ours ≠ `max(costSeries)`, which is `42` | `445c934` |
+| 3 | Costs · **Average per day** | `view-models.ts:183` `totalCost / activeDays`, where `activeDays = new Set(timestamps).size` (`:148`) | was `op:"max"` → **max bucket cost** | **res. `e380121`: TILE wrong, REF right** | fixture: web `28.833`, ours was `42`; exact `toBe` + denominator test, watched failing | `445c934` → `e380121` |
 | 4 | Costs · **Top model** | `view-models.ts:184-189` `models[0]` after sort by cost desc, `null` when `cost === 0` | was `label costSeries.model` → **row 0's model** | **NO → FIXED** | fixture's first row is `probe-cheap` (cheapest); web `gpt-5.6-terra`, ours `probe-cheap` | `445c934` |
 | 5 | Costs · **Per priced request** | `CostsRoute.tsx:242,270` `totalCost / (requests − unpricedRequests)` | was `share(totalCost, requests)` → **divided by all requests** | **NO → FIXED** | fixture: web `0.036840`, ours was `0.034879`; test asserts ours ≠ `totalCost/requests` | `445c934` |
 | 6 | Costs · Daily estimate (bucketing) | `CostsRoute.tsx:201-205` `bucketAxis(range, ts, DAY_MS)` — **DAY for every range** | `screen.ts:98` `COST_BUCKET_MS`, `bucketedValues` | **yes** | both import the host's `bucketAxis`; day-bucketed for every range | pinned |
@@ -125,9 +125,32 @@ implementation of a formula we do not own**, and it would rot without ever
 failing. Delegation means an upstream definition change arrives on the next
 dependency bump instead of drifting silently.
 
-`test/parity.test.ts` imports **both** sides and asserts equality, so "we call the
-host's function" is a checked fact, not a claim. Zero React involved — `client/data/`
-imports cleanly.
+### Verdict on "Average per day": the TILE was wrong, the REF is right
+
+The last open divergence on this figure was a `Max`/`avgDailyCost` split-brain in
+`resolve.ts` that read "average per day" but computed a peak, and an IR tile that
+pointed `against: dirtyHours` — the count of not-yet-rolled-up hours
+(`src/data/api.ts:80-83`).
+
+Decided and closed in this commit (`e380121`):
+
+- **The web computes** `totalCost / activeDays` where `activeDays = new
+  Set(costSeries.map(p => p.timestamp)).size` — days that CARRIED usage, not days
+  in span (`view-models.ts:148, 183`).
+- **The `against: dirtyHours` tile was the wrong one.** Rollup freshness is an
+  orthogonal data-quality fact; the dashboard computes the mean WITHOUT
+  consulting it. A dirty-hour count as a divisor says "average per pending
+  hour", which no line of the web computes. It went away with the bogus
+  `op: "max"` in `445c934`; live grep confirms no `against` remains on the tile
+  and no tile anywhere uses `op: "max"` on money.
+- **The ref is right.** The tile now names `avgDailyCost` and the resolver
+  delegates to `buildCostSummary(...).avgDailyCost` — the host's own function on
+  the payload's own rows, not a re-derived formula.
+- **Pinned by exact equality.** `parity.test.ts` now asserts `toBe` (not
+  `toBeCloseTo`) against `buildCostSummary(COST_SERIES).avgDailyCost`, plus a
+  denominator test that the divisor is `new Set(timestamps).size` and not span
+  days. Both were watched failing by swapping the resolver to return
+  `totalCost`; a looser tolerance would have hidden drift.
 
 ### The fixture is adversarial on purpose
 
