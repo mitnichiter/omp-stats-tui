@@ -324,6 +324,10 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): number
 			return sumOverRows(baseOf(ref.of), data, row);
 		case "count": {
 			const rows = row !== undefined ? [row] : rowsFor(base.source, data);
+			// Same rule as `sum`: a count over a source nobody FETCHED is ABSENT.
+			// "Models used 0" is a claim about the database, and the database was
+			// never asked.
+			if (rows.length === 0 && row === undefined && !isFetched(base.source, data)) return null;
 			if (base.kind === "label" && row === undefined) {
 				// "Distinct tools" / "affected models" counts DISTINCT values, not
 				// rows: a payload with two rows per tool has three tools.
@@ -346,10 +350,14 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): number
 			return denominator === 0 ? 0 : numerator / denominator;
 		}
 		case "max": {
-			const base2 = baseOf(ref.of);
-			if (base2.kind !== "series") return resolveNumber(ref.of, data, row);
-			const values = seriesValues(base2, data, row);
-			return values.length === 0 ? 0 : Math.max(...values);
+			// Same rule as `sum` and `count`: a maximum over a source nobody
+			// FETCHED is ABSENT. A peak of $0 across a database that was never
+			// queried is a claim, not a measurement.
+			const peak = baseOf(ref.of);
+			if (peak.kind !== "series") return resolveNumber(ref.of, data, row);
+			const values = seriesValues(peak, data, row);
+			if (values.length === 0) return isFetched(peak.source, data) ? 0 : null;
+			return Math.max(...values);
 		}
 	}
 }
@@ -358,8 +366,14 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): number
  * One field, added up over every row of its source (or over `row` alone when
  * the caller is inside a table and means that row's own figure).
  */
-function sumOverRows(base: BaseRef, data: PanelData, row?: DataRow): number {
+function sumOverRows(base: BaseRef, data: PanelData, row?: DataRow): number | null {
 	const rows = row !== undefined ? [row] : rowsFor(base.source, data);
+	// A sum over NO ROWS is ABSENT, not zero — unless the source was genuinely
+	// fetched and came back empty, which is a measured zero. The difference is
+	// the whole silent-empty trap: a dashboard that prints "$0" for a query
+	// nobody issued is claiming a free month, and only `isFetched` can tell the
+	// two apart. `count` is the op that legitimately answers zero.
+	if (rows.length === 0 && !isFetched(base.source, data)) return null;
 	let total = 0;
 	for (const candidate of rows) {
 		const value = asNumber(readPath(candidate, base.field));

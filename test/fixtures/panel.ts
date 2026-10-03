@@ -58,7 +58,11 @@ export const AGGREGATE: AggregatedStats = {
 	cacheRate: 0.9624,
 	cacheSavings: 0.8142,
 	totalCost: 112.36,
-	unpricedRequests: 4_359,
+	// The SAME population `BY_MODEL` carries, so a screen that totals the model
+	// rows and a screen that reads the overall aggregate cannot disagree. The
+	// live database splits this across two no-card models; here it is one, and
+	// the figure is what that one model carries.
+	unpricedRequests: 4_197,
 	totalPremiumRequests: 1.5,
 	avgDuration: 12_300,
 	avgTtft: 430,
@@ -221,7 +225,7 @@ export const FOLDERS: readonly FolderStats[] = [
 		folder: "scratch",
 		totalRequests: 16_000,
 		totalCost: 7,
-		unpricedRequests: 4_359,
+		unpricedRequests: 4_197,
 		lastTimestamp: FIXTURE_NOW - 30 * HOUR,
 	},
 ];
@@ -459,13 +463,29 @@ export function liveData(over: Partial<PanelData> = {}): PanelData {
 }
 
 /**
- * An EMPTY payload — every need answered, every array empty, every aggregate
- * absent. This is the silent-empty trap (CONTEXT.md): a database that was never
- * initialised answers every read this way. A screen must render a DEFINED empty
- * state here, never a crash and never a `$0.00` that reads as "free".
+ * NOTHING WAS FETCHED — every need absent from the record entirely.
+ *
+ * This is the silent-empty trap at its worst (CONTEXT.md): a database that was
+ * never initialised answers every read this way, and `fetchRollupStatus` is the
+ * one read that refuses instead of degrading. A screen must render a DEFINED
+ * empty state here, never a crash and never a figure it did not measure — the
+ * distinction `isFetched` exists to preserve.
  */
 export function emptyData(): PanelData {
+	return {};
+}
+
+/**
+ * EVERY NEED WAS FETCHED and every payload came back empty.
+ *
+ * The other half of the same trap, and the one that is genuinely "nothing
+ * happened in this window": the queries ran, the rollup was fresh, and there
+ * was no usage. A count of `0` here is a MEASURED zero and may be printed; a
+ * cost of `0` may not be printed as free spend without its unpriced caveat.
+ */
+export function blankData(): PanelData {
 	return {
+		overview: { byAgentType: [], timeSeries: [] } as unknown as PanelData["overview"],
 		modelDashboard: { byModel: [], modelSeries: [], modelPerformanceSeries: [] },
 		costs: { costSeries: [] },
 		folders: [],
