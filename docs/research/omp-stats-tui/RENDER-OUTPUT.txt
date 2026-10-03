@@ -324,3 +324,181 @@ F           · · · · · · · · · · · · · · ░[39m ▓[39m · · �
 20 rows
 
 fetched 3 route(s) in 98ms for activity
+
+
+==============================================================================
+7) $ bun scripts/probe-render.ts models --width 100
+==============================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+models  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+⬢  Models
+────────────────────────────────────────────────────────────
+
+💲 Cost by model (24h)
+────────────────────────────────────────────────────────────
+space-bunny-free                █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ $0 · 4,188 req
+muse-spark-1.3-contributor-free █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    $0 · 88 req
+~typesafe/jev-latest            █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     $0 · 2 req
+  ranked by cost — a token-scaled chart inverts this order at this price spread
+  N/A means the spend could not be measured; $0 is a real price
+
+🛰  Cost by provider
+────────────────────────────────────────────────────────────
+opencode-go  █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ $0 · 4,188 req
+opencode-zen █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    $0 · 88 req
+openrouter   █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     $0 · 2 req
+  the same model behind two providers can cost two orders of magnitude apart
+
+⬢  Detail — top 3 by cost
+────────────────────────────────────────────────────────────
+  space-bunny-free · opencode-go
+  cost        $0
+  requests    4,188 · 4 failed · 0.10%
+  tokens      fresh 47M · cache-read 562M · cache-write 0
+  avg         12.2s
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  flat at $0/day
+
+  muse-spark-1.3-contributor-free · opencode-zen
+  cost        $0
+  requests    88 · 88 failed · 100.00%
+  tokens      fresh 0 · cache-read 0 · cache-write 0
+  avg         1.2s
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  flat at $0/day
+
+  ~typesafe/jev-latest · openrouter
+  cost        $0
+  requests    2 · 2 failed · 100.00%
+  tokens      fresh 0 · cache-read 0 · cache-write 0
+  avg         -
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁  flat at $0/day
+  trend is an estimate: daily requests x this model's measured average cost per request
+  cache-write is outside the cache rate and is billed separately
+────────────────────────────────────────────────────────────────────────────────────────────────────
+42 rows
+
+fetched 2 route(s) in 30ms for models
+
+==============================================================================
+8) $ bun scripts/probe-render.ts models --width 140 --range 30d
+==============================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+models  width=140  range=30d  preset=unicode  inner=136
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+⬢  Models
+────────────────────────────────────────────────────────────
+
+💲 Cost by model (30d)
+────────────────────────────────────────────────────────────
+gemini-3.8-flash                      ██████████████████████████████████████████████████████████████████████████████████          $90.73
+muse-spark-1.3-contributor            ██████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░          $15.04
+deepseek/deepseek-v4.1-flash          ███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░           $3.47
+meta/muse-spark-1.3-contributor       ███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░           $2.92
+cline-free/muse-spark-1.3-contributor █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░           $0.19
+space-bunny-free                      █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ $0 · 36,616 req
+muse-spark-1.3-contributor-free       █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  $0 · 7,315 req
+longcat-2.5-preview-free              █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    $0 · 210 req
+  + 2 more at $0, none of them spend money
+  ranked by cost — a token-scaled chart inverts this order at this price spread
+  N/A means the spend could not be measured; $0 is a real price
+
+🛰  Cost by provider
+────────────────────────────────────────────────────────────
+google-antigravity █████████████████████████████████████████████████████████████████████████████████████████████████  $90.73 · 3,799 req
+agnes              █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   N/A · 50 unpriced
+opencode-go        ████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ $15.04 · 49,457 req
+openrouter         ███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   $6.39 · 5,055 req
+cline-pass         █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░      $0.19 · 39 req
+opencode-zen       █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░      $0 · 7,315 req
+  the same model behind two providers can cost two orders of magnitude apart
+
+⬢  Detail — top 3 by cost
+────────────────────────────────────────────────────────────
+  gemini-3.8-flash · google-antigravity
+  cost        $90.73
+  requests    3,799 · 30 failed · 0.79%
+  tokens      fresh 47M · cache-read 630M · cache-write 0
+  avg         4.3s
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▂▂█▁▄▁▁▁▁▁▃  est. $42.06/day
+
+  muse-spark-1.3-contributor · opencode-go
+  cost        $15.04
+  requests    12,631 · 31 failed · 0.25%
+  tokens      fresh 93M · cache-read 2B · cache-write 0
+  avg         9.7s
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▂▁▂▂█▁▄▁▁▁▁▁▁  est. $6.77/day
+
+  deepseek/deepseek-v4.1-flash · openrouter
+  cost        $3.47
+  requests    1,573 · 10 failed · 0.64%
+  tokens      fresh 6.5M · cache-read 317M · cache-write 0
+  avg         6.3s
+  trend       ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▁  est. $3.42/day
+  trend is an estimate: daily requests x this model's measured average cost per request
+  cache-write is outside the cache rate and is billed separately
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+51 rows
+
+fetched 2 route(s) in 31ms for models
+
+   WHAT IS NEW HERE (Task 15 — the models screen)
+
+   Section 6 above is the Task 10 scaffold: sample rows and a marker. These two
+   are REAL. Every figure is read from ~/.omp/stats.db; no placeholder row is
+   printed anywhere on this screen.
+
+   (a) THE 41x RULE, VISIBLE. At 30d the ranking is strictly by cost, and the
+   two most-used models are the two smallest bars. Measured fill cells at
+   width 140:
+       google-antigravity  97 filled   $90.73 · 3,799 req
+       opencode-go         16 filled   $15.04 · 49,362 req
+       openrouter           7 filled   $6.39 · 5,055 req
+       agnes                1 filled   N/A · 50 unpriced
+   opencode-go served 49,362 requests against google-antigravity's 3,799 and
+   still draws a bar one sixth as long, because the question is what it COST.
+   A token-scaled chart would put the 49k-request model first, which is the
+   exact inversion the plan warns about.
+
+   (b) THE PROVIDER IS PRINTED ON EVERY ROW. gemini-3.8-flash, muse-spark and
+   deepseek-v4.1-flash are served by google-antigravity, opencode-go,
+   openrouter, agnes and cline-pass. None of that is inferable from a model
+   name, and the provider ranking is where the widest price spread lives.
+
+   (c) THE UNPRICED PROVIDER READS N/A, NEVER $0.00. agnes carries 50 requests
+   whose spend could not be measured. Its bar is the one-cell floor — visible,
+   not absent — and its readout is 'N/A · 50 unpriced'. Compare cline-pass at
+   $0.19, which draws the same one-cell bar and reads '$0.19': the bar alone cannot
+   tell them apart, and the readout can. That is the whole reason the readout
+   exists next to the bar.
+
+   (d) TOKENS ARE NEVER SUMMED. Every detail block prints fresh / cache-read /
+   cache-write separately. gemini-3.8-flash reads 47M fresh against 630M
+   cache-read — a single combined total would be a number describing nothing.
+
+   (e) THE TREND IS AN ESTIMATE AND SAYS SO. /api/stats/model-dashboard returns
+   per-model REQUEST counts only; the per-model COST series (CostTimeSeriesPoint)
+   lives behind /api/stats/costs, which this screen does not declare because
+   `needs` is owned by the registry in types.ts. So each trend is
+   `daily requests x this model's measured average cost per request`, printed with an
+   `est.` prefix and footnoted on the screen itself. A model whose spend grew
+   because it served more requests draws a different shape than one whose price
+   per request rose, and only a reader who knows it is an estimate can read that
+   difference. When the average cannot be formed — no requests, or $0 with
+   unpriced requests outstanding — the trend is OMITTED rather than guessed.
+
+   (f) ALL-ZERO TRENDS SIT ON THE BASELINE, NOT AT FULL SCALE. At 24h every
+   model has a real all-zero price card, so every cost is genuinely flat at
+   zero. Each prints a run of '▁' plus 'flat at $0/day' — rule 2 of renderSparkline. Dividing by
+   a guard value of 1 would have painted every one of those as a FULL bar,
+   which is the failure mode that guard exists to prevent.
+
+   (g) THE 24h CAPTURE SHOWS NO BARS WORTH THE NAME, AND SAYS WHY. At 24h the
+   top model costs $0 across 4,068 requests, so the ranking is decided by
+   request count rather than money, and the bars are all one cell. That is
+   the truthful reading of a free-tier day, not a broken chart: the "$0" is a
+   real price from a zero-price catalog card, which is why it prints "$0 ·
+   4,068 req" rather than a bare "$0".
