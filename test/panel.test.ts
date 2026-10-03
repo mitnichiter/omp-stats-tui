@@ -242,27 +242,29 @@ test("tab switches screens everywhere — the fallthrough rule is closed as cont
 });
 
 /**
- * No one-step composed capture of the full panel — tabs + body + footer — exists
- * anywhere, which is how the original complaint went unverified: section 9 of
- * RENDER-OUTPUT.txt is per-screen renders, and unit tests look at one component
- * at a time. These two tests build the REAL panel on a live-shaped fixture and
- * assert the composition end to end: the tab strip is present, exactly one
- * divider separates body from footer, the footer shows the real hints, and NO row
- * exceeds the width.
+ * No one-step composed capture of the full panel — chrome + body + footer —
+ * exists anywhere, which is how the original complaint went unverified:
+ * section 9 of RENDER-OUTPUT.txt is per-screen renders, and unit tests look at
+ * one component at a time. These two tests build the REAL panel on a
+ * live-shaped fixture and assert the composition end to end: the web shell's
+ * chrome (topbar + sidebar) is present, exactly one divider separates body
+ * from footer, the footer shows the real hints, and NO row exceeds the width.
  */
-test("the composed frame at width 100: strip, body, divider, footer, all within width", async () => {
+test("the composed frame at width 100: topbar + sidebar, body, divider, footer, all within width", async () => {
 	const width = 100;
 	const panel = __testing.makePanel({ data: dataFor(), range: "30d", rows: 40, now: () => FIXTURE_NOW });
 	await __testing.settled(panel);
 	const plain = panel.render(width).map(stripAnsi);
 
 	expect(plain.length, `the frame must fill the terminal`).toBe(40);
-	// The tab strip: the active screen's full label plus its neighbours.
-	expect(plain[1]).toContain("Overview");
+	// The topbar: brand + range segment (Shell.tsx), and the sidebar column
+	// beside the body carrying the active screen.
+	expect(plain[1]).toContain("omp/stats");
+	expect(plain.some(row => /Overview/.test(row) && /G O/.test(row))).toBe(true);
 	for (const row of plain) {
 		expect(Bun.stringWidth(row), `width=${width} row=${JSON.stringify(row.slice(0, 60))}`).toBeLessThanOrEqual(width);
 	}
-	// Exactly ONE divider: the strip, the dividers panel chrome draws, and
+	// Exactly ONE divider: the topbar, the dividers panel chrome draws, and
 	// section 6's G5/G6 rules all meet here for the first time.
 	expect(plain.filter(row => row.includes("├")).length).toBe(1);
 	// The footer names the keys the panel binds and nothing else.
@@ -271,22 +273,22 @@ test("the composed frame at width 100: strip, body, divider, footer, all within 
 	expect(footer).toContain("screen");
 	expect(footer).toContain("sync");
 	expect(footer).toContain("close");
-	// The title carries the range, and the screen name lives in the STRIP, not the title.
+	// The title carries the range, and the screen name lives in the SIDEBAR, not the title.
 	expect(plain[0]).toContain("30 days");
 	expect(plain[0]).not.toContain("Overview");
 });
 
-test("the composed frame at width 60: the strip collapses to shorts and everything still fits", async () => {
+test("the composed frame at width 60: the sidebar degrades to the icon rail and everything still fits", async () => {
 	const width = 60;
 	const panel = __testing.makePanel({ data: dataFor(), range: "30d", rows: 40, screenId: "costs", now: () => FIXTURE_NOW });
 	await __testing.settled(panel);
 	const plain = panel.render(width).map(stripAnsi);
 
 	expect(plain.length).toBe(40);
-	// Below ~58 columns the strip collapses to one-cell shorts — the active tab
-	// keeps its full label while its neighbours shrink, which is the
-	// collapse-order TabBar implements.
-	expect(plain[1]).toContain("Costs");
+	// Medium width drops the labels (framePolicy: sidebar `icons`), so the
+	// nav costs one column of one-cell glyphs and the body keeps its width.
+	expect(plain[1]).toContain("omp/stats");
+	expect(plain.some(row => row.includes("Costs"))).toBe(false);
 	for (const row of plain) {
 		expect(Bun.stringWidth(row), `width=${width} row=${JSON.stringify(row.slice(0, 60))}`).toBeLessThanOrEqual(width);
 	}
