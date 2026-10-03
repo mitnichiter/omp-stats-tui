@@ -1,48 +1,26 @@
 import { buildHeatmapLayout } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
-import { formatCost, formatInteger } from "../format";
 import type { GlyphSet } from "../glyphs";
 
 /**
- * The calendar heatmap. Monday-first, one cell per day, like `/usage`'s.
+ * The calendar heatmap. Monday-first, one cell per day, exactly like `/usage`'s
+ * own ANSI grid (usage-dashboard.ts:824-872 — not the native chart/table, which
+ * are fallback surfaces for other terminals).
  *
  * A pure render function: data in, lines out. No theme singleton, no database,
- * no I/O.
+ * no I/O. Styling arrives injected (`dim`, `ramp`), because the theme
+ * singleton throws when an extension reads it at module scope.
  *
- * ── What is reused, and what that buys ───────────────────────────────────────
- *
- * The LAYOUT is not reimplemented. `buildHeatmapLayout` from
- * `@oh-my-pi/pi-tui/overlays/usage-dashboard` is exported, host-proven in
- * production by `/usage`, and already implements the four rules that are easy to
- * get subtly wrong:
- *
- *  1. ZERO-FILL — it allocates all 7 × weeks cells and fills each with
- *     `level(point ? metric(point) : 0)`, so a day with no activity becomes level
- *     0 rather than a missing cell. (Crush's SQL emits rows only for days WITH
- *     activity, so quiet days vanish from its axis — misleading for a bar chart,
- *     a broken component for a calendar.)
- *  2. MAX-ANCHORED, discrete — `level()` divides by the grid maximum, not by the
- *     observed min, so a quiet fortnight cannot look identical to a busy one.
- *  3. `max <= 0` returns level 0 before any division, so an all-zero grid cannot
- *     divide by zero.
- *  4. `null` for a FUTURE date — the loop `continue`s past `today0`, leaving the
- *     cell null. Absence is modelled as absence, not as zero.
- *  5. LOCAL dates — `localIso()` keys on `YYYY-MM-DD` in local time, so no UTC
- *     post-processing can drop or duplicate the boundary day.
- *
- * What this module adds is the ANSI emission and the level→glyph/colour mapping,
- * both of which `/usage` keeps in `#private` methods with no export to call.
- *
- * ── The ink is DELIBERATELY UNDECIDED ───────────────────────────────────────
- *
- * `heatCell` is read as a RAMP through `glyph(preset, "heatCell", level)`. The
- * ladder in `src/tui/glyphs.ts` is a table value on purpose: the candidates are
- * `■` plus colour versus the `░▒▓█` shade ramp, and the user settled the choice
- * by LOOKING at them (`bun run scripts/probe-glyphs.ts --heatmap`) rather than by
- * reasoning. Swapping the ladder is therefore a one-line edit to the glyph table
- * and requires no change here — which is exactly why the ramp is not a literal
- * here. F19 argues for `█` full-bleed and against `■` on gutter grounds; that
- * argument is recorded, not acted on unilaterally.
+ * What is reused, and what that buys: the LAYOUT is not reimplemented.
+ * `buildHeatmapLayout` from `@oh-my-pi/pi-tui/overlays/usage-dashboard` is
+ * exported, host-proven in production by `/usage`, and implements the rules
+ * that are easy to get subtly wrong: zero-fill (a quiet day is level 0, not a
+ * missing cell), max-anchored discrete levels (a quiet fortnight cannot look
+ * like a busy one), `max <= 0` short-circuit (no division by zero), `null`
+ * for future dates (absence, not zero), and LOCAL date keys (no UTC boundary
+ * shift). The colour RAMP is not reimplemented either: callers pass the four
+ * stops from `palette.heatRamp`, which ports `#heatRamp`'s own arithmetic.
  */
 
 /** Raw foreground reset. Deliberately not `theme.fg(...)` per cell: that would
@@ -66,6 +44,8 @@ export interface HeatmapOptions {
 	 * with no activity must read as empty, not as the faintest colour.
 	 */
 	ramp: readonly string[];
+	/** Dim styling, injected so this module never reads the theme singleton. */
+	dim: (text: string) => string;
 	/** Injectable so tests are independent of the wall clock. */
 	today?: Date;
 }
@@ -80,14 +60,18 @@ export function weeksForWidth(labelWidth: number, innerWidth: number): number {
 }
 
 /**
- * Render the grid: one month-label row plus seven day rows.
+ * Render the grid: one dimmed month-label row plus seven day rows
+ * (usage-dashboard.ts:824-872, rendered byte for byte: dimmed gutters, dimmed
+ * empty cells, the single ■ at four ramp colours, raw ESC[39m resets,
+ * trimEnd'ed day rows).
  *
- * Cell states, exactly as `/usage` renders them and exactly as the four rules
- * above require:
+ * Cell states:
  *
  *   null  → a future date. Two spaces. ABSENT, not zero.
- *   0     → no activity. `heatEmpty`, dimmed. Present and accounted for.
- *   1..4  → `ramp[cell - 1]` + the level's `heatCell` glyph + FG_RESET.
+ *   0     → no activity. Dimmed `heatEmpty` plus a space. Present and
+ *           accounted for.
+ *   1..4  → `ramp[cell - 1]` + ■ + FG_RESET + space. The glyph is identical
+ *           at every level; the colour alone carries the intensity.
  */
 export function renderHeatmap(
 	points: readonly DailyActivityPoint[],
@@ -96,43 +80,40 @@ export function renderHeatmap(
 	const weeks = Math.max(1, opts.weeks);
 	const layout = buildHeatmapLayout(points as DailyActivityPoint[], weeks, opts.today);
 
-	const labelWidth = Math.max(0, opts.labelWidth);
-	// One glyph plus one space per column. The trailing space is kept on the last
-	// column too so every row is exactly the same width — a heatmap whose rows
-	// differ by a cell reads as a ragged grid, which is precisely what makes
-	// column alignment impossible to verify by eye.
+	// Fixed at 2: the host's own gutter (usage-dashboard.ts:833), one label
+	// cell plus one space. Callers pass it through; anything else is clamped.
+	const labelWidth = 2;
+	// One glyph plus one space per column.
 	const columnWidth = 2;
 
-	// Month labels are three characters wide but a column is only two, so they
-	// are written into a CHARACTER buffer rather than assembled as a string.
-	// Building the string incrementally shifts every later label right by the
-	// overhang of the earlier ones, so the labels drift out of step with the
-	// columns beneath them — the bug this avoids.
-	const gridWidth = labelWidth + weeks * columnWidth;
-	const monthChars = " ".repeat(Math.max(labelWidth, gridWidth)).split("");
-	for (const [week, label] of layout.monthLabels.slice(0, weeks).entries()) {
-		// The host emits `null` for "no label in this column", not `undefined`.
-		if (label == null) continue;
-		const at = labelWidth + week * columnWidth;
-		for (const [offset, char] of [...label].entries()) {
-			if (at + offset < monthChars.length) monthChars[at + offset] = char;
+	// The host's own assembly (usage-dashboard.ts:851-859): start from the
+	// gutter and APPEND each label only when its column starts at or past the
+	// end of the text so far. Overwriting a character buffer instead would
+	// fuse two month names where a short month meets the next label.
+	let monthLine = " ".repeat(labelWidth);
+	for (let week = 0; week < weeks; week++) {
+		const label = layout.monthLabels[week];
+		const targetCol = labelWidth + week * columnWidth;
+		if (label && targetCol >= visibleWidth(monthLine)) {
+			monthLine = monthLine.padEnd(targetCol) + label;
 		}
 	}
-	const monthRow = monthChars.join("").slice(0, gridWidth);
+	const monthRow = opts.dim(truncateToWidth(monthLine, opts.innerWidth));
 
 	const body = layout.cells.map((weekRow, dayIndex) => {
-		const label = (ROW_LABELS[dayIndex] ?? "").padEnd(labelWidth, " ");
-		const cells = weekRow.map(cell => {
+		let line = opts.dim(ROW_LABELS[dayIndex] ?? "") + " ";
+		for (let week = 0; week < weeks; week++) {
+			const cell = weekRow[week];
 			// ABSENT (a future date) — blank, and deliberately NOT the empty glyph.
 			// Colouring a day that has not happened as "zero activity" would be a
 			// lie about spend.
-			if (cell === null) return " ".repeat(columnWidth);
+			if (cell === null) line += "  ";
 			// Present but no activity — drawn, so a quiet day still occupies its
 			// slot in the calendar rather than vanishing from the axis.
-			if (cell === 0) return `${emptyCell(opts.glyphs)} `;
-			return `${opts.ramp[cell - 1] ?? ""}${heatCell(opts.glyphs, cell)}${FG_RESET} `;
-		});
-		return label + cells.join("");
+			else if (cell === 0) line += `${opts.dim(emptyCell(opts.glyphs))} `;
+			else line += `${opts.ramp[cell - 1] ?? ""}${heatCell(opts.glyphs, cell)}${FG_RESET} `;
+		}
+		return line.trimEnd();
 	});
 
 	// Clamp to the requested width. Truncating is correct here and wrapping is
@@ -183,37 +164,4 @@ function heatCell(set: GlyphSet, level: number): string {
 /** A day that is present but had no activity. */
 function emptyCell(set: GlyphSet): string {
 	return ladderRung(set, "heatEmpty", 0);
-}
-
-/** Left-pad a label into its column, so month names never overlap a neighbour. */
-function padRow(
-	labels: readonly (string | undefined)[],
-	labelWidth: number,
-	weeks: number,
-	columnWidth: number,
-): string {
-	const gutter = " ".repeat(labelWidth);
-	const cells = labels
-		.slice(0, weeks)
-		.map(label => (label ? label.slice(0, columnWidth - 1).padEnd(columnWidth - 1) : " ".repeat(columnWidth)))
-		.join("");
-	return (gutter + cells).trimEnd();
-}
-
-/**
- * A one-line summary of the window.
- *
- * Reports requests AND cost, because a `$0.00` beside real spend elsewhere in
- * the panel means unknown spend (unpriced requests), not free spend — CONTEXT.md
- * is explicit that a cost figure shown without its unpriced count is a wrong
- * number rather than a rounded one.
- */
-export function heatmapSummary(
-	points: readonly DailyActivityPoint[],
-): string {
-	const requests = points.reduce((sum, point) => sum + (point.requests ?? 0), 0);
-	const cost = points.reduce((sum, point) => sum + (point.cost ?? 0), 0);
-	const unpriced = points.filter(point => (point.cost ?? 0) === 0 && (point.requests ?? 0) > 0).length;
-	const unpricedNote = unpriced > 0 ? ` · ${formatInteger(unpriced)} unpriced` : "";
-	return `${formatInteger(requests)} requests · ${formatCost(cost)}${unpricedNote}`;
 }

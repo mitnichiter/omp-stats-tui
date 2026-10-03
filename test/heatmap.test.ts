@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { renderHeatmap, heatmapSummary, weeksForWidth } from "../src/tui/charts/heatmap";
+import { renderHeatmap, weeksForWidth } from "../src/tui/charts/heatmap";
 import { glyphsFor, glyph } from "../src/tui/glyphs";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 
@@ -17,6 +17,7 @@ const opts = (weeks: number, innerWidth = weeks * 2 + 2) => ({
 	weeks,
 	glyphs: glyphsFor("unicode"),
 	ramp: RAMP,
+	dim: (text: string) => text,
 });
 
 const point = (day: string, cost: number, requests = 1): DailyActivityPoint => ({
@@ -99,29 +100,31 @@ test("intensity is magnitude, not rank — a quarter-max day is not the top leve
 test("a future day is absent, and absent is not the same as zero activity", () => {
 	// Rule 4: a future date coloured as "zero activity" is a lie about spend.
 	// Future days are `null` in the layout and must render blank, while a past day
-	// with genuinely zero activity renders the empty glyph.
+	// with genuinely zero activity renders the empty glyph. The test dim is the
+	// identity, so strip ANSI first — a real dim wraps the glyph in escapes.
 	const rows = renderHeatmap([point("2026-10-02", 0, 0)], { ...opts(8), today: TODAY });
 	const empty = glyph("unicode", "heatEmpty");
 	// The 2nd of October is a zero-activity PAST day, so its cell is the empty glyph.
-	const zeroActivityRow = rows.slice(1).find(row => row.includes(empty));
-	expect(zeroActivityRow).toBeDefined();
-	// Future columns past `today` are blank: the last week column carries no cells
-	// after today, so no cell glyph appears at the far right of the grid.
-	const lastColumn = rows.slice(1).map(row => row.slice(-2));
-	expect(lastColumn.some(chunk => chunk.includes(empty))).toBe(true);
+	const stripped = rows.slice(1).map(row => row.replace(/\x1b\[[0-9;]*m/g, ""));
+	expect(stripped.some(row => row.includes(empty))).toBe(true);
+	// Oct 5 (today, a Monday) sits in the last week column alone: every row's
+	// tail past today is blank future cells, so trimEnd shortens EVERY row —
+	// Monday least, the other six most. No row reaches the full grid width.
+	const fullWidth = 2 + 8 * 2;
+	expect(stripped.every(row => row.length < fullWidth)).toBe(true);
+	expect(new Set(stripped.map(row => row.length)).size).toBeGreaterThan(1);
 });
 
 test("level-0 and absent differ in bytes, not just in meaning", () => {
-	// Pin the distinction at the renderer level: an empty-glyph cell and a blank
-	// (future) cell must not render identically.
+	// Pin the distinction at the renderer level: an empty-glyph cell and a
+	// blank (future) cell must not render identically. Under trimEnd the
+	// future tail is GONE rather than whitespace — the Monday row is shorter
+	// than a full-width row, which a zero-fill could never produce.
 	const rows = renderHeatmap([point("2026-10-02", 0, 0)], { ...opts(8), today: TODAY });
 	const empty = glyph("unicode", "heatEmpty");
-	const body = rows.slice(1).join("");
-	expect(body.includes(empty)).toBe(true);
-	// A blank future cell is two spaces; stripping ANSI, that is whitespace only.
-	const stripped = body.replace(/\x1b\[[0-9;]*m/g, "");
-	expect(stripped.includes(empty)).toBe(true);
-	expect(stripped).toMatch(/\s{2,}/);
+	expect(rows.slice(1).join("").includes(empty)).toBe(true);
+	const stripped = rows.slice(1).map(row => row.replace(/\x1b\[[0-9;]*m/g, ""));
+	expect(new Set(stripped.map(row => row.length)).size).toBeGreaterThan(1);
 });
 
 test("keys are LOCAL dates, verified against a local-midnight boundary", () => {
@@ -135,16 +138,18 @@ test("keys are LOCAL dates, verified against a local-midnight boundary", () => {
 test("month labels land on the right week column", () => {
 	const rows = renderHeatmap([], { ...opts(8), today: TODAY });
 	const labelRow = rows[0];
-	// Sep then Oct must both appear, each before its first week's column.
-	// Labels must sit at or after the gutter and in calendar order. The grid is
-	// 8 weeks wide, so "Oct" is clipped to the last column — the assertion is on
-	// ordering and placement, not on a label that cannot physically fit.
+	// Aug then Sep in calendar order, each at or after the gutter on an even
+	// cell boundary. The 8-week window ends mid-October, so "Oct" starts at
+	// the last column and the width clamp leaves its head ("Oc", "O", or the
+	// host's own ellipsis cut) — the assertion is on order and placement.
+	const aug = labelRow.indexOf("Aug");
+	expect(aug).toBeGreaterThanOrEqual(2);
+	expect(aug % 2).toBe(0);
 	const sep = labelRow.indexOf("Sep");
-	expect(sep).toBeGreaterThanOrEqual(2);
-	expect(sep % 2).toBe(0);
-	expect(labelRow.indexOf("Aug")).toBeLessThan(sep);
-	expect(labelRow.indexOf("Oc")).toBeGreaterThan(sep);
+	expect(sep).toBeGreaterThan(aug);
+	expect(labelRow.slice(sep)).toMatch(/O/);
 });
+
 
 test("every rendered line is within the requested width", () => {
 	for (const width of [0, 5, 30, 108]) {
@@ -160,15 +165,19 @@ test("every rendered line is within the requested width", () => {
 	}
 });
 
-test("rows are equal width under both presets", () => {
+test("rows fit the width, and only trailing-future tails may be short", () => {
+	// The host trimEnd's every day row (usage-dashboard.ts:869), so rows whose
+	// week columns run past today are SHORT — the month row stays full width.
+	// What must never happen is a row WIDER than asked.
 	for (const preset of ["unicode", "ascii"] as const) {
 		const rows = renderHeatmap(
 			[point("2026-10-01", 10), point("2026-10-02", 40), point("2026-09-30", 1)],
 			{ ...opts(53), glyphs: glyphsFor(preset), today: TODAY },
 		);
-		expect([...new Set(rows.map(r => Bun.stringWidth(r.replace(/\x1b\[[0-9;]*m/g, ""))))], preset).toEqual([
-			108,
-		]);
+		expect(Bun.stringWidth(rows[0].replace(/\x1b\[[0-9;]*m/g, "")), `${preset} month row`).toBe(108);
+		for (const row of rows.slice(1)) {
+			expect(Bun.stringWidth(row.replace(/\x1b\[[0-9;]*m/g, "")), preset).toBeLessThanOrEqual(108);
+		}
 	}
 });
 
@@ -196,16 +205,12 @@ test("narrow terminals reduce the WINDOW, never the cell size", () => {
 	expect(weeksForWidth(2, 1)).toBe(4);
 });
 
-test("the summary reports both totals and surfaces unpriced spend", () => {
-	const summary = heatmapSummary([
-		{ day: "2026-10-01", cost: 1.5, requests: 3, totalTokens: 3000 },
-		{ day: "2026-10-02", cost: 2.5, requests: 4, totalTokens: 4000 },
-	]);
-	expect(summary).toContain("7 requests");
-	expect(summary).toContain("$4.00");
-	// A day with requests but no priced cost is unknown spend, not free spend, so
-	// the count must ride along with the total rather than reading as $0.
-	expect(heatmapSummary([{ day: "2026-10-02", cost: 0, requests: 9, totalTokens: 9000 }])).toContain("unpriced");
+test("day rows carry no trailing whitespace — the host trimEnd's every row", () => {
+	// usage-dashboard.ts:869. A kept trailing space makes equal rows unequal
+	// and breaks the width contract the month row is clamped to.
+	for (const row of renderHeatmap([point("2026-10-01", 5)], { ...opts(20), today: TODAY })) {
+		expect(row.endsWith(" ") && !row.endsWith("m "), JSON.stringify(row)).toBe(false);
+	}
 });
 
 test("no row ends in a newline and no row is empty", () => {
