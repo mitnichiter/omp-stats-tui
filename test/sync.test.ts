@@ -379,3 +379,49 @@ test("kill is idempotent and safe to call after settle", async () => {
 		handle.kill();
 	}).not.toThrow();
 });
+
+test("an error event rejects the handle with the worker's message, after delivering it", async () => {
+	// The panel keeps its stale rows on a failed sync, so the rejection carrying
+	// the message IS the error surface — dropping the event would fail silently.
+	const { child, emit, end } = fakeChild();
+	const { events, onEvent } = collect();
+	const handle = startIngest(onEvent, undefined, () => child);
+	emit({ type: "progress", phase: "ingest", current: 3, total: 10 });
+	emit({ type: "error", error: "lock held by another omp process" });
+	end();
+	await expect(handle.settled).rejects.toThrow("lock held by another omp process");
+	expect(events).toEqual([
+		{ type: "progress", phase: "ingest", current: 3, total: 10 },
+		{ type: "error", error: "lock held by another omp process" },
+	]);
+});
+
+test("a child that exits without done or error rejects naming the pid", async () => {
+	// stdout closed with neither terminal event: the child died mid-sync, and a
+	// resolve here would read as a clean sync that never happened.
+	const { child, end } = fakeChild();
+	const { onEvent } = collect();
+	const handle = startIngest(onEvent, undefined, () => child);
+	end();
+	await expect(handle.settled).rejects.toThrow("4242");
+});
+
+test("activity snapshots reach listeners without settling the sync", async () => {
+	// The worker's opening `activity` emit is the pre-sync heatmap snapshot, and
+	// the closing one lets it converge — both must arrive, and neither ends the
+	// stream; only `done` does.
+	const points = [{ day: "2026-06-15", cost: 4, requests: 3, totalTokens: 900 }];
+	const { child, emit, end } = fakeChild();
+	const { events, onEvent } = collect();
+	const handle = startIngest(onEvent, undefined, () => child);
+	emit({ type: "activity", points });
+	emit({ type: "progress", phase: "rollup", current: 0, total: 5 });
+	emit({ type: "done", rollup: { dirtyHours: 5, dirtySessions: 1 } });
+	end();
+	await handle.settled;
+	expect(events).toEqual([
+		{ type: "activity", points },
+		{ type: "progress", phase: "rollup", current: 0, total: 5 },
+		{ type: "done", rollup: { dirtyHours: 5, dirtySessions: 1 } },
+	]);
+});

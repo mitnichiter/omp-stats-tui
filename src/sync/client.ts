@@ -15,6 +15,49 @@ import { join } from "node:path";
  * through which the expensive synchronous sync could be reached, so there is no
  * code path that can put it back on the TUI thread. `test/sync.test.ts` asserts
  * the absence directly against this file's source.
+ *
+ * SYNC LIFECYCLE — exactly when cached rows paint vs refreshed rows, what the
+ * user sees during the ~7s ingest, what happens on error.
+ *
+ * Mirrors the web's settled/loading/error states (`useQuery` in
+ * `client/data/query.ts`, `LiveChip` in `client/app/LiveChip.tsx`) as far as a
+ * panel with no always-on server can:
+ *
+ *  1. CACHED ROWS PAINT FIRST. The panel's `#load()` awaits the extension
+ *     start-up warm, then `fetchFor()` reads the database as it stands; the
+ *     worker in `scripts/sync-worker.ts` never blocks that paint ("whatever
+ *     the database already holds is valid"). Web equivalent: `useQuery` serves
+ *     its per-key cache instantly, skeletons only when nothing is cached.
+ *  2. SYNC STARTS ONLY ON `s`. `#beginSync()` spawns this module's one-shot
+ *     child; there is no watcher, no interval, no connect trigger. The web's
+ *     `StatsLive.start()` auto-syncs on first `/api/events` connect plus a
+ *     transcript watcher and a 5-minute resync — none of which exist here, by
+ *     design: there is no server process to own them. Dirty-hour counts in the
+ *     header are the only staleness nudge.
+ *  3. DURING INGEST the rows on screen are FROZEN and the header carries the
+ *     progress line (`describeSyncProgress`): `Scanning sessions` /
+ *     `Ingesting sessions N%` + bar where the worker reports a denominator,
+ *     indeterminate otherwise (scan reports total 0; rollup reports remaining
+ *     only). Web equivalent: `LiveChip` Syncing current/total, then
+ *     `Indexing Nh left`. There is NO mid-sync refetch here — the web bumps a
+ *     data version per committed batch and every query revalidates; this panel
+ *     reloads exactly once, on `done`.
+ *  4. `activity` EVENTS DELIVER WITHOUT SETTLING. The worker's opening and
+ *     closing snapshots reach every listener, but only `done` calls `#load()`.
+ *     Pinned by `test/sync.test.ts` ("activity snapshots reach listeners
+ *     without settling the sync").
+ *  5. ON `done` the panel reloads: every number on screen is one sync out of
+ *     date until that reload lands. `startIngest` notifies listeners BEFORE
+ *     the handle settles so the `done` rollup status cannot be missed.
+ *  6. ON `error` the handle REJECTS with the worker's message and every
+ *     listener still receives the event first — the panel keeps the stale rows
+ *     it already had; the rejection IS the error surface. A child that exits
+ *     with neither `done` nor `error` rejects naming its pid. Pinned by
+ *     `test/sync.test.ts` ("an error event rejects…", "a child that exits
+ *     without done or error…").
+ *  7. ABORT IS A NORMAL CLOSE. Signal abort kills the child (SIGKILL — the
+ *     sync lock has no cancellation) and RESOLVES, so teardown surfaces no
+ *     error. Shared `inflight` dedupes concurrent callers onto one child.
  */
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 import type { RollupStatus } from "@oh-my-pi/omp-stats/rollup";
