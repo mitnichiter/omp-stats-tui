@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { VERSION } from "@oh-my-pi/pi-coding-agent";
 import { initDb } from "@oh-my-pi/omp-stats/db";
+import { STATS_OVERLAY_OPTIONS, StatsPanel } from "./tui/panel";
 
 // The omp version this extension was built against. Every `@oh-my-pi/*` import
 // below depends on host internals, so a host bump is the one failure mode that
@@ -128,8 +129,29 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.registerCommand("stats-tui", {
 		description: "Local usage stats, fullscreen",
-		// PLACEHOLDER — Task 11 replaces this body with the mount seam
-		// (ctx.ui.custom(..., { overlay: true, overlayOptions: { fullscreen: true } })).
-		handler: async () => {},
+		handler: async (_args, ctx) => {
+			// `ctx.mode === "tui"`, not `ctx.hasUI`: `hasUI` is true in RPC mode,
+			// where `custom()` is implemented as *unsupported UI* and returns
+			// `undefined as never` — a promise that never resolves.
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify("/stats-tui needs an interactive terminal", "warning");
+				return;
+			}
+			await ctx.ui.custom<undefined>(
+				(tui, theme, _keybindings, done) =>
+					new StatsPanel({
+						tui,
+						theme,
+						done: () => done(undefined),
+						requestRender: () => tui.requestRender(),
+						// Handed in, not imported. The panel AWAITS this handle and
+						// never triggers it: `start()` is memoised and was already
+						// called above, so this joins the warm instead of paying for
+						// it on the keystroke. Requirement 3 on `statsDbWarm`.
+						warm: statsDbWarm,
+					}),
+				{ overlay: true, overlayOptions: STATS_OVERLAY_OPTIONS },
+			);
+		},
 	});
 }
