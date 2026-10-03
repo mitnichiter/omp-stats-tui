@@ -1,36 +1,32 @@
-import type { Screen } from "./types";
-import { scaffold, sampleFooter } from "./placeholders";
-import { statsIcon } from "../icons";
-import { formatPercent } from "../format";
-
-const SAMPLE = [
-	{ kind: "example/rate-limit", count: 7, sampleShare: 0.7 },
-	{ kind: "example/overloaded", count: 2, sampleShare: 0.2 },
-	{ kind: "example/context-length", count: 1, sampleShare: 0.1 },
-];
-
 /**
- * An error is a REQUEST that failed, so this screen shares `recent`'s shape and
- * reads the errors route, which takes a range. A failed request still costs time
- * and may still carry tokens — it is not free, it is unmeasured.
+ * `src/tui/screens/errors.ts` — registry entry, and nothing else.
+ *
+ * Once a screen has a `ScreenSpec`, its grammar is already defined — in the IR,
+ * shared with every other screen — and its rows are already produced, by
+ * `renderScreen`. A `render` body here would be a SECOND grammar for the same
+ * screen: a second place to arrange tiles, a second column policy, a second
+ * answer to "what does this screen look like". The migration rule that falls
+ * out of the IR's own contract is therefore: a spec'd screen's registry entry
+ * carries identity and contract, and defers `render` to the pipeline.
+ *
+ * The F24-host-verified behaviour lives in the pipeline, not here: error
+ * signatures come from the host's `groupErrorsBySignature` (NOT distinct raw
+ * strings — a second regex pipeline here would drift from the dashboard the
+ * moment either side changed), and affected models are `modelKey(model,
+ * provider)` identities (NOT bare names), both resolved in `src/layout/resolve.ts`.
  */
+
+import type { Screen } from "./types";
+import { SCREEN_SPECS } from "../../layout/spec";
+import { renderSpecScreen } from "./render";
+
+const spec = SCREEN_SPECS.find(s => s.id === "errors")!;
+
 export const errorsScreen: Screen = {
 	id: "errors",
 	label: "Errors",
 	short: "Errors",
-	status: "scaffolded",
-	needs: ["errors"],
-	reason: "scaffolded: the failure breakdown is sample data until it can print its own real total",
-	render: ctx =>
-		scaffold(ctx, statsIcon(ctx.preset, "errors"), "Errors", [
-			...SAMPLE.map(e =>
-				[
-					`  ${e.kind.padEnd(26)}`,
-					`${String(e.count).padStart(4)}`,
-					`  ${formatPercent(e.sampleShare, 0)} of a sample total`,
-				].join(""),
-			),
-			sampleFooter(ctx, SAMPLE.length),
-			`  ${ctx.theme.fg("dim", "sample shares are of a made-up total, so the real screen must print its own")}`,
-		]),
+	status: "implemented",
+	needs: ["errors", "rollupStatus"],
+	render: ctx => renderSpecScreen(spec, ctx),
 };
