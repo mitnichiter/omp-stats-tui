@@ -41,6 +41,7 @@ import {
 	summarizeRequests,
 } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
+import { pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
 import type {
 	CostTimeSeriesPoint,
 	FolderStats,
@@ -49,7 +50,7 @@ import type { MessageRow } from "./fixtures/panel";
 
 import type { PanelData } from "../src/data/api";
 import { SCREEN_SPECS, type Band, type MetricRef, type StatTile } from "../src/layout/spec";
-import { resolveCell, resolveNumber } from "../src/layout/resolve";
+import { resolveCell, resolveNumber, resolveSeriesValues, type SeriesAxisOptions } from "../src/layout/resolve";
 
 // ─── The one fixture ──────────────────────────────────────────────────────────
 
@@ -448,4 +449,122 @@ test("costs: the unpriced hint on the estimate is the count, not a share", () =>
 	expect(WEB_COSTS.unpricedRequests).toBe(WEB_COSTS.unpricedRequests);
 	expect(number("costs", "Unpriced requests")).toBe(WEB_COSTS.unpricedRequests);
 	void nullable;
+});
+// ─── Series density: a sparkline's x-axis is buckets, not array indices ───────
+
+/**
+ * A model present in buckets 1 and 3 only, on a 3-bucket axis.
+ *
+ * `getModelTimeSeries` emits one row per (bucket, model) that HAS data
+ * (`rollup.ts:670-676`), so this is the normal shape of a sparse model. The web
+ * densifies it — `pivotSeries` returns one value per bucket with gaps as `0`
+ * (`series.ts:41-79`) and `ModelsRoute.tsx:264` plots exactly that — giving
+ * `[5, 0, 7]`. A resolver that skips gaps gives `[5, 7]`, and the middle bucket
+ * then sits one column too far left: the sparkline's x-axis becomes an array
+ * index instead of time.
+ */
+const SPARSE_MODEL_SERIES = [
+	{ timestamp: 1000, model: "a", provider: "p", requests: 5 },
+	{ timestamp: 3000, model: "a", provider: "p", requests: 7 },
+	{ timestamp: 1000, model: "b", provider: "p", requests: 90 },
+	{ timestamp: 2000, model: "b", provider: "p", requests: 40 },
+];
+
+
+/** One row of the models table, as the resolver receives it. */
+interface SparkRow {
+	model: string;
+	provider: string;
+	totalRequests: number;
+}
+
+const SPARSE_ROWS: readonly SparkRow[] = [
+	{ model: "a", provider: "p", totalRequests: 12 },
+	{ model: "b", provider: "p", totalRequests: 130 },
+];
+
+const sparseRow = (index: number): SparkRow => SPARSE_ROWS[index]!;
+const SPARSE_DATA = {
+	modelDashboard: {
+		byModel: SPARSE_ROWS,
+		modelSeries: SPARSE_MODEL_SERIES,
+		modelPerformanceSeries: [],
+	},
+} as unknown as PanelData;
+
+/** The models table's `Trend` column, resolved for one row of that table. */
+function trendColumn() {
+	const spec = SCREEN_SPECS.find(s => s.id === "models");
+	for (const band of spec!.bands as readonly Band[]) {
+		if (band.kind !== "table") continue;
+		const column = band.columns.find(c => c.header === "Trend");
+		if (column) return column.source;
+	}
+	throw new Error("the models table has no Trend column");
+}
+
+const AXIS: SeriesAxisOptions = { axis: [1000, 2000, 3000] };
+
+test("a sparse model's sparkline is DENSE over the axis: gaps are zero", () => {
+	const row = sparseRow(0);
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, row, AXIS)).toEqual([5, 0, 7]);
+});
+
+test("a sparkline is as long as the axis, whatever the payload's row count", () => {
+	// The invariant that makes an x-axis an axis. A model with 2 rows on a 3-bucket
+	// axis must still yield 3 values, or the renderer is mapping by index.
+	const row = sparseRow(0);
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, row, AXIS)).toHaveLength(3);
+	// A denser model on the SAME axis is the same length, so two sparklines in one
+	// table line up column for column.
+	const other = sparseRow(1);
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, other, AXIS)).toHaveLength(3);
+});
+
+test("row scope still filters BEFORE densifying, so each row gets its own trend", () => {
+	// Densifying first and filtering after would give every row the whole
+	// payload. Model `a` peaks at 7; model `b` at 90.
+	const rows = SPARSE_ROWS;
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, rows[0], AXIS)).toEqual([5, 0, 7]);
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, rows[1], AXIS)).toEqual([90, 40, 0]);
+});
+
+test("without an axis a series keeps its old sparse behaviour", () => {
+	// The axis is what makes a value a position. Without one there is nothing to
+	// place the gaps against, so the series is exactly the rows that exist — the
+	// pre-existing contract, unchanged for callers that pass no axis.
+	const row = sparseRow(0);
+	expect(resolveSeriesValues(trendColumn(), SPARSE_DATA, row)).toEqual([5, 7]);
+});
+
+test("a bucket holding several rows SUMS them, as densify does", () => {
+	const rows = SPARSE_MODEL_SERIES.filter(row => row.model === "a").map(row => ({
+		...row,
+		requests: row.requests * 2,
+	}));
+	const data = {
+		modelDashboard: {
+			byModel: rows,
+			modelSeries: rows,
+			modelPerformanceSeries: [],
+		},
+	} as unknown as PanelData;
+	expect(resolveSeriesValues(trendColumn(), data, rows[0], AXIS)).toEqual([10, 0, 14]);
+});
+
+test("the sparkline values equal the web's pivotSeries, bucket for bucket", () => {
+	// The end-to-end statement, against the host's own densifying pivot.
+	const buckets = [1000, 2000, 3000];
+	const pivot = pivotSeries(SPARSE_MODEL_SERIES, {
+		buckets,
+		key: (p: { model: string; provider: string }) => modelKey(p.model, p.provider),
+		value: (p: { requests: number }) => p.requests,
+	});
+	const row = sparseRow(0);
+	// The web's `ChartSeries.values` is `(number | null)[]`: `null` is a GAP, and
+	// the route plots `values.map(v => v ?? 0)`. Our resolver returns the plotted
+	// form directly, so the comparison is against the nulls resolved — which is
+	// what makes "gap became 0" the claim under test rather than a type detail.
+	const web = (pivot.find(s => s.key === modelKey("a", "p"))?.values ?? []).map(v => v ?? 0);
+	expect([...resolveSeriesValues(trendColumn(), SPARSE_DATA, row, AXIS)]).toEqual(web);
 });

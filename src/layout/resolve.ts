@@ -288,15 +288,63 @@ function seriesRows(ref: SeriesRef, data: PanelData, row?: DataRow): readonly Da
 	return rows.filter(candidate => readPath(candidate, ref.groupBy ?? "") === group);
 }
 
+/**
+ * One field read per row, SPARSE — the buckets that have rows, in payload order.
+ *
+ * Sparse on purpose, and the reason is now narrow: without an axis there is
+ * nothing to place a gap against. Callers holding a bucket axis pass one to
+ * {@link resolveSeriesValues}, which densifies; callers that do not get exactly
+ * the rows the payload reported, which is the contract that has always held.
+ */
 function seriesValues(ref: SeriesRef, data: PanelData, row?: DataRow): readonly number[] {
 	const values: number[] = [];
 	for (const candidate of seriesRows(ref, data, row)) {
 		const value = asNumber(readPath(candidate, ref.field));
-		// A gap is skipped, not zero-filled: zero would draw a row the payload
-		// never reported, and the charts scale by maximum.
 		if (value !== null) values.push(value);
 	}
 	return values;
+}
+
+/**
+ * One field read per row, DENSE over `axis`: one value per bucket, oldest
+ * first, and a bucket with no rows reads 0.
+ *
+ * This is the web's `pivotSeries` (`series.ts:41-79`) with the folding and
+ * ranking left off, and it is what a plottable series actually needs. The payload
+ * carries one row per (bucket, model) that HAS data — `getModelTimeSeries` groups
+ * `BY 1, f.model, f.provider` and emits no row for a bucket where a model was
+ * idle (`rollup.ts:670-676`) — so a sparse model arrives as `[5, 7]` for a
+ * three-bucket axis, and `[5, 0, 7]` once placed against it.
+ *
+ * THE DIFFERENCE IS THE X-AXIS. A value is only a position if it knows its
+ * bucket. Skip the gap and the second value slides one column left, so the
+ * chart's x-axis becomes an array index and a resize re-maps every point. That
+ * is why the axis is a parameter rather than something this function guesses.
+ *
+ * Rows are FILTERED FIRST (`seriesRows`) and the survivors densified, so a
+ * row-scoped series stays that row's own trend. Several rows in one bucket SUM,
+ * which is `densify`'s rule and the host's own behaviour.
+ */
+function denseSeriesValues(
+	ref: SeriesRef,
+	axis: readonly number[],
+	data: PanelData,
+	row?: DataRow,
+): readonly number[] {
+	const index = new Map<number, number>();
+	for (const [position, timestamp] of axis.entries()) index.set(timestamp, position);
+	const out = Array.from({ length: axis.length }, () => 0);
+	for (const candidate of seriesRows(ref, data, row)) {
+		const timestamp = asNumber(readPath(candidate, "timestamp"));
+		if (timestamp === null) continue;
+		const position = index.get(timestamp);
+		// A row outside the axis is DROPPED, not appended: the axis is the window,
+		// and a value past its edge has no column to occupy.
+		if (position === undefined) continue;
+		const value = asNumber(readPath(candidate, ref.field));
+		if (value !== null) out[position] += value;
+	}
+	return out;
 }
 
 // ─── Derived resolution ───────────────────────────────────────────────────────
@@ -500,12 +548,37 @@ export function resolveLabel(ref: MetricRef, data: PanelData, row?: DataRow): st
  * cannot invent a bucket, and a source with no rows yields `[]` rather than an
  * array of zeroes that would draw a flat "nothing happened" chart when the
  * truth is "nothing was fetched".
+ *
+ * `opts.axis` is what makes a value a POSITION. With it the series is DENSE:
+ * one entry per bucket, gaps 0, the same length for every series so two
+ * sparklines in one table line up column for column — which is what the web gets
+ * from `pivotSeries`. Without it the series is the buckets that carry rows,
+ * which is only safe for a caller drawing values positionally for something
+ * other than time.
+ *
+ * The axis is passed in rather than derived here because deriving it needs the
+ * range and the clock, and this module is pure. `screen.ts` builds it once from
+ * the host's own `bucketAxis` and passes it down — ONE axis rule, not two that
+ * agree today.
  */
-export function resolveSeriesValues(ref: MetricRef, data: PanelData, row?: DataRow): readonly number[] {
+export interface SeriesAxisOptions {
+	/** Ascending bucket starts. Every value in the result sits on one of these. */
+	axis: readonly number[];
+}
+
+export function resolveSeriesValues(
+	ref: MetricRef,
+	data: PanelData,
+	row?: DataRow,
+	opts?: SeriesAxisOptions,
+): readonly number[] {
 	const base = baseOf(ref);
-	if (base.kind === "series") return seriesValues(base, data, row);
+	if (base.kind === "series") {
+		return opts ? denseSeriesValues(base, opts.axis, data, row) : seriesValues(base, data, row);
+	}
 	// An aggregate or a derived total has no shape to plot; its single value is
-	// the whole series.
+	// the whole series. An axis does not apply: there is one point, and padding
+	// it to the axis's length would draw a flat line for a single figure.
 	const value = resolveNumber(ref, data, row);
 	return value === null ? [] : [value];
 }
