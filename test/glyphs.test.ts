@@ -256,3 +256,27 @@ test("nerd codepoints are the cheat-sheet codepoints for their nf-* names", () =
 	}
 	expect(mismatches).toEqual([]);
 });
+
+test("icons: every unicode emoji is exactly the width the gutter expects", () => {
+	// Heading-only entries must measure 2 (heading layout reserves the
+	// 2-cell gutter); the five Narrow entries must measure 1 because they are
+	// legal in a data cell too. A VS16 variant would silently change either
+	// number, so both arms are asserted by MEASUREMENT, not by eye.
+	const WANT2 = [
+		["cost", "💲", "U+1F4B2"], ["tokens", "🪙", "U+1FA99"], ["requests", "📊", "U+1F4CA"],
+		["projects", "📁", "U+1F4C1"], ["errors", "❌", "U+274C"], ["calendar", "📅", "U+1F4C5"],
+		["gains", "💹", "U+1F4B9"], ["unknown", "❓", "U+2753"], ["cache", "💾", "U+1F4BE"],
+	] as const;
+	const WANT1 = [
+		["time", "⏱", "U+23F1"], ["models", "⬢", "U+2B22"], ["providers", "🛰", "U+1F6F0"],
+		["tools", "🛠", "U+1F6E0 bare — the VS16 form is 2"], ["warning", "⚠", "U+26A0 bare"],
+	] as const;
+	for (const [role, glyph, evidence] of WANT2) {
+		expect(Bun.stringWidth(glyph), `${role} ${evidence}`).toBe(2);
+		expect(STATS_ICONS.unicode[role as keyof typeof STATS_ICONS.unicode], role).toBe(glyph);
+	}
+	for (const [role, glyph, evidence] of WANT1) {
+		expect(Bun.stringWidth(glyph), `${role} ${evidence}`).toBe(1);
+		expect(STATS_ICONS.unicode[role as keyof typeof STATS_ICONS.unicode], role).toBe(glyph);
+	}
+});
