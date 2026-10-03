@@ -14,7 +14,7 @@
  * host's, imported rather than restated — see `bucketCountForRange` below for
  * why that distinction matters.
  */
-import { rangeMeta, type TimeRange } from "@oh-my-pi/omp-stats/client/data/range";
+import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 
 export const RANGES = ["1h", "24h", "7d", "30d", "90d", "all"] as const;
 
@@ -38,14 +38,14 @@ export const DEFAULT_RANGE: Range = "24h";
  * did, and it was wrong.
  */
 export function bucketCountForRange(range: Range, width: number): number {
-	const { spanMs, bucketMs } = rangeMeta(range as TimeRange);
+	const { spanMs, bucketMs } = rangeMeta(range);
 	if (spanMs === null) return Math.max(1, Math.floor(width));
 	return Math.round(spanMs / bucketMs);
 }
 
 /** Bucket width in ms, straight from the host. Charts that build their own axis need it. */
 export function bucketMsFor(range: Range): number {
-	return rangeMeta(range as TimeRange).bucketMs;
+	return rangeMeta(range).bucketMs;
 }
 
 
