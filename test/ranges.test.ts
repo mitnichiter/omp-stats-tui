@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import { rangeMeta, TIME_RANGES } from "@oh-my-pi/omp-stats/client/data/range";
 import {
 	RANGES,
 	DEFAULT_RANGE,
@@ -6,8 +7,12 @@ import {
 	nextRange,
 	rangeLabel,
 	bucketCountFor,
-	NATURAL_BUCKETS,
+	bucketCountForRange,
 } from "../src/data/ranges";
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
 test("the valid set is exactly six, and 365d is not one of them", () => {
 	expect([...RANGES]).toEqual(["1h", "24h", "7d", "30d", "90d", "all"]);
@@ -66,13 +71,19 @@ test("every range has a distinct human label", () => {
 	expect(new Set(labels).size).toBe(RANGES.length);
 });
 
-test("bucket counts are the ranges' natural bucket counts, clamped by width", () => {
-	expect(bucketCountFor("1h", 200)).toBe(12); // 5-minute buckets
-	expect(bucketCountFor("24h", 200)).toBe(24); // hourly
-	expect(bucketCountFor("7d", 200)).toBe(7); // daily
+test("bucket counts are the HOST's natural bucket counts, clamped by width", () => {
+	// These expectations are now the host's, read from `rangeMeta` — see the
+	// agreement test below, which is what actually pins them.
+	expect(bucketCountFor("1h", 200)).toBe(12); // 5-minute buckets over one hour
+	expect(bucketCountFor("24h", 200)).toBe(24); // hourly over one day
+	expect(bucketCountFor("7d", 200)).toBe(7); // daily over a week
 	expect(bucketCountFor("30d", 200)).toBe(30);
 	expect(bucketCountFor("90d", 200)).toBe(90);
-	expect(bucketCountFor("all", 200)).toBe(53); // weeks, the calendar-heatmap width
+	// `all` has NO span in the host's table (spanMs === null), so there is no
+	// natural bucket count to derive. We fill the available width instead of
+	// inventing a number — the previous hand-written 53 was an invention that
+	// disagreed with the host.
+	expect(bucketCountFor("all", 200)).toBe(200);
 });
 
 test("never more buckets than columns, and never zero or negative", () => {
@@ -85,10 +96,25 @@ test("never more buckets than columns, and never zero or negative", () => {
 	}
 });
 
-test("natural bucket counts mirror the host's TIME_RANGES spans", () => {
-	// The panel's own table, not the host's, decides this — so it is pinned here.
-	// A drift means a bar chart silently resamples at the wrong bucket width.
-	expect(Object.keys(NATURAL_BUCKETS).sort()).toEqual([...RANGES].sort());
-	expect(NATURAL_BUCKETS["1h"]).toBe(12);
-	expect(NATURAL_BUCKETS["all"]).toBe(53);
+test("bucket counts AGREE with the host's rangeMeta, derived not duplicated", () => {
+	// The regression this replaces: we hand-maintained a NATURAL_BUCKETS table
+	// that claimed `all` was 53 weekly buckets while the host buckets `all` by
+	// DAY. A hand-written copy of a host-owned table is exactly how the two drift.
+	for (const range of RANGES) {
+		const { spanMs, bucketMs } = rangeMeta(range);
+		// Derived exactly as the host's own TimeChart does: span / bucket size.
+		const expected = spanMs === null ? 200 : spanMs / bucketMs;
+		expect(bucketCountForRange(range, 200), `${range} bucket count`).toBe(expected);
+	}
+});
+
+test("our valid set and the host's are the same six ranges, in the same order", () => {
+	expect([...RANGES]).toEqual([...TIME_RANGES]);
+});
+
+test("bucketCountForRange leaves an unbounded range alone", () => {
+	// The `all` case, isolated: no span means no natural count, so the caller
+	// gets the width back rather than a made-up number.
+	expect(bucketCountForRange("all", 42)).toBe(42);
+	expect(bucketCountForRange("7d", 42)).toBe(7);
 });

@@ -51,20 +51,30 @@ export function meanMs(calls: readonly CallTiming[]): number | null {
 }
 
 /**
- * Human labels for the bucket widths the aggregator configures, widest first:
- * the label is the first width at least as wide as the requested one, so a
- * 300 s bucket reads "5m" and not "1m".
+ * Human label for a bucket width.
+ *
+ * The unit ladder (m/h/d/w) is presentation and therefore ours. The WIDTHS are
+ * not: the aggregator owns them in `rangeMeta(...).bucketMs`, and a probe that
+ * restated the thresholds would eventually label the dashboard's axis
+ * differently from the dashboard itself. Deriving the unit from the millisecond
+ * count keeps this agreeing with the host by construction — five-minute buckets
+ * print "5m" because 300_000 is five minutes, not because "5m" was typed into a
+ * table next to a threshold that could drift away from it.
+ *
+ * The previous version was a hand-written `minMs` threshold list — the
+ * duplication this replaces. See F15, "Already reinvented" §2.
  */
-const BUCKET_LABELS: readonly { readonly minMs: number; readonly label: string }[] = [
-	{ minMs: 24 * 60 * 60 * 1000, label: "1d" },
-	{ minMs: 6 * 60 * 60 * 1000, label: "6h" },
-	{ minMs: 60 * 60 * 1000, label: "1h" },
-	{ minMs: 5 * 60 * 1000, label: "5m" },
-	{ minMs: 60 * 1000, label: "1m" },
-];
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
 
 export function bucketLabel(bucketMs: number): string {
-	return BUCKET_LABELS.find((b) => bucketMs >= b.minMs)?.label ?? `${bucketMs}ms`;
+	if (bucketMs % WEEK === 0) return `${bucketMs / WEEK}w`;
+	if (bucketMs % DAY === 0) return `${bucketMs / DAY}d`;
+	if (bucketMs % HOUR === 0) return `${bucketMs / HOUR}h`;
+	if (bucketMs % MINUTE === 0) return `${bucketMs / MINUTE}m`;
+	return `${bucketMs}ms`;
 }
 
 function padEnd(value: string, width: number): string {
