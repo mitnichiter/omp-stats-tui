@@ -13,6 +13,7 @@ import { DEFAULT_RANGE, RANGES, nextRange, rangeLabel } from "../src/data/ranges
 import { SCREENS } from "../src/tui/screens/types";
 import { SELECTABLE_SCREENS } from "../src/tui/panel";
 import { SCREEN_SPECS } from "../src/layout/spec";
+import type { ScreenId } from "../src/tui/screens/types";
 import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
 
@@ -245,7 +246,7 @@ test("digits index the SELECTABLE screens, so a number never lands on an exclude
 	// Every selectable screen has a SPEC, and every non-deferred spec is
 	// selectable: the two lists are one list.
 	expect(__testing.debugScreenIds()).toEqual(
-		SCREEN_SPECS.filter(spec => !spec.deferred).map(spec => spec.id),
+		SCREEN_SPECS.filter(spec => !spec.deferred).map(spec => spec.id as ScreenId),
 	);
 });
 
@@ -539,10 +540,12 @@ test("bars scale by COST, so the free-but-huge day is not the tall one", async (
 	});
 	await __testing.settled(panel);
 	const rows = __testing.debugChartRows(panel, 120).map(stripAnsi);
-	// The costs card declares four cost COMPONENTS, each its own labelled block.
+	// The costs card declares four cost COMPONENTS, composed by
+	// `renderSeriesChart`, which labels each band AFTER its marks. So the first
+	// band's marks are the rows before the first label.
 	const first = rows.findIndex(row => row.includes("Input"));
-	expect(first, "the daily-estimate block must be labelled").toBeGreaterThan(-1);
-	const block = rows.slice(first + 1, first + 5).filter(row => /[█░]/.test(row));
+	expect(first, "the daily-estimate block must be labelled").toBeGreaterThan(1);
+	const block = rows.slice(0, first).filter(row => /[█░]/.test(row));
 	expect(block.length).toBeGreaterThanOrEqual(2);
 	// The rule itself, without depending on where a bucket lands: the two filled
 	// columns have DIFFERENT heights, and the taller one is the newer bucket — the

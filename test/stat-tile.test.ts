@@ -184,26 +184,34 @@ test("D3: a series block is distinguishable from the other series' block", () =>
 	expect(succeeded).toBeGreaterThan(-1);
 	expect(failed).toBeGreaterThan(succeeded);
 
-	// Each block is at least a couple of rows of marks, so it reads as a column
-	// chart rather than as one line of glyphs.
-	expect(rows.slice(succeeded + 1, failed).filter(row => stripForText(row).trim() !== "").length)
-		.toBeGreaterThanOrEqual(2);
+	// Each band carries real marks, so it reads as a column chart and not as one
+	// line of glyphs. `renderSeriesChart` labels a band AFTER its marks, so the
+	// marks for a band are the rows immediately AFTER the PREVIOUS label.
+	const marks = (from: number, to: number): number =>
+		rows.slice(from, to).filter(row => /[█░]/.test(stripForText(row))).length;
+	expect(marks(0, succeeded)).toBeGreaterThanOrEqual(2);
+	expect(marks(succeeded + 1, failed)).toBeGreaterThanOrEqual(1);
 	// And each series wears its OWN colour, so the two never read as one chart.
-	expect(rows[succeeded + 1], "each series wears its own colour").not.toBe(rows[failed + 1]);
+	const firstInk = rows[plain.findIndex(row => /[█░]/.test(row))];
+	const secondInk = rows[plain.findIndex((row, index) => index > succeeded && /[█░]/.test(row))];
+	expect(firstInk, "each series wears its own colour").not.toBe(secondInk);
 });
 
 test("D3: a chart block is at least two rows tall, so it reads as a column chart", () => {
 	// One row of blocks is a line, not a chart: `renderDailyBars` with height 1
 	// emits exactly that, and it is what the "fourteen identical rows" defect was.
+	// `renderSeriesChart` labels each band AFTER its marks — bottom-anchored, so
+	// the name sits under the columns it names — so the first band's rows are the
+	// ones BEFORE its label.
 	const rows = render(specOf("overview"), 120).map(stripForText);
 	const succeeded = rows.findIndex(row => row.includes("Succeeded"));
-	expect(succeeded).toBeGreaterThan(-1);
+	expect(succeeded).toBeGreaterThan(1);
 	let tall = 0;
-	for (const row of rows.slice(succeeded + 1)) {
-		if (row.includes("Failed")) break;
-		if (row.trim() !== "") tall++;
+	for (const row of rows.slice(0, succeeded).reverse()) {
+		if (!/[█░]/.test(row)) break;
+		tall++;
 	}
-	expect(tall).toBeGreaterThanOrEqual(2);
+	expect(tall, "the first band must be at least two rows of marks").toBeGreaterThanOrEqual(2);
 });
 
 // ─── D4: one number, one computation ────────────────────────────────────────

@@ -81,7 +81,7 @@ import type {
 	StatTile as IRStatTile,
 } from "../../layout/spec";
 import { renderBands, type Band, type BandRenderOptions } from "../band";
-import { renderDailyBars } from "../charts/bars";
+import { renderSeriesChart } from "../charts/compose";
 import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
 import { renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
 import {
@@ -623,45 +623,22 @@ function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[
  * height as a one-series chart. NEVER summed — see the module header.
  */
 function barRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
-	const glyphs = opts.glyphs ?? glyphsFor(opts.preset);
-	// A multi-series chart is ONE chart with the series distinguished, not N
-	// charts stacked. The web overlays its two `ACTIVITY_OPTIONS` series in a
-	// single `TimeChart` (`OverviewRoute.tsx:167-175`); a terminal cannot overlay
-	// two column sets in one cell without inventing a stacked-cell glyph, so each
-	// series gets its own band of rows INSIDE the chart body and is NAMED.
-	//
-	// Naming is not decoration. Unlabelled, two blocks are one chart drawn twice,
-	// which is exactly what the probe showed: fourteen identical-looking rows and
-	// no way to tell which was failures. `renderDailyBars` is used per series —
-	// it already handles a single series correctly — and the height splits so a
-	// two-series chart is the same total height as a one-series chart.
-	const single = chart.series.length === 1;
-	const block = Math.max(single ? 2 : 3, Math.floor(Math.max(1, opts.plan.barHeight) / Math.max(1, chart.series.length)));
-
-	// Each series is drawn as its own self-scaled chart, which is what every other
-	// chart in this panel does and what `renderDailyBars` is built for: one divisor
-	// per chart, so a reader compares SHAPES within a chart and reads the FIGURE
-	// from the label beside it. Two series of similar shape therefore draw similar
-	// bars — which is why each block is LABELLED and COLOURED, and why the two
-	// must never be laid out as one unlabelled run of rows.
-	const all = chart.series.map(series => bucketedValues(series.metric, opts));
-
-	const rows: string[] = [];
-	chart.series.forEach((series, index) => {
-		if (!single) rows.push(clampLine(opts.fg(PALETTE.muted, `  ${series.label}`), width));
-		rows.push(
-			...renderDailyBars(all[index] ?? [], {
-				width,
-				height: block,
-				glyphs,
-				// Each series wears its OWN colour, so a block is identifiable by hue
-				// as well as by its label.
-				accent: text => opts.fg(opts.seriesColorFor?.(index) ?? PALETTE.primary, text),
-				dim: text => opts.fg(PALETTE.dim, text),
-			}),
-		);
-	});
-	return rows;
+	// `renderSeriesChart`, NOT a multi-series path written here. That module has no
+	// geometry of its own: every mark comes out of `renderDailyBars` called once
+	// per series, and `test/chart-primitives.test.ts` asserts the composition
+	// equals the primitive byte for byte. Writing the loop again here is exactly how
+	// this chart broke four times in one session — a second encoding nobody
+	// compares against the primitive.
+	return renderSeriesChart(
+		chart.series.map(series => ({ label: series.label, values: bucketedValues(series.metric, opts) })),
+		{
+			width,
+			height: Math.max(1, opts.plan.barHeight),
+			preset: opts.preset,
+			theme: opts.palette,
+			paint: (color, text) => opts.fg(color, text),
+		},
+	);
 }
 
 /**
