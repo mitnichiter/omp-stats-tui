@@ -572,3 +572,22 @@ test("the sparkline values equal the web's pivotSeries, bucket for bucket", () =
 		.map((value): number => value ?? 0);
 	expect([...resolveSeriesValues(trendColumn(), SPARSE_DATA, row, AXIS)]).toEqual(web);
 });
+
+test("costs: 'Average per day' is the SAME float the dashboard produced, not a restatement", () => {
+	// `sameNumber` elsewhere tolerates float drift, because a re-derived formula
+	// rarely lands bit-identical. This tile does not re-derive anything: it calls
+	// the host's own `buildCostSummary` on the payload's rows. Exact equality is
+	// therefore the honest assertion, and it is also the tripwire — rewire the
+	// tile to `max`, and this fails alongside the inequality test above.
+	expect(number("costs", "Average per day")).toBe(buildCostSummary(COST_SERIES).avgDailyCost);
+});
+
+test("costs: 'Average per day' divides by days that CARRIED usage, not days in span", () => {
+	// The denominator is `new Set(costSeries.map(p => p.timestamp)).size`. A gap
+	// day inside the window is not an active day, and a reimplementation that
+	// divided by span days would understate the figure.
+	const seen = new Set(COST_SERIES.map(p => p.timestamp));
+	expect(buildCostSummary(COST_SERIES).avgDailyCost).toBe(
+		buildCostSummary(COST_SERIES).totalCost / seen.size,
+	);
+});
