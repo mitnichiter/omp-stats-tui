@@ -23,8 +23,10 @@ import type {
 	CostTimeSeriesPoint,
 	DailyActivityPoint,
 	FolderStats,
+	GainDashboardStats,
 	ModelStats,
 	ModelTimeSeriesPoint,
+	ProviderDashboardStats,
 	TimeSeriesPoint,
 	ToolDashboardStats,
 } from "@oh-my-pi/omp-stats/shared-types";
@@ -420,7 +422,82 @@ export const TOOLS: ToolDashboardStats = {
 	],
 };
 
-/** 40 days of activity, with one conspicuously busy day for the heatmap peak. */
+export const PROVIDERS: ProviderDashboardStats = {
+	providers: [
+		{
+			provider: "openrouter",
+			totalRequests: 1_280,
+			failedRequests: 4,
+			models: 1,
+			totalInputTokens: 2_100_000,
+			totalOutputTokens: 400_000,
+			totalCacheReadTokens: 51_000_000,
+			totalCacheWriteTokens: 500_000,
+			totalTokens: 54_000_000,
+			totalCost: 935.72,
+			unpricedRequests: 0,
+			totalPremiumRequests: 0,
+			avgTokensPerSecond: 61.2,
+		},
+		{
+			provider: "google-antigravity",
+			totalRequests: 4_197,
+			failedRequests: 0,
+			models: 1,
+			totalInputTokens: 8_000_000,
+			totalOutputTokens: 1_500_000,
+			totalCacheReadTokens: 190_000_000,
+			totalCacheWriteTokens: 2_000_000,
+			totalTokens: 201_500_000,
+			totalCost: 0,
+			unpricedRequests: 4_197,
+			totalPremiumRequests: 0,
+			avgTokensPerSecond: null,
+		},
+		{
+			provider: "opencode-go",
+			totalRequests: 36_616,
+			failedRequests: 88,
+			models: 1,
+			totalInputTokens: 37_000_000,
+			totalOutputTokens: 7_500_000,
+			totalCacheReadTokens: 963_000_000,
+			totalCacheWriteTokens: 10_300_000,
+			totalTokens: 1_017_800_000,
+			totalCost: 0,
+			unpricedRequests: 0,
+			totalPremiumRequests: 1.5,
+			avgTokensPerSecond: 58.4,
+		},
+	],
+	hourly: [
+		{ provider: "openrouter", hour: 9, totalTokens: 9_400_000, outputTokens: 800_000, requests: 210 },
+		{ provider: "opencode-go", hour: 14, totalTokens: 88_000_000, outputTokens: 7_000_000, requests: 3_100 },
+	],
+	series: [
+		{ timestamp: dayStart(1), provider: "openrouter", totalTokens: 20_000_000, cost: 310.4, unpricedRequests: 0, requests: 420 },
+		{ timestamp: dayStart(0), provider: "opencode-go", totalTokens: 300_000_000, cost: 0, unpricedRequests: 0, requests: 9_100 },
+	],
+};
+
+/**
+ * Token savings: one source today (`snapcompact`). `reductionPercent` is
+ * ALWAYS null for snapcompact — the aggregator never sets originalBytes —
+ * so the Reduction tile reads "–" with its "original size not recorded" hint.
+ */
+export const GAIN: GainDashboardStats = {
+	overall: { savedTokens: 1_204_000, savedBytes: 4_816_000, hits: 96, outputBytes: 0, originalBytes: 0, reductionPercent: null },
+	bySource: {
+		snapcompact: { savedTokens: 1_204_000, savedBytes: 4_816_000, hits: 96, outputBytes: 0, originalBytes: 0, reductionPercent: null },
+	},
+	timeSeries: [
+		{ date: "2026-07-13", snapcompact: 401_000, total: 401_000 },
+		{ date: "2026-07-14", snapcompact: 803_000, total: 803_000 },
+	],
+	project: null,
+	projects: ["/Users/yuzu/Documents/Projects/omp-stats-tui"],
+};
+ /** 40 days of activity, with one conspicuously busy day for the heatmap peak. */
 export const DAILY_ACTIVITY: readonly DailyActivityPoint[] = Array.from({ length: 40 }, (_, i) => {
 	const daysAgo = 39 - i;
 	const busy = daysAgo === 12;
@@ -451,14 +528,16 @@ export function liveData(over: Partial<PanelData> = {}): PanelData {
 			modelSeries: [...MODEL_SERIES],
 			modelPerformanceSeries: [...MODEL_PERFORMANCE_SERIES],
 		},
-		costs: { costSeries: [...COST_SERIES] },
-		folders: [...FOLDERS],
-		recent,
-		errors,
-		tools: TOOLS,
-		dailyActivity: [...DAILY_ACTIVITY],
-		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
-		...over,
+	costs: { costSeries: [...COST_SERIES] },
+	folders: [...FOLDERS],
+	recent,
+	errors,
+	tools: TOOLS,
+	providers: { providers: [...PROVIDERS.providers], hourly: [...PROVIDERS.hourly], series: [...PROVIDERS.series] },
+	gain: { ...GAIN, bySource: { ...GAIN.bySource }, timeSeries: [...GAIN.timeSeries], projects: [...GAIN.projects] },
+	dailyActivity: [...DAILY_ACTIVITY],
+	rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
+	...over,
 	};
 }
 
@@ -492,6 +571,8 @@ export function blankData(): PanelData {
 		recent: [],
 		errors: [],
 		tools: { byTool: [], byToolModel: [], series: [] },
+		providers: { providers: [], hourly: [], series: [] },
+		gain: { overall: { savedTokens: 0, savedBytes: 0, hits: 0, outputBytes: 0, originalBytes: 0, reductionPercent: null }, bySource: {}, timeSeries: [], project: null, projects: [] },
 		dailyActivity: [],
 		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
 	};

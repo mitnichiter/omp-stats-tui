@@ -6,8 +6,10 @@ import type {
 	DashboardStats,
 	DailyActivityPoint,
 	FolderStats,
+	GainDashboardStats,
 	ModelStats,
 	ModelTimeSeriesPoint,
+	ProviderDashboardStats,
 	TimeSeriesPoint,
 	ToolDashboardStats,
 } from "@oh-my-pi/omp-stats/shared-types";
@@ -331,6 +333,34 @@ export function fetchTools(range: Range, read: Reader = liveReader): Promise<Too
 }
 
 /**
+ * DB-backed provider aggregates: per-provider totals, the hourly burn
+ * histogram, and the per-provider time series. This is the ONLY provider
+ * payload the panel reads — `/api/stats/provider-windows` does broker
+ * network I/O per load (see `getProviderWindowStats`), so it stays out of
+ * the load path and the windows sections stay deferred.
+ */
+export function fetchProviders(range: Range, read: Reader = liveReader): Promise<ProviderDashboardStats> {
+	return apiGet<ProviderDashboardStats>("/api/stats/providers", { range }, read);
+}
+
+/**
+ * Token savings from the snapcompact jsonl beside the database. Missing files
+ * read as zero records, never an error — so an empty gain payload is a real
+ * answer, and the screen's empty state names the range rather than a failure.
+ */
+export function fetchGain(
+	range: Range,
+	read: Reader = liveReader,
+	project: string | null = null,
+): Promise<GainDashboardStats> {
+	return apiGet<GainDashboardStats>(
+		"/api/stats/gain",
+		project === null ? { range } : { range, project },
+		read,
+	);
+}
+
+/**
  * No route exposes daily activity, so this reads the package directly. Static
  * import only: dynamic `import()` of any `@oh-my-pi/*` fails inside the
  * extension loader, which rewrites specifiers for static imports alone.
@@ -363,6 +393,8 @@ export const DATA_NEEDS = [
 	"recent",
 	"errors",
 	"tools",
+	"providers",
+	"gain",
 	"dailyActivity",
 	"rollupStatus",
 ] as const;
@@ -377,6 +409,8 @@ export interface PanelData {
 	recent?: RecentRequest[];
 	errors?: RecentRequest[];
 	tools?: ToolDashboardStats;
+	providers?: ProviderDashboardStats;
+	gain?: GainDashboardStats;
 	dailyActivity?: DailyActivityPoint[];
 	rollupStatus?: RollupStatus;
 }
@@ -399,6 +433,8 @@ const ROUTE_FETCHERS: Record<DataNeed, Fetcher> = {
 	recent: () => fetchRecent(50),
 	errors: range => fetchErrors(range, 50),
 	tools: range => fetchTools(range),
+	providers: range => fetchProviders(range),
+	gain: range => fetchGain(range),
 	dailyActivity: () => fetchDailyActivity(),
 	rollupStatus: async () => fetchRollupStatus(),
 };
@@ -432,6 +468,8 @@ export async function fetchFor(
 		routes.recent = () => fetchRecent(50, read);
 		routes.errors = r => fetchErrors(r, 50, read);
 		routes.tools = r => fetchTools(r, read);
+		routes.providers = r => fetchProviders(r, read);
+		routes.gain = r => fetchGain(r, read);
 	}
 
 	const entries = await Promise.all(

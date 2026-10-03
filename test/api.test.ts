@@ -8,6 +8,8 @@ import {
 	fetchRecent,
 	fetchErrors,
 	fetchTools,
+	fetchProviders,
+	fetchGain,
 	fetchRollupStatus,
 	fetchFor,
 	DATA_NEEDS,
@@ -59,6 +61,8 @@ test("each wrapper reads its own route and passes the range through", async () =
 		[fetchModelDashboard, "/api/stats/model-dashboard"],
 		[fetchCosts, "/api/stats/costs"],
 		[fetchTools, "/api/stats/tools"],
+		[fetchProviders, "/api/stats/providers"],
+		[fetchGain, "/api/stats/gain"],
 	] as const;
 	for (const [fetch, path] of cases) {
 		const { calls, read } = readerFor({});
@@ -130,6 +134,8 @@ test("every declared need is handled by fetchFor", async () => {
 		recent: [],
 		errors: [],
 		tools: { byTool: [], byToolModel: [], series: [] },
+		providers: { providers: [], hourly: [], series: [] },
+		gain: { overall: { savedTokens: 0, savedBytes: 0, hits: 0, outputBytes: 0, originalBytes: 0, reductionPercent: null }, bySource: {}, timeSeries: [], project: null, projects: [] },
 		dailyActivity: [],
 		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
 	};
