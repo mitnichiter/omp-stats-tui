@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { densify, pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
+import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
 import { buildCostSummary } from "@oh-my-pi/omp-stats/client/data/view-models";
 import type { CostTimeSeriesPoint } from "@oh-my-pi/omp-stats/shared-types";
 import {
@@ -75,6 +76,63 @@ test("costsForBuckets is the host's densify, not a reimplementation", () => {
 	expect(costsForBuckets(points, buckets)).toEqual(densify(points, buckets, (p) => p.cost));
 	expect(costsForBuckets([], buckets)).toEqual([0, 0]);
 	expect(costsForBuckets(points, [])).toEqual([]);
+});
+
+test("no cost is silently dropped when the axis is the host's own", () => {
+	// `densify` drops off-axis points BY DESIGN and silently: no error, no empty
+	// chart, just a shorter bill. The only defence is that the axis we hand it
+	// is the SAME axis the data was bucketed on, so this asserts the CONSERVATION
+	// property directly — everything inside the window survives the round trip.
+	//
+	// The failure this catches is the plausible one: an axis built by hand (a
+	// `for` loop over `columns`, an hourly `rangeMeta` bucket under day-aligned
+	// rows) which still renders a chart, just an empty or partial one.
+	const now = 200 * DAY;
+	const points = Array.from({ length: 20 }, (_, i) => ({
+		timestamp: (180 + i) * DAY, // all on exact day boundaries
+		cost: i + 1,
+	}));
+
+	for (const range of ["1h", "24h", "7d", "30d", "90d", "all"] as const) {
+		// `bucketAxis` is the host's, with the DAY width the costs route uses.
+		const axis = bucketAxis(range, points.map(p => p.timestamp), DAY, now);
+		const onAxis = new Set(axis);
+		const inWindow = points.filter(p => onAxis.has(p.timestamp));
+
+		const values = costsForBuckets(points, axis);
+
+		// One cell per bucket, always.
+		expect(values.length, range).toBe(axis.length);
+
+		// CONSERVATION: the rendered total equals the total of everything the
+		// axis covers. Nothing was dropped in silence.
+		const rendered = values.reduce((sum, v) => sum + v, 0);
+		const expected = inWindow.reduce((sum, p) => sum + p.cost, 0);
+		expect(rendered, `${range}: densify lost cost between the payload and the chart`).toBe(expected);
+
+		// And the window really does contain data for the ranges that should —
+		// otherwise the conservation check would pass trivially on an empty set.
+		if (range !== "1h") {
+			expect(inWindow.length, `${range}: nothing landed on the axis at all`).toBeGreaterThan(0);
+		}
+	}
+});
+
+test("a HAND-ROLLED axis on the same points loses data that the host's axis keeps", () => {
+	// The counterfactual, so the test above is not vacuous: this is the axis the
+	// panel could plausibly build instead, and it demonstrably drops points. If
+	// this ever stops dropping, the conservation test is no longer proving much.
+	const now = 200 * DAY;
+	const points = Array.from({ length: 20 }, (_, i) => ({ timestamp: (180 + i) * DAY, cost: i + 1 }));
+
+	const handRolled = Array.from({ length: 7 }, (_, i) => (now / DAY - 6 + i) * DAY + 1); // +1ms off
+	const hostAxis = bucketAxis("7d", points.map(p => p.timestamp), DAY, now);
+
+	const handRolledTotal = costsForBuckets(points, handRolled).reduce((s, v) => s + v, 0);
+	const hostTotal = costsForBuckets(points, hostAxis).reduce((s, v) => s + v, 0);
+
+	expect(handRolledTotal).toBeLessThan(hostTotal);
+	expect(hostTotal).toBeGreaterThan(0);
 });
 
 test("renderModelCostBars ranks with the host's pivotSeries, Other tail included", () => {
