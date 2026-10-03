@@ -4,8 +4,11 @@ import { glyph } from "../glyphs";
 /** The literal marker a human sees on a scaffolded screen. Pinned by test/screens.test.ts. */
 export const PLACEHOLDER_MARKER = "placeholder data — not real usage";
 
-/** Longest rule the marker line draws, so a wide terminal does not get a full-bleed divider. */
-const RULE_WIDTH = 60;
+// G5/G6: no rule is drawn here either. A scaffolded screen used to put a `───`
+// under its label, which is the exact separator the band grammar bans — and it
+// meant a scaffolded tab looked structurally different from an implemented one
+// for no reason the reader could act on. The marker line already says what the
+// rows are.
 
 /**
  * Render a scaffolded screen's sample rows behind the marker.
@@ -17,10 +20,9 @@ export function scaffold(
 	label: string,
 	rows: readonly string[],
 ): readonly string[] {
-	const rule = "─".repeat(Math.max(0, Math.min(ctx.width, RULE_WIDTH)));
 	return [
 		`${icon} ${label}  ${ctx.theme.fg("dim", PLACEHOLDER_MARKER)}`,
-		ctx.theme.fg("dim", rule),
+		"",
 		...rows,
 	];
 }
@@ -60,10 +62,9 @@ export function excluded(
 	label: string,
 	reason: string,
 ): readonly string[] {
-	const rule = "─".repeat(Math.max(0, Math.min(ctx.width, RULE_WIDTH)));
 	return [
 		`${icon} ${label}  ${ctx.theme.fg("dim", "excluded from the port")}`,
-		ctx.theme.fg("dim", rule),
+		"",
 		`  ${reason}`,
 	];
 }

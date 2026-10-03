@@ -570,6 +570,60 @@ test("an empty cost series is stated as empty, not drawn as a wall of zero colum
 });
 
 // ---------------------------------------------------------------------------
+// G5 / G6: the rule invariant, checked against the REAL FRAME
+// ---------------------------------------------------------------------------
+
+/**
+ * A run of three or more rule characters — the shape `band.test.ts` bans.
+ * The panel's own frame borders (`╭`, `│`, `╰`) are deliberately NOT matched:
+ * G6 is about SECTION rules inside the body, and the overlay's own border is
+ * chrome, exactly as `usage-dashboard` has one.
+ */
+const RULE_RUN = /[─━═]{3,}/;
+
+async function renderedFrame(screenId: (typeof SELECTABLE)[number]["id"], width = 120): Promise<string[]> {
+	const panel = makePanel({ data: dataFor(), screenId, rows: 40 });
+	await __testing.settled(panel);
+	return panel.render(width).map(stripAnsi);
+}
+
+test("G6: the frame carries EXACTLY ONE divider, and it is the PanelDivider's", async () => {
+	// G5 and G6 were only ever asserted against `renderBands(...)` — the grammar
+	// in isolation. The screens the panel ACTUALLY paints do not go through it, so
+	// the invariant was enforced nowhere in real output. This reads the real frame.
+	//
+	// The frame's top and bottom borders are CHROME (`OverlayPanel` draws them,
+	// exactly as it draws the divider) and are not what G6 is about. G6 is about
+	// dividers: `usage-dashboard.ts:573` has exactly one, between body and footer.
+	for (const screen of SELECTABLE) {
+		const frame = await renderedFrame(screen.id);
+		const dividers = frame.filter(row => row.includes("├"));
+		expect(dividers.length, `${screen.id} painted ${dividers.length} dividers`).toBe(1);
+
+		// Exactly one divider, and nothing else inside the body that reads as a
+		// horizontal rule. Borders and the divider are the overlay's own chrome.
+		const body = frame.filter(
+			row => !row.startsWith("╭") && !row.startsWith("╰") && !row.includes("├"),
+		);
+		const stray = body.filter(row => RULE_RUN.test(row));
+		expect(stray.length, `${screen.id} painted a rule that is not the divider:\n${stray.join("\n")}`).toBe(0);
+	}
+});
+
+test("G5: no screen paints a section rule inside its body", async () => {
+	// Every selectable screen, not just the overview: each one composes its own
+	// rows today, and a rule added to any of them must fail here.
+	for (const screen of SELECTABLE) {
+		const frame = await renderedFrame(screen.id);
+		// Drop the two chrome rows (top border and the divider) — chrome is not body.
+		const body = frame.slice(1, -1).filter(row => !row.includes("├"));
+		for (const row of body) {
+			expect(row, `${screen.id} painted a section rule: ${JSON.stringify(row)}`).not.toMatch(RULE_RUN);
+		}
+	}
+});
+
+// ---------------------------------------------------------------------------
 // Teardown
 // ---------------------------------------------------------------------------
 

@@ -84,8 +84,10 @@ export const MIN_PANEL_ROWS = PANEL_CHROME_ROWS + 1;
  */
 export const EXACT_DIRTY_LIMIT = 96;
 
-/** Longest rule the section headings draw, so a wide terminal is not full-bleed. */
-const RULE_WIDTH = 60;
+// G5: no section rule is drawn here. This constant used to size one, drawn
+// directly under the "Cost per bucket" heading — the exact `───` separator the
+// band grammar exists to eliminate. The heading already carries icon, title
+// and meta on one line (G2), so the rule added nothing but the regression.
 
 const NO_ROWS: readonly string[] = [];
 
@@ -709,7 +711,6 @@ function overviewBody(ctx: ScreenContext, chart: readonly string[], notice?: str
 	const series = ctx.data.costs?.costSeries ?? [];
 	const rows: string[] = [
 		`${statsIcon(ctx.preset, "cost", theme)} Cost per bucket  ${theme.fg("dim", rangeLabel(ctx.range))}`,
-		theme.fg("dim", "─".repeat(Math.max(0, Math.min(ctx.width, RULE_WIDTH)))),
 	];
 	if (notice) rows.push(theme.fg("warning", notice));
 	if (chart.length === 0 || series.length === 0) {

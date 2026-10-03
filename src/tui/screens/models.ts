@@ -36,8 +36,9 @@ import { pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
 import type { ModelDashboardPayload } from "../../data/api";
 import type { ModelStats } from "@oh-my-pi/omp-stats/client/types";
 
-/** Longest rule this module draws, so a 200-cell panel is not full-bleed. */
-const RULE_WIDTH = 60;
+// G5: this module draws no rule. The `RULE_WIDTH` constant and the `rule()`
+// helper that used to sit under every heading are gone — a blank line separates
+// sections now, which is what the band grammar prescribes.
 
 /** Ranked models before the host folds the tail into "Other (n)". */
 const TOP_MODELS = 8;
@@ -98,10 +99,6 @@ function heading(ctx: ScreenContext, role: IconRole, label: string): string {
 	const icon = padToWidth(statsIcon(ctx.preset, role), ICON_GUTTER[ctx.preset] ?? 0);
 	return `${icon} ${label}`;
 }
-
-/** A dimmed horizontal rule, clamped to the plan's inner width. */
-const rule = (ctx: ScreenContext): string =>
-	ctx.theme.fg("dim", "─".repeat(Math.max(0, Math.min(ctx.plan.innerWidth, RULE_WIDTH))));
 
 /** The `dim` painter, bound once per call site rather than rebound per row. */
 const dim = (ctx: ScreenContext): ((t: string) => string) =>
@@ -391,16 +388,20 @@ export const modelsScreen: Screen = {
 		if (byModel.length === 0) {
 			return [
 				heading(ctx, "models", "Models"),
-				rule(ctx),
+				"",
 				clamp(`  ${dim(ctx)(`No models recorded in the last ${ctx.range}.`)}`, width),
 				clamp(`  ${dim(ctx)("The database holds no model breakdown for this window.")}`, width),
 			];
 		}
 
-		const out: string[] = [heading(ctx, "models", "Models"), rule(ctx), ""];
+		// G5: a section is separated by a BLANK LINE, never by a rule. The rule
+		// that used to sit under every heading here is the exact regression
+		// `band.ts` was written to eliminate ("a stack of text blocks with a `───`
+		// rule above every section"). `/usage` draws zero rules inside its body.
+		const out: string[] = [heading(ctx, "models", "Models"), ""];
 
 		// --- 1. ranked by cost --------------------------------------------
-		out.push(heading(ctx, "cost", `Cost by model (${ctx.range})`), rule(ctx));
+		out.push(heading(ctx, "cost", `Cost by model (${ctx.range})`), "");
 		const bars = modelBars(ctx, byModel);
 		if (bars.length === 0) {
 			out.push(clamp(`  ${dim(ctx)("No model cost breakdown for this range.")}`, width));
@@ -418,7 +419,7 @@ export const modelsScreen: Screen = {
 		if (providers.length > 0) {
 			out.push(
 				heading(ctx, "providers", "Cost by provider"),
-				rule(ctx),
+				"",
 				...providers,
 				...caveat(ctx, "the same model behind two providers can cost two orders of magnitude apart"),
 				"",
@@ -438,7 +439,7 @@ export const modelsScreen: Screen = {
 			)
 			.slice(0, DETAIL_MODELS);
 
-		out.push(heading(ctx, "models", `Detail — top ${detail.length} by cost`), rule(ctx));
+		out.push(heading(ctx, "models", `Detail — top ${detail.length} by cost`), "");
 		if (detail.length === 0) {
 			out.push(clamp(`  ${dim(ctx)("No model made a request in this range.")}`, width));
 		} else {
