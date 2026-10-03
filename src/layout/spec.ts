@@ -1005,6 +1005,11 @@ const tools: ScreenSpec = {
 					metric: { kind: "derived", name: "avgResult", op: "share", of: { kind: "derived", name: "resultChars", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "resultChars" } }, against: { kind: "derived", name: "calls", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "calls" } } },
 					size: "sm",
 				},
+				{
+					label: "Avg arguments per call",
+					metric: { kind: "derived", name: "avgArgs", op: "share", of: { kind: "derived", name: "argsChars", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "argsChars" } }, against: { kind: "derived", name: "calls", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "calls" } } },
+					size: "sm",
+				},
 			],
 		},
 		{
@@ -1014,7 +1019,7 @@ const tools: ScreenSpec = {
 			chart: {
 				type: "bars",
 				axis: "count",
-				foldTo: { limit: 8, label: "Other" },
+				foldTo: { limit: 6, label: "Other" },
 				series: [
 					{
 						key: "calls",
@@ -1052,6 +1057,7 @@ const tools: ScreenSpec = {
 				{ header: "Errors", align: "right", cell: "badge", source: { kind: "aggregate", source: "toolsByTool", field: "errors" } },
 				{ header: "Args", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "argsChars" } },
 				{ header: "Result", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "resultChars" } },
+				{ header: "Result / call", align: "right", source: { kind: "derived", name: "avgResultChars", op: "share", of: { kind: "aggregate", source: "toolsByTool", field: "resultChars" }, against: { kind: "aggregate", source: "toolsByTool", field: "calls" } } },
 				{ header: "Attr. tokens", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "totalTokensShare" } },
 				{ header: "Attr. cost", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "costShare" } },
 				{ header: "Last used", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "lastUsed" } },
@@ -1071,10 +1077,13 @@ const tools: ScreenSpec = {
 			columns: [
 				{ header: "Tool", align: "left", source: { kind: "label", source: "toolsByToolModel", field: "tool" } },
 				{ header: "Model", align: "left", source: { kind: "label", source: "toolsByToolModel", field: "model" } },
+				{ header: "Provider", align: "left", source: { kind: "label", source: "toolsByToolModel", field: "provider" } },
 				{ header: "Calls", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "calls" } },
 				{ header: "Errors", align: "right", cell: "badge", source: { kind: "aggregate", source: "toolsByToolModel", field: "errors" } },
+				{ header: "Result", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "resultChars" } },
 				{ header: "Attr. tokens", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "totalTokensShare" } },
 				{ header: "Attr. cost", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "costShare" } },
+				{ header: "Last used", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "lastUsed" } },
 			],
 		},
 		{

@@ -12,6 +12,7 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 
 import { buildToolRows } from "@oh-my-pi/omp-stats/client/data/view-models";
+import { resolveNumber } from "../src/layout/resolve";
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { renderScreen, screenBands, renderScreenWith, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
@@ -101,4 +102,60 @@ test("tools: error badges exist for the tool that fails, not a silent zero", () 
 	// still print the counts; the badge is what a failure READS as.
 	const rendered = text(renderScreen(opts(liveData())));
 	expect(rendered).toContain("bash");
+});
+
+test("tools: the small grid carries the web's fourth tile, avg arguments per call", () => {
+	// ToolsRoute.tsx:141-144 renders four sm tiles; the spec carried three.
+	// The value is the same inline division as its result neighbour.
+	const tools = liveData().tools!;
+	const calls = tools.byTool.reduce((sum, row) => sum + row.calls, 0);
+	const args = tools.byTool.reduce((sum, row) => sum + row.argsChars, 0);
+	const secondRow = spec.bands.filter(b => b.kind === "statRow")[1];
+	expect(secondRow?.kind === "statRow" ? secondRow.stats.map(t => t.label) : []).toEqual([
+		"Result text",
+		"Call arguments",
+		"Avg result per call",
+		"Avg arguments per call",
+	]);
+	const tile = secondRow?.kind === "statRow"
+		? secondRow.stats.find(t => t.label === "Avg arguments per call")!
+		: undefined;
+	expect(tile).toBeTruthy();
+	expect(resolveNumber(tile!.metric, liveData())).toBeCloseTo(args / calls, 9);
+});
+
+test("tools: 'By tool' carries the web's Result / call column, per row", () => {
+	// ToolsRoute.tsx:415-419 `avgResultChars`, muted. Per-row, not range-wide:
+	// the column resolves row-scoped, so each row divides its own figures.
+	const bands = screenBands(opts(liveData()));
+	const band = bands.find(b => b.kind === "table" && b.title === "By tool");
+	if (band === undefined || band.kind !== "table") throw new Error(`"By tool" is not a table band`);
+	const specBand = spec.bands.find(b => b.kind === "table" && b.title === "By tool");
+	if (specBand === undefined || specBand.kind !== "table") throw new Error(`"By tool" has no spec band`);
+	const column = specBand.columns.find(c => c.header === "Result / call");
+	expect(column, `"Result / call" column missing`).toBeTruthy();
+	const [row] = liveData().tools!.byTool;
+	expect(resolveNumber(column!.source, liveData(), row)).toBeCloseTo(row!.resultChars / row!.calls, 9);
+});
+
+test("tools: 'By tool and model' carries Result, Last used and the provider line", () => {
+	// ToolsRoute.tsx:486-560 has eight columns; the spec carried six, and the
+	// Model cell pairs the provider underneath. The panel has no secondary
+	// cell, so the provider rides in its own column — the models table's
+	// precedent — rather than vanishing.
+	const specBand = spec.bands.find(b => b.kind === "table" && b.title === "By tool and model");
+	if (specBand === undefined || specBand.kind !== "table") throw new Error(`"By tool and model" has no spec band`);
+	const headers = specBand.columns.map(c => c.header);
+	for (const header of ["Result", "Last used", "Provider"]) expect(headers, header).toContain(header);
+	const rendered = text(renderScreen(opts(liveData())));
+	for (const row of liveData().tools!.byToolModel) {
+		expect(rendered, `${row.tool}/${row.model}/${row.provider}`).toContain(row.provider);
+	}
+});
+
+test("tools: the chart folds at the web's TOP_TOOLS, not an invented eight", () => {
+	// ToolsRoute.tsx:51 `TOP_TOOLS = 6`, passed as pivotSeries `limit`.
+	const band = spec.bands.find(b => b.kind === "chart" && b.title === "Calls over time");
+	if (band === undefined || band.kind !== "chart") throw new Error(`"Calls over time" has no spec band`);
+	expect(band.chart.foldTo?.limit).toBe(6);
 });
