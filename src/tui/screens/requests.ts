@@ -21,6 +21,6 @@ export const requestsScreen: Screen = {
 	label: "Requests",
 	short: "Requests",
 	status: "implemented",
-	needs: ["recent", "errors", "rollupStatus"],
+	needs: ["recent", "rollupStatus"],
 	render: ctx => renderSpecScreen(spec, ctx),
 };

@@ -41,6 +41,8 @@ import {
 	buildCostSummary,
 	buildFolderRows,
 	groupErrorsBySignature,
+	requestStatus,
+	summarizeRequests,
 } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
 import type { CostTimeSeriesPoint, FolderStats } from "@oh-my-pi/omp-stats/shared-types";
@@ -206,6 +208,62 @@ export const HOST_DERIVED: Readonly<
 				seen.add(modelKey(model, typeof provider === "string" ? provider : ""));
 			}
 			return seen.size;
+		},
+	},
+
+	/**
+	 * `RequestsRoute.tsx:64` — `summarizeRequests(inRange)` over the LOADED rows,
+	 * not over the `errors` endpoint. The endpoint is range+limit capped and
+	 * excludes the ok/aborted context the status needs, so counting it as
+	 * "failed" disagrees with the dashboard by however many failures fell
+	 * outside the cap. `requestStatus` is the host's own outcome rule:
+	 * aborted beats error, error-or-message fails, the rest is ok.
+	 */
+	requestFailed: {
+		source: "recentMessages",
+		compute: rows => summarizeRequests(rowsAs<Parameters<typeof summarizeRequests>[0][number]>(rows)).failed,
+	},
+
+	/**
+	 * `RequestsRoute.tsx:64` — the aborted share of the same summary. The
+	 * `errors` payload cannot supply it: aborted is a `stopReason`, not an
+	 * error message, and only the loaded rows carry it.
+	 */
+	requestAborted: {
+		source: "recentMessages",
+		compute: rows => summarizeRequests(rowsAs<Parameters<typeof summarizeRequests>[0][number]>(rows)).aborted,
+	},
+
+	/**
+	 * `RequestsRoute.tsx:64` — nearest-rank quantiles over the loaded rows'
+	 * durations and ttfts (`view-models.ts` quantile: ascending, ceil(q*n)-1).
+	 * A mean would answer a different question; `null` when no row carried one.
+	 * `formatDurationMs(null)` renders "–", which is the web's own empty path.
+	 */
+	medianDuration: {
+		source: "recentMessages",
+		compute: rows => summarizeRequests(rowsAs<Parameters<typeof summarizeRequests>[0][number]>(rows)).medianDuration,
+	},
+	p95Duration: {
+		source: "recentMessages",
+		compute: rows => summarizeRequests(rowsAs<Parameters<typeof summarizeRequests>[0][number]>(rows)).p95Duration,
+	},
+	medianTtft: {
+		source: "recentMessages",
+		compute: rows => summarizeRequests(rowsAs<Parameters<typeof summarizeRequests>[0][number]>(rows)).medianTtft,
+	},
+
+	/**
+	 * `view-models.ts:325` — the outcome of ONE row: aborted, failed, or ok.
+	 * Row-scoped by construction: the table resolves it per row, and a badge
+	 * over `errorMessage` alone would call an aborted request failed.
+	 */
+	requestStatus: {
+		source: "recentMessages",
+		compute: (rows, ctx) => {
+			const [row] = rows as readonly Parameters<typeof requestStatus>[0][];
+			if (!row) return null;
+			return requestStatus(row);
 		},
 	},
 };

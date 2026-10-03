@@ -799,7 +799,7 @@ const requests: ScreenSpec = {
 	id: "requests",
 	label: "Requests",
 	short: "Requests",
-	needs: ["recent", "errors", "rollupStatus"],
+	needs: ["recent", "rollupStatus"],
 	source: {
 		file: "@oh-my-pi/omp-stats/src/client/routes/RequestsRoute.tsx",
 		lines: "107-114 (header), 115-154 (StatGrid), 156-205 (Request log card), 219-299 (columns)",
@@ -815,7 +815,8 @@ const requests: ScreenSpec = {
 				},
 				{
 					label: "Failed",
-					metric: { kind: "derived", name: "failed", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "id" } },
+					metric: { kind: "derived", name: "requestFailed", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "id" } },
+					hint: { kind: "derived", name: "requestAborted", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "id" } },
 				},
 				{
 					label: "Tokens",
@@ -824,6 +825,15 @@ const requests: ScreenSpec = {
 				{
 					label: "API-equivalent cost",
 					metric: { kind: "derived", name: "cost", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "usage.cost.total" } },
+				},
+				{
+					label: "Median duration",
+					metric: { kind: "derived", name: "medianDuration", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "duration" } },
+					hint: { kind: "derived", name: "p95Duration", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "duration" } },
+				},
+				{
+					label: "Median TTFT",
+					metric: { kind: "derived", name: "medianTtft", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "ttft" } },
 				},
 			],
 		},
@@ -840,6 +850,7 @@ const requests: ScreenSpec = {
 			},
 			columns: [
 				{ header: "Model", align: "left", source: { kind: "label", source: "recentMessages", field: "model" } },
+				{ header: "Provider", align: "left", source: { kind: "label", source: "recentMessages", field: "provider" } },
 				{ header: "When", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "timestamp" } },
 				{ header: "Project", align: "left", source: { kind: "label", source: "recentMessages", field: "folder" } },
 				{ header: "Input", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.input" } },
@@ -852,7 +863,7 @@ const requests: ScreenSpec = {
 					header: "Status",
 					align: "right",
 					cell: "badge",
-					source: { kind: "aggregate", source: "recentMessages", field: "errorMessage" },
+					source: { kind: "derived", name: "requestStatus", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "stopReason" } },
 				},
 			],
 		},

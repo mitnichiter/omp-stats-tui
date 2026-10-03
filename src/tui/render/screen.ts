@@ -321,6 +321,9 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	duration: duration,
 	avgTtft: duration,
 	ttft: duration,
+	medianDuration: duration,
+	p95Duration: duration,
+	medianTtft: duration,
 	avgTokensPerSecond: speed,
 };
 
@@ -410,12 +413,21 @@ function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | 
 	// three-across grid with an empty cell reads as a rendering fault.
 	if (text === "") return null;
 
-	const hint =
+	const rawHint =
 		tile.hint === undefined
 			? undefined
 			: "text" in tile.hint
 				? tile.hint.text
 				: formatValue(tile.hint, resolveCell(tile.hint, opts.data), undefined, opts);
+	// The requests screen's median tile pairs its p95 beside it ("p95 12.3s"),
+	// as the web's `Median duration` stat does. The IR names the value; the
+	// "p95" prefix is presentation, so it lives here beside the value.
+	const hint =
+		rawHint === undefined || rawHint === ""
+			? undefined
+			: tile.label === "Median duration" && tile.hint !== undefined && !("text" in tile.hint)
+				? `p95 ${rawHint}`
+				: rawHint;
 
 	return {
 		label: tile.label,
@@ -1050,7 +1062,17 @@ function meterCell(
  * That distinction is why a request's status reads "ok" and not "—".
  */
 function badgeCell(column: IRColumn, row: DataRow, opts: ScreenRenderOptions): string {
-	const value = resolveCell(column.source, opts.data, row);
+	// The request log's Status is the host's `requestStatus`, not the raw
+	// `errorMessage`: an aborted request carries no error and must not read
+	// "failed". Aborted is `warning` — interrupted work, not a failure — and
+	// only genuinely failed rows take `negative`.
+	const statusValue = resolveCell(column.source, opts.data, row);
+	if (leafFieldOf(column.source) === "stopReason" && typeof statusValue === "string") {
+		if (statusValue === "aborted") return opts.fg("warning", "aborted");
+		if (statusValue === "failed") return opts.fg(PALETTE.negative, "failed");
+		return opts.fg(PALETTE.positive, "ok");
+	}
+	const value = statusValue;
 	if (typeof value === "string") {
 		return value === "" ? opts.fg(PALETTE.positive, "ok") : opts.fg(PALETTE.negative, "failed");
 	}

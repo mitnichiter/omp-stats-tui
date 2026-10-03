@@ -12,12 +12,15 @@ import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 
-import { requestStatus } from "@oh-my-pi/omp-stats/client/data/view-models";
+import { requestStatus, summarizeRequests } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { SCREEN_SPECS } from "../src/layout/spec";
+import { resolveCell, resolveLabel, resolveNumber } from "../src/layout/resolve";
+import { sourceOf } from "../src/layout/spec";
 import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
 import { SERIES_COLORS, stripForTest } from "../src/tui/palette";
+import { formatDurationMs } from "@oh-my-pi/omp-stats/client/data/formatters";
 import { DEFAULT_RANGE } from "../src/data/ranges";
 import type { PanelData } from "../src/data/api";
 import { FIXTURE_NOW, liveData, messageRow } from "./fixtures/panel";
@@ -106,4 +109,58 @@ test("requests: the log has one table and no chart band", () => {
 	const bands = screenBands(opts(liveData()));
 	expect(bands.filter(b => b.kind === "table").map(b => b.title)).toEqual(["Request log"]);
 	expect(bands.some(b => b.kind === "chart")).toBe(false);
+});
+
+test("requests: the stat row carries the web's six tiles, not four", () => {
+	// RequestsRoute.tsx:117-154 renders six tiles; the spec carried four.
+	// Median/p95 are nearest-rank quantiles over the loaded rows — the same
+	// rule as the host's `summarizeRequests` (view-models.ts quantile).
+	expect(spec.bands.filter(b => b.kind === "statRow").flatMap(b => b.kind === "statRow" ? b.stats.map(t => t.label) : [])).toEqual([
+		"Requests",
+		"Failed",
+		"Tokens",
+		"API-equivalent cost",
+		"Median duration",
+		"Median TTFT",
+	]);
+	const { medianDuration, p95Duration, medianTtft } = summarizeRequests(liveData().recent as never);
+	const tiles = spec.bands.flatMap(b => b.kind === "statRow" ? b.stats : []);
+	const median = tiles.find(t => t.label === "Median duration")!;
+	expect(resolveNumber(median.metric, liveData())).toBe(medianDuration);
+	// The hint is a second derived ref over the same rows; the renderer formats
+	// it with the duration formatter, so assert the VALUE here and pin the
+	// "p95 12.3s" text on the rendered band below.
+	expect(median.hint && !("text" in median.hint) ? resolveNumber(median.hint, liveData()) : undefined).toBe(p95Duration);
+	expect(resolveNumber(tiles.find(t => t.label === "Median TTFT")!.metric, liveData())).toBe(medianTtft);
+	const statBands = screenBands(opts(liveData())).filter(b => b.kind === "statRow");
+	const renderedHints = statBands.flatMap(b => b.kind === "statRow" ? b.stats.map(t => t.hint ?? "") : []);
+	expect(renderedHints.some(hint => hint === `p95 ${formatDurationMs(p95Duration)}`)).toBe(true);
+});
+test("requests: failed means the host's failed, not the errors endpoint", () => {
+	// RequestsRoute counts `summarizeRequests(inRange).failed` via
+	// `requestStatus` over the loaded rows; the spec counted the `errors`
+	// endpoint, which is range+limit capped and disagrees. The tile resolves
+	// against recentMessages, and `errors` leaves the needs.
+	const summary = summarizeRequests(liveData().recent as never);
+	const failed = spec.bands.flatMap(b => b.kind === "statRow" ? b.stats : []).find(t => t.label === "Failed")!;
+	expect(sourceOf(failed.metric)).toBe("recentMessages");
+	expect(resolveNumber(failed.metric, liveData())).toBe(summary.failed);
+	expect([...spec.needs].sort()).toEqual(["recent", "rollupStatus"]);
+});
+
+test("requests: the log carries the provider line and the abort-aware status", () => {
+	// The Model cell pairs the provider underneath (LabelCell primary+secondary)
+	// and Status reads requestStatus: aborted rows are "aborted", not "failed".
+	// The panel has no secondary cell, so the provider rides in its own column —
+	// the models table's precedent — rather than vanishing.
+	const band = spec.bands.find(b => b.kind === "table" && b.title === "Request log");
+	if (band === undefined || band.kind !== "table") throw new Error(`"Request log" has no spec band`);
+	expect(band.columns.map(c => c.header)).toContain("Provider");
+	const aborted = messageRow({ id: 301, stopReason: "aborted", errorMessage: null, model: "probe-aborted-2" });
+	expect(requestStatus(aborted)).toBe("aborted");
+	expect(resolveLabel(
+		band.columns.find(c => c.header === "Status")!.source,
+		liveData({ recent: [aborted] as never, errors: [] }),
+		aborted as never,
+	)).toBe("aborted");
 });
