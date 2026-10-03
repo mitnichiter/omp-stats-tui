@@ -1,33 +1,26 @@
-import type { Screen } from "./types";
-import { scaffold, sampleFooter, sampleBar } from "./placeholders";
-import { statsIcon } from "../icons";
-import { formatInteger } from "../format";
-
-const SAMPLE = [
-	{ tool: "example/read", calls: 900, share: 1 },
-	{ tool: "example/edit", calls: 90, share: 0.1 },
-	{ tool: "example/bash", calls: 9, share: 0.01 },
-	{ tool: "example/never-called", calls: 0, share: 0 },
-];
-
 /**
- * Per-tool token and cost figures are SHARES of the assistant turn that asked for
- * them, not measurements of each call — one turn's usage is attributed across its
- * batch. So this screen ranks calls, and Task 16 must not print a per-call cost.
+ * `src/tui/screens/tools.ts` — registry entry, and nothing else.
+ *
+ * A spec'd screen's registry entry carries identity and contract and defers
+ * `render` to the pipeline; see `costs.ts` for why a body here would be a
+ * second grammar for the same screen.
+ *
+ * Per-tool token and cost figures are SHARES of the assistant turn that asked
+ * for them, not measurements of each call — one turn's usage is attributed
+ * across its batch. So this screen ranks calls and never prints a per-call cost.
  */
+
+import type { Screen } from "./types";
+import { SCREEN_SPECS } from "../../layout/spec";
+import { renderSpecScreen } from "./render";
+
+const spec = SCREEN_SPECS.find(s => s.id === "tools")!;
+
 export const toolsScreen: Screen = {
 	id: "tools",
 	label: "Tools",
 	short: "Tools",
-	status: "scaffolded",
-	needs: ["tools"],
-	reason: "scaffolded: the call ranking is sample data until it lands, and it must never print a per-call cost",
-	render: ctx =>
-		scaffold(ctx, statsIcon(ctx.preset, "tools"), "Tools", [
-			...SAMPLE.map(t =>
-				[`  ${t.tool.padEnd(24)}`, sampleBar(ctx, t.share), `  ${formatInteger(t.calls)} calls`].join(""),
-			),
-			sampleFooter(ctx, SAMPLE.length),
-			`  ${ctx.theme.fg("dim", "example/never-called is a sample zero: a zero row must still be visible")}`,
-		]),
+	status: "implemented",
+	needs: ["tools", "rollupStatus"],
+	render: ctx => renderSpecScreen(spec, ctx),
 };
