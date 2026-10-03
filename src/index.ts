@@ -8,7 +8,7 @@ import { STATS_OVERLAY_OPTIONS, StatsPanel } from "./tui/panel";
 // produces an obscure load failure rather than a clear error. Warn loudly, on
 // stderr (stdout is the TUI's), and still load — refusing to load would leave
 // the user with a working omp and no explanation.
-const PINNED = "18.4.10";
+const PINNED = "18.5.0";
 
 /** Injectable for tests; production is the package's own initDb. */
 type InitFn = () => Promise<unknown>;
