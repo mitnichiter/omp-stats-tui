@@ -633,7 +633,10 @@ function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[
 		labelWidth: HEAT_LABEL_WIDTH,
 		weeks: weeksForWidth(HEAT_LABEL_WIDTH, width),
 		glyphs: opts.glyphs ?? glyphsFor(opts.preset),
-		ramp: [1, 2, 3].map(level => heatRamp(opts.palette, level)),
+		// Four stops, one per level (usage-dashboard.ts:812 + :867) — a
+		// three-stop ramp leaves level 4 uncoloured.
+		ramp: [0, 1, 2, 3].map(level => heatRamp(opts.palette, level)),
+		dim: text => opts.fg("dim", text),
 		...(opts.today ? { today: opts.today } : {}),
 	});
 }

@@ -30,7 +30,7 @@ import { renderDailyBars, renderModelCostBars } from "../src/tui/charts/bars";
 import { renderHeatmap } from "../src/tui/charts/heatmap";
 import { renderSparkline } from "../src/tui/charts/sparkline";
 import { bandHeights, renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
-import { PALETTE, resolveSeries, stripForTest, type PaletteTheme } from "../src/tui/palette";
+import { PALETTE, heatRamp, resolveSeries, stripForTest, type PaletteTheme } from "../src/tui/palette";
 import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
 import type { CostTimeSeriesPoint, DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 
@@ -144,6 +144,22 @@ const ACTIVITY: readonly DailyActivityPoint[] = Array.from({ length: 40 }, (_, i
 	totalTokens: 1_000_000 * (i + 1),
 }));
 
+test("renderHeatmap resolves one stop per level through the palette ramp", () => {
+	// usage-dashboard.ts:812 + :867 — four stops at t=0.3/0.5/0.72/1.0, indexed
+	// ramp[level-1]. A three-stop ramp leaves level 4 uncoloured.
+	const rows = renderHeatmap(ACTIVITY, {
+		innerWidth: 120,
+		labelWidth: 2,
+		weeks: 12,
+		glyphs: glyphsFor("unicode"),
+		ramp: [0, 1, 2, 3].map(level => heatRamp(THEME, level)),
+		dim: (text: string) => text,
+		today: new Date("2026-07-15T12:00:00Z"),
+	});
+	expect(rows.length).toBe(8);
+	expect(new Set([0, 1, 2, 3].map(level => heatRamp(THEME, level))).size).toBe(4);
+});
+
 test("renderHeatmap renders at every width and preset without overflowing", () => {
 	for (const preset of PRESETS) {
 		for (const width of WIDTHS) {
@@ -153,6 +169,7 @@ test("renderHeatmap renders at every width and preset without overflowing", () =
 				weeks: 12,
 				glyphs: glyphsFor(preset),
 				ramp: [PALETTE.heat1, PALETTE.heat2, PALETTE.heat3].map(() => ""),
+				dim: (text: string) => text,
 				today: new Date("2026-07-15T12:00:00Z"),
 			});
 			expect(rows.length).toBe(8); // month row + seven weekday rows
@@ -160,7 +177,6 @@ test("renderHeatmap renders at every width and preset without overflowing", () =
 		}
 	}
 });
-
 const COST_POINTS: readonly CostTimeSeriesPoint[] = [
 	{
 		timestamp: 1_700_000_000_000,
