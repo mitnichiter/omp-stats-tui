@@ -17,8 +17,20 @@ import {
  * keeps the real database untouched.
  */
 
-/** A fake child whose stdout the test writes by hand. */
-function fakeChild(): { child: SyncChild; emit: (o: unknown) => void; end: () => void; kills: number[] } {
+/**
+ * A fake child whose stdout the test writes by hand.
+ *
+ * `signals` records the SIGNAL VERBATIM. An earlier version normalised every
+ * signal to the number 9, which silently erased the one distinction this file
+ * exists to protect: `kill("SIGTERM")` and `kill("SIGKILL")` both became `9`,
+ * so no assertion could ever tell them apart.
+ */
+function fakeChild(): {
+	child: SyncChild;
+	emit: (o: unknown) => void;
+	end: () => void;
+	signals: (number | NodeJS.Signals | undefined)[];
+} {
 	const encoder = new TextEncoder();
 	let controller!: ReadableStreamDefaultController<Uint8Array>;
 	const stdout = new ReadableStream<Uint8Array>({
@@ -26,14 +38,14 @@ function fakeChild(): { child: SyncChild; emit: (o: unknown) => void; end: () =>
 			controller = c;
 		},
 	});
-	const kills: number[] = [];
+	const signals: (number | NodeJS.Signals | undefined)[] = [];
 	return {
 		child: {
 			pid: 4242,
 			stdout,
 			stderr: null,
 			kill: (signal?: number | NodeJS.Signals) => {
-				kills.push(typeof signal === "number" ? signal : 9);
+				signals.push(signal);
 				try {
 					controller.close();
 				} catch {}
@@ -45,7 +57,7 @@ function fakeChild(): { child: SyncChild; emit: (o: unknown) => void; end: () =>
 				controller.close();
 			} catch {}
 		},
-		kills,
+		signals,
 	};
 }
 
@@ -97,36 +109,164 @@ test("the child streams progress messages, then a terminal done", async () => {
 	handle.kill();
 });
 
+/**
+ * A REAL child that outlives a polite kill, plus an event-driven barrier.
+ *
+ * `until(needle)` blocks on the child's own OUTPUT rather than on a duration:
+ * no sleep, no guessed timeout. That matters because the obvious version of
+ * this test — spawn, signal immediately, wait — is a RACE. `process.on('SIGTERM')`
+ * only takes effect once the child has executed that line, so a signal sent
+ * earlier hits the default disposition and kills the child anyway. That race
+ * made the original test pass against `kill("SIGTERM")` in the source: the
+ * assertion existed, and could not fail.
+ *
+ * The child is always SIGKILLed in a `finally`, because a leaked
+ * `setInterval(() => {}, 1000)` process outlives the test run.
+ */
+async function stubbornChild(script: string) {
+	const spawn = Bun.spawn([process.execPath, "-e", script], { stdout: "pipe", stderr: "pipe" });
+	const exited = spawn.exited;
+	const reader = spawn.stdout.getReader();
+	const decoder = new TextDecoder();
+	let text = "";
+	let raw = new Uint8Array(0);
+
+	const until = async (needle: string): Promise<string> => {
+		for (;;) {
+			if (text.includes(needle)) return text;
+			const { done, value } = await reader.read();
+			if (done) throw new Error(`child exited before emitting ${needle}; saw ${JSON.stringify(text)}`);
+			text += decoder.decode(value, { stream: true });
+			const merged = new Uint8Array(raw.length + value.length);
+			merged.set(raw);
+			merged.set(value, raw.length);
+			raw = merged;
+		}
+	};
+
+	/** Replays what the barrier consumed, then keeps streaming. */
+	const streamAfterBarrier = (): ReadableStream<Uint8Array> =>
+		new ReadableStream<Uint8Array>({
+			async start(controller) {
+				controller.enqueue(raw);
+				for (;;) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					controller.enqueue(value);
+				}
+				controller.close();
+			},
+		});
+
+	return { spawn, exited, until, streamAfterBarrier, reap: () => spawn.kill("SIGKILL") };
+}
 test("the child dies when the parent goes away, and a still-running sync leaves nothing behind", async () => {
 	// A REAL long-lived child, so "the child is actually gone" is checked against
 	// the OS rather than against a recorded call. It ignores SIGTERM, so only
 	// SIGKILL can clear this pid.
-	const spawn = Bun.spawn([process.execPath, "-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"], {
-		stdout: "pipe",
-		stderr: "pipe",
-	});
-	// The platform clock is genuinely in play here — the assertion is that the OS
-	// reaps a killed pid, which no fake timer can model.
-	const exited = spawn.exited;
-	const child: SyncChild = {
-		pid: spawn.pid,
-		stdout: spawn.stdout as ReadableStream<Uint8Array>,
-		stderr: null,
-		kill: (signal?: number | NodeJS.Signals) =>
-			spawn.kill((typeof signal === "number" ? signal : (signal ?? "SIGKILL")) as never),
-	};
+	const kid = await stubbornChild(
+		`process.on('SIGTERM', () => {}); console.log('READY'); setInterval(() => {}, 1000);`,
+	);
+	try {
+		// BARRIER: the child prints READY only after installing its SIGTERM
+		// handler, so this line is proof the polite-kill refusal is live.
+		expect(await kid.until("READY")).toContain("READY");
 
+		const child: SyncChild = {
+			pid: kid.spawn.pid,
+			stdout: kid.streamAfterBarrier(),
+			stderr: null,
+			kill: signal => kid.spawn.kill((signal ?? "SIGKILL") as never),
+		};
+
+		const controller = new AbortController();
+		const handle = startIngest(() => {}, controller.signal, () => child);
+		const pid = kid.spawn.pid!;
+
+		expect(() => process.kill(pid, 0)).not.toThrow(); // alive before abort
+
+		// ONLY the abort. Calling `handle.kill()` as well would mask a client
+		// whose abort path no longer kills at all — a separate test covers that.
+		controller.abort();
+
+		// `await exited` IS the assertion: SIGKILL is unignorable, so a child
+		// that survived would hang the test rather than pass it.
+		await kid.exited;
+		expect(() => process.kill(pid, 0)).toThrow(); // reaped
+		await handle.settled.catch(() => {}); // abort settles rather than hangs
+	} finally {
+		kid.reap();
+	}
+});
+
+test("SIGTERM would NOT reap a worker holding the sync lock, which is why the kill is SIGKILL", async () => {
+	// The JUSTIFICATION for the signal choice, asserted instead of commented.
+	// The child REPORTS that it handled SIGTERM, so receiving that report is
+	// proof it survived the polite kill — event-driven, no guessed duration.
+	const kid = await stubbornChild(
+		`process.on('SIGTERM', () => console.log('IGNORED')); console.log('READY'); setInterval(() => {}, 1000);`,
+	);
+	try {
+		await kid.until("READY"); // handler installed before we signal
+		kid.spawn.kill("SIGTERM");
+
+		expect(
+			await kid.until("IGNORED"),
+			"the worker never saw the SIGTERM — delivery was not proven",
+		).toContain("IGNORED");
+		expect(
+			() => process.kill(kid.spawn.pid!, 0),
+			"the worker died on SIGTERM, so it no longer needs SIGKILL",
+		).not.toThrow();
+
+		kid.spawn.kill("SIGKILL");
+		await kid.exited;
+		expect(() => process.kill(kid.spawn.pid!, 0)).toThrow();
+	} finally {
+		kid.reap();
+	}
+});
+
+test("aborting sends SIGKILL and nothing else — a polite kill would be ignored", async () => {
+	// The deterministic half of the SIGKILL invariant: no process, no timers.
+	// The fake records the signal VERBATIM, so this fails if the kill is
+	// softened to SIGTERM — the mutation the old normalising fake could not see.
+	const { child, signals } = fakeChild();
 	const controller = new AbortController();
 	const handle = startIngest(() => {}, controller.signal, () => child);
-	const pid = spawn.pid!;
 
-	expect(() => process.kill(pid, 0)).not.toThrow(); // alive before abort
 	controller.abort();
-	handle.kill();
 
-	await exited; // the real signal that the process is gone
-	expect(() => process.kill(pid, 0)).toThrow(); // reaped by SIGKILL
-	await handle.settled.catch(() => {}); // abort settles rather than hangs
+	expect(signals.length).toBe(1);
+	expect(signals[0], "the abort must SIGKILL, not SIGTERM").toBe("SIGKILL");
+	await handle.settled;
+});
+
+test("aborting settles the handle as a normal close, not as a failure", async () => {
+	// Aborting is the caller saying "I am done", so the promise RESOLVES. A
+	// rejection here would surface an error the panel asked for and has no way
+	// to distinguish from a real ingest failure.
+	const { child, signals } = fakeChild();
+	const controller = new AbortController();
+	const handle = startIngest(() => {}, controller.signal, () => child);
+
+	controller.abort();
+
+	// Resolves — an unhandled rejection here would fail the run.
+	await expect(handle.settled).resolves.toBeUndefined();
+	expect(signals.length).toBe(1);
+});
+
+test("killing after `done` still SIGKILLs, because the child has the lock too", async () => {
+	// `done` means the work finished, NOT that the process released its lock:
+	// `finish()` calls `kill()` on the way out, and that is the call that
+	// releases the lock. Dropping it would leave the panel's next sync blocked.
+	const { child, emit, signals } = fakeChild();
+	const handle = startIngest(() => {}, undefined, () => child);
+	emit({ type: "done", rollup: { dirtyHours: 0, dirtySessions: 0 } });
+	await handle.settled;
+
+	expect(signals).toEqual(["SIGKILL"]);
 });
 
 
