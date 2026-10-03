@@ -37,6 +37,15 @@ test("day rows label all seven days, Monday first", () => {
 	expect(heads).toEqual(["M", "T", "W", "T", "F", "S", "S"]);
 });
 
+test("weeksForWidth is the host's continuous clamp, not a ladder", () => {
+	// usage-dashboard.ts:834 — max(4, min(53, floor((innerWidth - 2) / 2))).
+	// A ladder drops weeks the host keeps (e.g. width 60 shows 29, not 26).
+	expect(weeksForWidth(2, 60)).toBe(29);
+	expect(weeksForWidth(2, 100)).toBe(49);
+	expect(weeksForWidth(2, 200)).toBe(53);
+	expect(weeksForWidth(2, 10)).toBe(4);
+});
+
 test("a heatmap is a month-label row plus exactly seven day rows", () => {
 	expect(renderHeatmap([], { ...opts(53), today: TODAY })).toHaveLength(8);
 });
@@ -178,12 +187,13 @@ test("the ink comes from the glyph table, never a literal", () => {
 
 test("narrow terminals reduce the WINDOW, never the cell size", () => {
 	// Rule 6: a cell stays one column; only the number of weeks changes.
-	// With labelWidth 2 the band edges fall at innerWidth 6 / 18 / 26 / 50 / 110.
+	// The host's continuous clamp (usage-dashboard.ts:834) has no band edges:
+	// width 20 shows 9 weeks, width 1 clamps to the 4-week floor.
 	expect(weeksForWidth(2, 200)).toBeGreaterThan(weeksForWidth(2, 40));
 	expect(weeksForWidth(2, 40)).toBeGreaterThan(weeksForWidth(2, 20));
-	expect(weeksForWidth(2, 20)).toBe(8);
+	expect(weeksForWidth(2, 20)).toBe(9);
 	expect(weeksForWidth(2, 10)).toBe(4);
-	expect(weeksForWidth(2, 1)).toBeGreaterThanOrEqual(1);
+	expect(weeksForWidth(2, 1)).toBe(4);
 });
 
 test("the summary reports both totals and surfaces unpriced spend", () => {

@@ -71,23 +71,12 @@ export interface HeatmapOptions {
 }
 
 /**
- * How many week columns fit at this label width, from the narrow-terminal ladder
- * the brief specifies: 12 → 8 → 4.
- *
- * Narrow terminals reduce the WINDOW, never the cell size. A cell stays exactly
- * one column wide because a sub-cell calendar is unreadable and cannot be
- * redrawn at a different size later; dropping weeks instead keeps the same
- * Monday-first geometry at a readable scale.
+ * How many week columns fit the width: the host's own continuous clamp
+ * (usage-dashboard.ts:834). Narrow terminals lose WINDOW, never cell size —
+ * a cell stays exactly one column wide.
  */
 export function weeksForWidth(labelWidth: number, innerWidth: number): number {
-	const available = Math.max(0, innerWidth - labelWidth);
-	// The brief's ladder — 12 → 8 → 4 — extended upward, because saturating a wide
-	// terminal at three months would waste the space a year-long calendar needs.
-	if (available >= 108) return 53;
-	if (available >= 48) return 26;
-	if (available >= 24) return 12;
-	if (available >= 16) return 8;
-	return 4;
+	return Math.max(4, Math.min(53, Math.floor((innerWidth - labelWidth) / 2)));
 }
 
 /**
