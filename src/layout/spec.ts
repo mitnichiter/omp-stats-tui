@@ -612,19 +612,27 @@ const costs: ScreenSpec = {
 					emphasis: "primary",
 					hint: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
 				},
-				{
-					label: "Average per day",
-					metric: { kind: "derived", name: "avgDailyCost", op: "max", of: costSeries("cost", "model"), against: { kind: "aggregate", source: "rollupStatus", field: "dirtyHours" } },
-				},
-				{
-					label: "Top model",
-					metric: { kind: "label", source: "costSeries", field: "model" },
-				},
-				{ label: "Per priced request", metric: { kind: "derived", name: "perPricedRequest", op: "share", of: { kind: "derived", name: "totalCost", op: "sum", of: costSeries("cost", "model") }, against: { kind: "derived", name: "requests", op: "sum", of: costSeries("requests", "model") } } },
-				{
-					label: "Unpriced requests",
-					metric: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
-				},
+			{
+				label: "Average per day",
+				// `avgDailyCost`, NOT `max`: the dashboard divides the total by the
+				// days that carried usage. `max` over the same series is the busiest
+				// day, which is a real number and a different one.
+				metric: { kind: "derived", name: "avgDailyCost", op: "sum", of: costSeries("cost", "model") },
+			},
+			{
+				label: "Top model",
+				// `topModel`, NOT the first row: the cost payload is in bucket order,
+				// so row 0 is whatever model was cheapest on the earliest day.
+				metric: { kind: "derived", name: "topModel", op: "sum", of: costSeries("cost", "model") },
+			},
+			{
+				label: "Per priced request",
+				metric: { kind: "derived", name: "perPricedRequest", op: "sum", of: costSeries("cost", "model") },
+			},
+			{
+				label: "Unpriced requests",
+				metric: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
+			},
 			],
 		},
 		{
@@ -719,7 +727,14 @@ const projects: ScreenSpec = {
 					label: "Conversation tokens",
 					metric: conversationTokens("folders"),
 				},
-				{ label: "Cache rate", metric: { kind: "aggregate", source: "folders", field: "cacheRate" } },
+				{
+					// `rangeCacheRate`, NOT `folders.cacheRate`: every folder row carries
+					// its OWN rate, so the aggregate reads folders[0] — one folder's answer
+					// to a question about the whole range. `buildFolderRows` sums input and
+					// cache reads across every folder and divides once.
+					label: "Cache rate",
+					metric: { kind: "derived", name: "rangeCacheRate", op: "sum", of: { kind: "aggregate", source: "folders", field: "totalCacheReadTokens" } },
+				},
 			],
 		},
 		{
@@ -863,12 +878,19 @@ const errors: ScreenSpec = {
 					emphasis: "primary",
 				},
 				{
+					// `errorSignatureCount`, NOT a distinct count of raw messages:
+					// `errorSignature` collapses request ids, hex hashes and counters, so
+					// "req_abc… after 3 tries" and "req_zzz… after 7 tries" are ONE
+					// signature. Counting raw strings counts the noise, and the noise
+					// grows with traffic while the signature count stays flat.
 					label: "Signatures",
-					metric: { kind: "derived", name: "signatures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } },
+					metric: { kind: "derived", name: "errorSignatureCount", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } },
 				},
 				{
+					// `affectedModelCount`, NOT a distinct model-name count: identity is
+					// `model::provider`, so one model behind two providers is two.
 					label: "Affected models",
-					metric: { kind: "derived", name: "affectedModels", op: "count", of: { kind: "label", source: "errorMessages", field: "model" } },
+					metric: { kind: "derived", name: "affectedModelCount", op: "count", of: { kind: "label", source: "errorMessages", field: "model" } },
 				},
 				{
 					label: "Last failure",

@@ -36,6 +36,7 @@
  */
 
 import type { DataNeed, PanelData } from "../data/api";
+import { hostDerived } from "./host-derived";
 import {
 	NEED_BY_SOURCE,
 	sourceOf,
@@ -298,15 +299,21 @@ function seriesValues(ref: SeriesRef, data: PanelData, row?: DataRow): readonly 
 // ─── Derived resolution ───────────────────────────────────────────────────────
 
 /**
- * A derived value: the four ops the IR names, each with its own guard.
+ * A derived value: the four generic ops the IR names, each with its own guard,
+ * plus the HOST-DERIVED figures the dashboard computes itself.
  *
  * Every divisor is checked and every empty source answers 0. Those two guards
- * are the whole reason this function exists as a `switch` rather than four
- * one-line expressions: `0 / 0` is `NaN`, `NaN` prints as the literal text
- * `NaN` inside a stat tile, and a stat tile reading `NaN%` is a bug a user
- * reports rather than one a test catches later.
+ * are the whole reason the ops live in a `switch` rather than four one-line
+ * expressions: `0 / 0` is `NaN`, `NaN` prints as the literal text `NaN` inside
+ * a stat tile, and a stat tile reading `NaN%` is a bug a user reports rather
+ * than one a test catches later.
+ *
+ * The return is `number | string | null` because a derived figure is not always
+ * a QUANTITY: "Top model" names a row. `resolveCell` is already typed that way
+ * and `resolveNumber` narrows it, so widening here costs the callers nothing
+ * and saves a second ref kind for the same answer.
  */
-function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): number | null {
+function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): Resolved {
 	const base = baseOf(ref);
 	// `conversationTokens` is the one derived that sums FOUR token kinds rather
 	// than the two its `of`/`against` name, because the IR declares it by name
@@ -314,6 +321,20 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): number
 	// cache reads + cache writes + output. A single "total tokens" figure is
 	// 95.5% cache reads in this database and describes nothing.
 	if (ref.name === "conversationTokens") return sumTokenKinds(base, data, row);
+
+	// A HOST-DERIVED figure is not one of these four ops pointed at the wrong
+	// question — it is a DIFFERENT question, answered by the function the
+	// dashboard itself calls. `host-derived.ts` lists the six and, for each, what
+	// the generic ops would have got wrong instead.
+	const host = hostDerived(ref.name);
+	if (host) {
+		const fetched = isFetched(base.source, data);
+		const rows = row !== undefined ? [row] : rowsFor(base.source, data);
+		// The same absence rule as `sum`/`count`/`max`: a figure over a payload
+		// nobody FETCHED is absent, never a zero.
+		if (rows.length === 0 && !fetched) return null;
+		return host.compute(rows, { data, fetched });
+	}
 
 	switch (ref.op) {
 		case "sum":
