@@ -315,6 +315,34 @@ test("legend renders a row per item with a right-aligned share", () => {
 	expect(rendered.map(plain)[0]?.indexOf("72.0%")).toBe(rendered.map(plain)[1]?.indexOf("28.0%"));
 });
 
+test("legend shares right-align even when they are DIFFERENT lengths", () => {
+	// The test above cannot fail if the padding is removed: "72.0%" and "28.0%"
+	// are both five characters, so their start indices coincide whether or not
+	// the share is padded. Alignment only becomes observable when the shares
+	// differ in width — which is the real case (a 0.4% tail beside a 92.1%
+	// leader). `92.1%` is five cells and `0.4%` is four, so a padded legend
+	// pushes the short one one cell further RIGHT, flush with its neighbour.
+	const items: LegendItem[] = [
+		{ label: "Main agent", share: 0.921 },
+		{ label: "Subagents", share: 0.004 },
+	];
+	const rows = renderBands([{ kind: "legend", items }], ctx()).map(plain);
+	expect(rows).toHaveLength(2);
+	expect(rows[0]).toContain("92.1%");
+	expect(rows[1]).toContain("0.4%");
+
+	// The share column is right-aligned, so both shares END at the same offset
+	// from the end of their row. Unpadded, `0.4%` ends one cell earlier and
+	// this fails — which is the whole point of the extra test.
+	const shareEndOffset = (row: string, share: string): number =>
+		row.trimEnd().length - (row.trimEnd().lastIndexOf(share) + share.length);
+	expect(shareEndOffset(rows[0] as string, "92.1%")).toBe(0);
+	expect(shareEndOffset(rows[1] as string, "0.4%")).toBe(0);
+
+	// And the rows are the same overall width, so the shares share a column.
+	expect(visibleWidth(rows[0] as string)).toBe(visibleWidth(rows[1] as string));
+});
+
 test("an empty legend contributes nothing", () => {
 	expect(renderBands([{ kind: "legend", items: [] }], ctx())).toEqual([]);
 });
