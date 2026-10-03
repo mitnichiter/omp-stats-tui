@@ -8,7 +8,7 @@
 
 **Tech Stack:** omp 18.4.10 · Bun 1.4.2 · TypeScript · `@oh-my-pi/omp-stats@18.4.10` (declared dependency) · `@oh-my-pi/pi-tui@18.4.10` (devDependency, for `bun test` only) · `bun test` · no framework, no bundler.
 
-**Spec:** `docs/adr/0001`–`0005` (settled decisions), `CONTEXT.md` (glossary — its terms are load-bearing), `docs/research/omp-stats-tui/REPORT.md` (synthesis) and `docs/research/omp-stats-tui/findings/F1`–`F11` (primary evidence). The plan argues from those and cites them by line; executors read both.
+**Spec:** `docs/adr/0001`–`0006` (settled decisions), `CONTEXT.md` (glossary — its terms are load-bearing), `docs/research/omp-stats-tui/REPORT.md` (synthesis) and `docs/research/omp-stats-tui/findings/F1`–`F11` and `F14` (primary evidence). The plan argues from those and cites them by line; executors read both.
 
 ## Global Constraints
 
@@ -21,7 +21,7 @@
 - **Pin `@oh-my-pi/*` exactly** (no carets), matching the host: `18.4.10`. Read `VERSION` from `@oh-my-pi/pi-coding-agent` at load and notify on mismatch; never refuse to load.
 - **Do not print to stdout from extension code** — it corrupts the TUI. `console.error` is fine at load time.
 - **Do not check exit codes to decide whether an extension loaded.** `omp models -e` exits 0 either way; read stderr.
-- **Data ink must measure `Bun.stringWidth === 1`.** No emoji (measured 2), no braille, no Nerd Font PUA codepoints, no hand-rolled box drawing (consume `theme.boxRound.*`).
+- **Data ink must measure `Bun.stringWidth === 1`.** No braille, no Nerd Font PUA codepoints, no hand-rolled box drawing (consume `theme.boxRound.*`). **Emoji are permitted for section-heading icons only, under the `unicode` preset, where every one of them measures exactly 2 cells** (measured: `Bun.stringWidth("🪙") === 2`, `"💲"`, `"📊"`, `"📁"`, `"📅"` all 2; `"⏱"` and `"⬢"` and `"⚠"` are 1). The panel therefore reserves a **2-cell heading gutter** under `unicode`. Emoji are **forbidden inside any repeated data cell** — a bar cell, a sparkline column, a heatmap cell, a table cell. Never emit an emoji in a per-row glyph position.
 - **Under the `nerd` preset, emit byte-identical data ink to `unicode`.** No Nerd glyph's semantics is magnitude.
 - **Scale bars by cost, never by token count.** This database has a 41× price spread at comparable token volume across models.
 - **Never print a bare token total.** Show fresh / cache-read / cache-write separately plus the cache share as a number; cache writes are excluded from the cache-rate denominator.
@@ -35,29 +35,26 @@
 |---|---|
 | 0001 — reuse `@oh-my-pi/omp-stats`, do not own SQL | Implemented as stated. The ADR's own text is already superseded in outcome; `AGENTS.md` records that. |
 | 0002 — the command is `/stats-tui` | Implemented. Registered through `pi.registerCommand("stats-tui", …)`. |
-| 0003 — read-only, no writes, surface the dirty-hour count | **Partially superseded by an explicit user decision — see the OPEN DECISION below.** The dirty-hour-count requirement is binding and is implemented in Task 5 and Task 16. |
+| 0003 — read-only, no writes, surface the dirty-hour count | **Superseded on the sync clause only by ADR 0006.** Every other ADR-0003 guarantee is binding: the panel itself never writes, ingest never runs on the TUI thread, and the dirty-hour count is always visible (Task 5, Task 16). |
 | 0004 — terminal-native views, no React port | Implemented. `Traces` and `Frustration` are registered as `excluded`, not ported. |
 | 0005 — plain Unicode data ink, chrome through the symbol preset | **Refined by F10, which post-dates it.** F10 proved `theme.symbol()` cannot express a ramp (269 registered keys, zero of them a data-ink ramp), so a preset-aware glyph module of our own is the only implementable form of the same policy. Task 3 builds it. |
+| 0006 — background ingest in a `SIGKILL`-able subprocess, superseding ADR 0003's no-sync clause | **Accepted; implemented by Task 12.** The panel paints from whatever the database already holds, then starts ingest in a child process that streams NDJSON progress and is `SIGKILL`ed on close. Measured cost 7141 ms for 3401 files / 151,107 rows; `bun:sqlite` is synchronous, so inline it freezes the TUI for seven seconds. Shape copied from `pi-coding-agent/src/stats/activity-worker.ts` + `activity-client.ts`. |
 
-> **OPEN DECISION — ADR 0003's no-sync clause versus the user's sync decision.**
-> ADR 0003 rejected the background-ingest subprocess outright ("reintroduces a write, a subprocess, and a kill protocol, in exchange for freshness the panel does not need"). The settled user decision for this build is the opposite: mirror the stats dashboard and its server — start a background ingest that streams progress and never blocks first paint — and run it in a `SIGKILL`-able subprocess, mirroring `pi-coding-agent/src/stats/activity-worker.ts` + `activity-client.ts`. The measured cost is 7141 ms for 3401 files / 151,107 rows, and `bun:sqlite` is synchronous, so inline it freezes the TUI for seven seconds.
-> **Recommended default:** implement the subprocess ingest (Task 12), and keep every other ADR-0003 guarantee — the panel itself never writes, ingest never runs on the TUI thread, and the dirty-hour count is always visible.
-> **Evidence that would settle it:** ADR 0006, superseding ADR 0003 on the sync clause only. The research also left open whether the host already calls `syncAllSessions` before an extension runs; if it does, the ingest is redundant. One run of `scripts/probe-data.ts` immediately after a heavy session, comparing `getRollupStatus().dirtyHours` against the newest session file's mtime, answers it.
-> **This plan does not write the ADR.** It implements the user's decision and records the conflict here so a human can retire ADR 0003 properly.
+> **RESOLVED — sync: option (a). ADR 0006 exists and supersedes ADR 0003's no-sync clause.**
+> The user's settled decision is option (a): mirror the stats dashboard and its server. Task 12 implements the subprocess ingest. The one residual question — *does the host already call `syncAllSessions` before an extension runs?* — is not a decision this plan makes; it is **settled by one run** of `scripts/probe-data.ts` immediately after a heavy session, comparing `getRollupStatus().dirtyHours` against the newest session file's mtime. If the host already syncs, Task 12 can be deferred without reopening anything here.
 
-> **OPEN DECISION — heatmap data ink: one glyph with colour, or a shade ramp?**
-> ADR 0005 and F10 both chose a single `■` U+25A0 at four colours under `unicode`/`nerd`, with an ASCII ladder under `ascii`. Independent web research (primary sources, accessed 2026-10-03) argues the other way: it found that **no** surveyed TUI degrades on `NO_COLOR`, locale, or TTY detection — every fallback is an explicit user flag or a platform check — and it found a shipped shade ramp to use as a monochrome floor: ratatui's `symbols::shade` (` ` U+0020, `░` U+2591, `▒` U+2592, `▓` U+2593, `█` U+2588), used by `btop` as its `tty_up` mode (`" ░▒█"`) and documented by gnuplot as `set term block`.
-> **Recommended default:** keep the single `■` (ADR 0005 plus "look native" — the panel's calendar should be character-identical to `/usage`'s), because omp's `NO_COLOR` gates hyperlinks only and a `truecolor` terminal keeps the ramp. Adopt the shade ramp only if a human reports a monochrome or low-contrast terminal in which the heatmap goes flat.
-> **Evidence that would settle it:** one look at `/stats-tui` under a monochrome terminal with `symbolPreset: "unicode"`. The glyph module makes this a one-line change — the `heatCell` role is already a ramp, only the `unicode` ladder differs.
+> **OPEN DECISION — heatmap data ink: one glyph with colour, or a shade ramp? (deliberately deferred to empirical comparison).**
+> ADR 0005 and F10 chose a single `■` U+25A0 at four colours under `unicode`/`nerd`, with an ASCII ladder under `ascii`. Independent web research (primary sources, accessed 2026-10-03) argues the other way: **no** surveyed TUI degrades on `NO_COLOR`, locale or TTY detection — every fallback is an explicit user flag or a platform check — and ratatui's `symbols::shade` (` ` U+0020, `░` U+2591, `▒` U+2592, `▓` U+2593, `█` U+2588) is a shipped monochrome floor (`btop` uses `" ░▒█"` as its `tty_up` mode; gnuplot documents `set term block`).
+> **Decision taken: keep it data-driven — this plan does NOT hardcode the choice.** The heatmap role is a **ramp keyed per preset**, so swapping `■`+colour for `░▒▓█` is a **one-line edit to a table value**, with no code change anywhere else. `scripts/probe-glyphs.ts` renders the heatmap row under each candidate ladder so the choice is made by **looking**, not by reasoning.
+> **What would settle it:** running `bun run scripts/probe-glyphs.ts --heatmap` and comparing the two ladders side by side, plus one look at `/stats-tui` under a monochrome terminal with `symbolPreset: "unicode"`.
+> **Not decided here.** Both ladders are width-1 (measured: `■` U+25A0 = 1, `░`/`▒`/`▓`/`█` = 1, `·` U+00B7 = 1), so either keeps the 108-cell row width and neither is foreclosed by this plan.
 
-> **OPEN DECISION — how many screens in the first implemented batch?**
-> **Recommended default: three — `overview`, `activity`, `models`.** These exercise five of the five chart primitives (vertical bar chart, sparkline, ranked bar list, share bar, calendar heatmap) plus both table shapes, so the chart layer is proven before a second screen depends on it. `activity` is not a stats-dashboard route; it is where `/usage`'s calendar heatmap belongs, and it is the hardest primitive to get right.
-> **Evidence that would settle it:** which numbers you actually open the panel for. If it is cost, promote `costs` to the batch; its data contract already exists as a scaffold.
-> All eleven dashboard routes are scaffolded with their data contract in place. Promoting any one of them is a single self-contained task.
+> **SETTLED — first batch of screens: option (a), `overview` + `activity` + `models`.**
+> These three exercise five of the five chart primitives (vertical bar chart, sparkline, ranked bar list, share bar, calendar heatmap) plus both table shapes, so the chart layer is proven before a second screen depends on it. `activity` is not a stats-dashboard route; it is where `/usage`'s calendar heatmap belongs, and it is the hardest primitive to get right. All nine other routes remain scaffolded with their data contracts in place; promoting any one is a single self-contained task.
 
-> **OPEN DECISION — exact stub → real boundary for scaffolded screens.**
-> **Recommended default:** a scaffolded screen declares its `needs` (the exact data it will consume), appears in the tab strip as a normal selectable tab, and renders exactly one dim line: `"<Label> — not built yet."` Selecting it never triggers a fetch, so it costs nothing. The boundary is therefore: *the data contract and the registry entry are real; the render function is a stub.*
-> **Evidence that would settle it:** whether a half-built tab that fetches and then says "not built yet" is acceptable. Recommended against — a fetch the user cannot see the result of reads as a hang.
+> **SETTLED — scaffolded screens render PLACEHOLDER DATA, not a "not built yet" line.**
+> A scaffolded screen declares its `needs`, appears in the tab strip as a normal selectable tab, and renders a small, clearly-labelled sample of **realistic placeholder rows** — 4–8 rows shaped like the screen it stands in for — behind a visible dim `placeholder` marker on the first line. The layout is therefore reviewable and testable *today*, and the numbers are obviously fake to anyone reading them.
+> **The hard rule: a scaffolded screen NEVER fetches.** It renders its fixture and returns. Selecting it must not issue a single adapter call, because a fetch the user cannot see the result of reads as a hang. Pinned by a snapshot-style test in Task 10 asserting the placeholder marker is present on every scaffolded screen's first rendered line, and by a fetch-counting assertion that the render is pure.
 
 ## Review Focus
 
@@ -69,6 +66,8 @@ The five input classes below are the ones most likely to bite a real person usin
 4. **A terminal too narrow for the layout.** Someone in an 80×24 split pane. A reasonable person expects a single readable column with no torn borders, no overflow past the right edge, and no silently dropped panels — degraded, but legible. Pinned in Task 6 (`planLayout(40, 24, "unicode")` returns `columns: 1` and every returned width is ≥ 1; `planLayout(20, 10, …)` still returns a valid plan).
 5. **Symbol preset `ascii`.** Someone who set `symbolPreset: "ascii"` because their font is unreliable. A reasonable person expects every data-ink character to be ASCII *and* every row to be exactly the same width — an ASCII glyph ladder that misaligns by one cell is worse than the Unicode one. Pinned in Task 3 (all 10 roles × 3 presets measured with `Bun.stringWidth`; a 7×53 heatmap renders 108 cells on every row under both `ascii` and `unicode`).
 6. **A stale rollup backlog.** Someone right after an omp upgrade that bumped `ROLLUP_VERSION`, leaving thousands of dirty hours. A reasonable person expects the panel to *say* it is behind, never to render not-yet-built hours as `$0.00` — that is a lie about money. Bound to the user by ADR 0003. Pinned in Task 5 (`fetchFor` returns `rollupStatus` from `getRollupStatus()`; the adapter test asserts it is present) and verified manually in Task 16 by rendering the footer against a fixture with `dirtyHours: 4281`.
+7. **A scaffolded screen showing placeholder data.** Someone who tabs to `costs` before it is built. A reasonable person expects to see that the layout *would* look right, with an unmistakable marker saying the numbers are not real — and they expect it not to hang. A scaffold that fetches real data and shows it unlabelled would be actively misleading; one that fetches and then says "not built yet" reads as a hang. Pinned in Task 10 (every scaffolded screen's first rendered line contains the dim `placeholder` marker; a fetch-counting assertion proves the render issues no adapter call).
+8. **An emoji leaking into a data cell.** Under `symbolPreset: "unicode"` every section-heading icon is 2 cells wide (measured), so it is tempting to reuse one per row. A reasonable person expects headings to be emoji and *data* to be plain blocks — an emoji in a bar column silently doubles that cell's width and misaligns the whole chart. Pinned in Task 3 (`STATS_ICONS` unicode values are all emoji, `Bun.stringWidth` 2 or 1; the data-ink width test asserts every `GlyphSet` value is exactly 1, so an emoji cannot enter a ramp without failing the suite).
 
 ---
 
@@ -80,7 +79,7 @@ F10 (`docs/research/omp-stats-tui/findings/F10-glyph-system.md`) designed a pres
 
 - **Data ink stays plain Unicode block elements.** `spark`'s `ticks=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █)` (U+2581–U+2588, `spark` L59), visidata's `disp_sparkline` (U+2581–U+2587, `sparkline.py` L9) and `bottom`'s eighth-block gauges (`pipe_gauge.rs` L41-50) are three independent implementations converging on the same ramp. F10's `sparkRamp` is the standard, and nothing better exists for a one-row sparkline.
 - **Braille stays excluded.** The research reached the same verdict independently, for the same structural reason: braille is a 2×4 raster, one foreground colour per character cell, and plotext excludes its higher-resolution sextant table on Windows outright (`high_def.cpp` L32) because font support is genuinely poor. F8 and ADR 0005 stand.
-- **Emoji and Nerd Font stay excluded.** Measured directly: every candidate glyph in every surveyed ramp returns `Bun.stringWidth === 1` under Bun 1.4.2, while `🪙` U+1FA99 returns 2. This is the mechanical reason, and it agrees with F10.
+- **Emoji and Nerd Font stay excluded from *data ink*.** Measured directly: every candidate glyph in every surveyed ramp returns `Bun.stringWidth === 1` under Bun 1.4.2, while `🪙` U+1FA99 returns 2. This is the mechanical reason, and it agrees with F10. **F14 refines rather than reverses this:** emoji are permitted for *section-heading icons* under the `unicode` preset, in a reserved 2-cell gutter (Task 3's `STATS_ICONS`), because a heading renders once and padding absorbs its width. The prohibition is unchanged for any repeated data cell. Nerd Font PUA stays excluded from data ink entirely — no PUA codepoint's semantics is magnitude; it is confined to `STATS_ICONS.nerd`.
 - **The alternate screen buffer solves the last-row/last-column problem, and we already have it.** `bottom` calls `EnterAlternateScreen` (`src/lib.rs` L367); `btop` writes `?1049h`/`?1049l` directly (`btop_tools.cpp` L759-760). Both then never face a bottom-right cell because there is no scrollback. `OverlayOptions.fullscreen: true` is documented as exactly this borrow (`pi-tui/src/tui.ts:459-468`), so the fix costs zero new code and `fullscreen: true` is not optional.
 - **Preset-as-setting, not capability detection, is the right seam.** The research grepped `LC_ALL|LANG|NO_COLOR|isatty` across every cloned repository and found **zero** automatic glyph degradation; the only automatic trigger in the entire set is plotext's `sys.platform in {"win32","cygwin"}`. omp matches this exactly: `NO_COLOR` gates hyperlinks only (`pi-tui/src/render/hyperlink.ts:95`), and there is no `TERM=dumb` check anywhere. F10's one `getSymbolPreset()` read is the correct shape.
 - **Never emit a trailing newline after the bottom row.** gnuplot's `dumb` driver does this deliberately: `if (dumb_feed || y > 0) putc('\n', …)` (`term/dumb.trm` L612-613). Our render functions return a `readonly string[]` and never concatenate, so this is satisfied by construction — Task 3 pins it with a test.
@@ -112,6 +111,7 @@ omp-stats-tui/
     tui/
       glyphs.ts             # THE ONE PRESET SWITCH. 10 roles × 3 presets. Pure.
       format.ts             # number + time vocabulary; re-exports the package's formatters
+      icons.ts             # THE SECOND PRESET TABLE — Record<SymbolPreset, Record<IconRole, string>>. Reuses theme.symbol() for 10 of 16 roles.
       layout.ts             # (width, rows, preset) → LayoutPlan. The narrow-terminal seam.
       panel.ts              # the overlay component: frame, scroll, keys, footer, dispose
       charts/
@@ -120,6 +120,7 @@ omp-stats-tui/
         heatmap.ts          # calendar heatmap + the four-stop colour ramp
       screens/
         types.ts            # ScreenId, ScreenStatus, DataNeed, ScreenContext, Screen, SCREENS
+        placeholders.ts     # PLACEHOLDER_MARKER + scaffold() — the shared "fake but reviewable" renderer
         overview.ts         # implemented  — stat grid, daily bars, sparkline, share bar, table
         activity.ts         # implemented  — calendar heatmap + daily bars
         models.ts           # implemented  — ranked bar list, per-row sparkline, table
@@ -161,6 +162,7 @@ Dependency direction is strictly downward: `index.ts` → `panel.ts` → `screen
 | `data/ranges.ts` | `RANGES`, `Range`, `DEFAULT_RANGE`, `isRange`, `nextRange`, `rangeLabel`, `bucketCountFor` | Deep: validation, cycle order, human labels and expected bucket counts behind 7 constants/functions. |
 | `tui/glyphs.ts` | `GlyphRole`, `GlyphSet`, `glyphsFor(preset)`, `glyph(preset, role, level?)` | Deep: three presets, ten roles, ramp clamping and the ASCII ladder behind one switch. |
 | `tui/format.ts` | `costWithUnpriced`, `tokenCells`, `cacheShare`, plus re-exports | Deep: the unpriced-request rule and the cache-denominator rule behind two functions, not scattered call sites. |
+| `tui/icons.ts` | `IconRole`, `STATS_ICONS`, `statsIcon(preset, role)`, `ICON_GUTTER` | Deep: per-preset icon selection, host-key reuse, and the emoji gutter width behind one lookup. Sits beside `glyphs.ts` because both are preset switches, but they obey opposite width rules — icons may be 2 cells, data ink may not. |
 | `tui/layout.ts` | `LayoutPlan`, `planLayout(width, rows, preset)` | Deep: every width threshold, every degradation decision, behind one pure call. |
 | `tui/charts/*` | `render*(data, opts) → readonly string[]` | Each is shallow but that is correct — a chart is a rendering, and it is the *composition* of five of them behind the panel that pays. |
 | `tui/panel.ts` | `StatsPanel` implementing `Component` | Deep: load orchestration, scroll clamping, key cascade, range cycling, footer composition, idempotent dispose. Not unit-tested — see Task 16. |
@@ -383,10 +385,26 @@ The one preset switch. Ten roles: `barFill`, `barEmpty`, `sparkRamp`, `heatCell`
 1. **Take the preset as a parameter; do not import the `theme` singleton.** F10's sketch defaults to `theme` at module scope. Importing `theme` at module scope **throws at extension load time** in the loader process (`omp models -e`), because theme initialisation has not run — measured. In `bun test` it works only after `ensureThemeSync()`. A pure function of `(preset)` is testable with no ordering constraint and cannot throw at load. The panel reads `theme.getSymbolPreset()` exactly once per frame and passes it down.
 2. **`nerd` is byte-identical to `unicode` for data ink.** No Nerd Font codepoint's semantics is magnitude.
 
+**Task 3 builds TWO tables, not one.** They are the two halves of the preset story and they obey opposite width rules:
+
+- `Record<SymbolPreset, GlyphSet>` — **data-mark ramps**. Every value must measure `Bun.stringWidth === 1`. No emoji, no PUA, no braille. This is what makes the heatmap choice a one-line table edit rather than a code change.
+- `Record<SymbolPreset, Record<IconRole, string>>` — **section-heading and inline icons**. Emoji are permitted here under `unicode` (2 cells, in a reserved gutter). Under `nerd` they are Nerd Font PUA codepoints; under `ascii` they are short ASCII labels. Not width-constrained to 1.
+
+**Icon policy (settled by the user, per F14):** icons reuse `theme.symbol()` wherever a host key already exists. F14 dumped `SYMBOL_PRESETS` and found **10 of our 16 roles already registered** — `icon.cost` (`💲` U+1F4B2 / `` U+F155 / `$`), `icon.tokens` (`🪙` U+1FA99 / `` U+E26B / `tok:`), `icon.time` (`⏱` U+23F1 / `` U+F017 / `t:`), `icon.model` (`⬢` U+2B22 / `` U+EC19 / `[M]`), `icon.extensionTool` (`🛠` U+1F6E0 / `` U+F0AD / `TL`), `icon.folder` (`📁` U+1F4C1 / `` U+F115 / `[D]`), `status.error` (`✘` U+2718 / `` U+F00D / `[!!]`), `icon.cache` (`💾` U+1F4BE / `` U+F1C0 / `cache`), `icon.warning` (`⚠` U+26A0 / `` U+F071 / `[!]`), `icon.host` (`🖥` U+1F5A5 / `` U+F109 / `host`) — plus `cmd.stats` and `icon.cacheMiss`. Reading those through `theme.symbol()` means a future host change propagates for free. **Only 4 roles are new: `calendar`, `gains`, `trendUp`, `trendDown`.**
+
+> **ADR-0007 candidate — the icon policy.** The rule "icons are preset-keyed and reusable from `theme.symbol()`; emoji allowed for headings under `unicode`, never for data ink; ASCII uses short labels" is exactly the shape of a decision that needs its own ADR, because it is a *chrome* policy that F14's measurements would otherwise be asked to re-derive every time. **This plan does not write it.** Flagged as a candidate only; the executor of Task 3 must not create `docs/adr/0007-*.md` without a human asking for one.
+
+**Two measurement traps F14 found. Both become test cases.**
+
+1. **`sep.pipe` must never be used as a column separator.** Measured: `" │ "` is `Bun.stringWidth === 3` under `unicode` and `ascii`, while its `nerd` value `` U+E0B3 is **1**. Using it would silently triple column gaps on two presets and leave the third correct. Use the bare `│` U+2502 (= `boxRound.vertical`) or `|` U+007C, both width 1 in every preset.
+2. **The warning icon must use the bare `⚠` U+26A0, never `⚠️`.** Measured: bare `⚠` is `Bun.stringWidth === 1`; `⚠️` (U+26A0 followed by VS16 U+FE0F) is **2**. `theme.symbol("icon.warning")` already returns the bare form — this is the test that stops someone "correcting" it later.
+
 **Files:**
 - Create: `src/tui/glyphs.ts`
 - Create: `test/glyphs.test.ts`
 - Modify: `scripts/probe-glyphs.ts` (switch it to read the real module)
+- Create: `src/tui/icons.ts`
+- Modify: `test/glyphs.test.ts` (the icon cases live beside the ramp cases — one module, one file)
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks except the package install.
@@ -402,7 +420,19 @@ The one preset switch. Ten roles: `barFill`, `barEmpty`, `sparkRamp`, `heatCell`
   export function glyphsFor(preset: SymbolPreset): GlyphSet;
   export function glyph(preset: SymbolPreset, role: GlyphRole, level?: number): string;
   ```
-  Tasks 7, 8 and 9 consume `GlyphSet` and `glyph`. Task 13 consumes `glyph` for its table rules.
+  ```ts
+  // src/tui/icons.ts — the second preset table
+  export type IconRole =
+    | "cost" | "tokens" | "requests" | "time" | "models" | "providers"
+    | "tools" | "projects" | "errors" | "calendar" | "gains"
+    | "trendUp" | "trendDown" | "unknown" | "cache" | "warning";
+  export const STATS_ICONS: Record<SymbolPreset, Record<IconRole, string>>;
+  export const HOST_ICON_KEYS: Partial<Record<IconRole, SymbolKey>>;  // 12 of 16 roles route through theme.symbol()
+  export const NEW_ICON_ROLES: readonly IconRole[];                  // exactly ["calendar","gains","trendUp","trendDown"]
+  export const ICON_GUTTER: Record<SymbolPreset, number>;            // unicode: 2 (emoji), nerd: 1, ascii: length of the label
+  export function statsIcon(preset: SymbolPreset, role: IconRole, theme?: Theme): string;
+  ```
+  Tasks 7, 8 and 9 consume `GlyphSet` and `glyph`. Task 13 consumes `glyph` for its table rules **and `statsIcon` for its section headings**.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -410,7 +440,9 @@ The one preset switch. Ten roles: `barFill`, `barEmpty`, `sparkRamp`, `heatCell`
 
 ```ts
 import { test, expect } from "bun:test";
+import { ensureThemeSync } from "@oh-my-pi/pi-tui/theme";
 import { type GlyphSet, glyph, glyphsFor, HEAT_LEVELS } from "../src/tui/glyphs";
+import { STATS_ICONS, HOST_ICON_KEYS, NEW_ICON_ROLES, ICON_GUTTER, statsIcon } from "../src/tui/icons";
 
 const PRESETS = ["unicode", "nerd", "ascii"] as const;
 
@@ -442,10 +474,70 @@ test("barFill is the full block, barEmpty the light shade — the daily-bar pair
 	expect(glyph("unicode", "barEmpty")).toBe("░");    // U+2591
 });
 
-test("heatCell is a single swatch at every level, per ADR 0005", () => {
-	for (let level = 1; level <= HEAT_LEVELS; level++) {
-		expect(Bun.stringWidth(glyph("unicode", "heatCell", level))).toBe(1);
+test("heatCell is a RAMP, so the ladder is a one-line table edit, not a code change", () => {
+	// The user settled this as a data-driven decision (Settled decisions block). The
+	// test therefore asserts the SHAPE — a per-level ramp — and not a particular ladder.
+	// Swapping unicode heatCell from "■" to ["░","▒","▓","█"] must not require touching this test.
+	for (const preset of PRESETS) {
+		const value = glyphsFor(preset).heatCell;
+		expect(Array.isArray(value) || typeof value === "string", `${preset} heatCell`).toBe(true);
 	}
+	// Whatever the ladder is, every level must be exactly one cell wide, so swapping
+	// ladders can never break the 108-cell row width asserted below.
+	for (const preset of PRESETS) {
+		for (let level = 1; level <= HEAT_LEVELS; level++) {
+			expect(Bun.stringWidth(glyph(preset, "heatCell", level)), `${preset} heat level ${level}`).toBe(1);
+		}
+	}
+});
+
+test("the shade-ramp alternative is admissible without any code change (deferred decision)", () => {
+	// Deferred to empirical comparison — this test exists to prove the SWAP is cheap,
+	// not to pick a winner. If someone swaps UNICODE_GLYPHS.heatCell to the shade ramp,
+	// this assertion must keep passing.
+	const SHADE = ["░", "▒", "▓", "█"] as const;
+	expect(SHADE).toHaveLength(HEAT_LEVELS);
+	for (const g of SHADE) expect(Bun.stringWidth(g)).toBe(1);
+	expect(glyph("unicode", "heatCell", 1)).not.toBe(glyph("unicode", "heatCell", 2));
+});
+
+test("MEASUREMENT TRAP: sep.pipe is 3 cells under unicode but 1 under nerd — never a column separator", () => {
+	// Measured with Bun.stringWidth. Using sep.pipe here would triple the gap on two
+	// presets and leave the third correct: an alignment bug invisible in one preset.
+	const unicode = ensureThemeSync().symbol("sep.pipe");
+	expect(Bun.stringWidth(unicode)).toBe(3);
+	expect(Bun.stringWidth(glyph("unicode", "columnGap"))).toBe(1);
+	expect(glyph("unicode", "columnGap")).not.toBe(unicode);
+});
+
+test("MEASUREMENT TRAP: bare ⚠ is 1 cell, ⚠️ with VS16 is 2 — the warning icon uses the bare form", () => {
+	expect(Bun.stringWidth("⚠")).toBe(1);          // U+26A0
+	expect(Bun.stringWidth("⚠️")).toBe(2);         // U+26A0 U+FE0F
+	expect(statsIcon("unicode", "warning")).toBe("⚠");
+	expect(statsIcon("unicode", "warning")).not.toContain("\uFE0F");
+});
+
+test("icons: unicode preset uses emoji, nerd uses PUA, ascii uses plain ASCII labels", () => {
+	expect(statsIcon("unicode", "cost")).toBe("💲");
+	expect(statsIcon("nerd", "cost")).toBe("\uF155");
+	expect(statsIcon("ascii", "cost")).toBe("$");
+	for (const icon of Object.values(STATS_ICONS.ascii)) {
+	expect(/^[\x20-\x7E]+$/.test(icon), `ascii icon must be ASCII: ${icon}`).toBe(true);
+}
+});
+
+test("icons: only four roles are new; twelve route through a host key", () => {
+	expect([...NEW_ICON_ROLES].sort()).toEqual(["calendar", "gains", "trendDown", "trendUp"]);
+	expect(Object.keys(STATS_ICONS.unicode)).toHaveLength(16);
+	expect(Object.keys(HOST_ICON_KEYS)).toHaveLength(12);
+});
+
+test("icons: every unicode icon is one or two cells, and ICON_GUTTER matches the widest", () => {
+	for (const [role, icon] of Object.entries(STATS_ICONS.unicode)) {
+		expect([1, 2]).toContain(Bun.stringWidth(icon));
+	}
+	expect(ICON_GUTTER.unicode).toBe(2);   // emoji are 2 cells; headings reserve the wider gutter
+	expect(ICON_GUTTER.nerd).toBe(1);
 });
 
 test("ascii heat ladder is . - + #, distinct per level", () => {
@@ -518,6 +610,10 @@ const UNICODE_GLYPHS = {
 	barFill: "█",                                    // U+2588
 	barEmpty: "░",                                   // U+2591
 	sparkRamp: ["▁","▂","▃","▄","▅","▆","▇","█"],  // U+2581..U+2588
+	// heatCell is a RAMP, deliberately. ADR 0005's starting value is the single ■,
+	// but the shade ramp ["░","▒","▓","█"] (ratatui symbols::shade / btop tty_up)
+	// is equally valid and is one line away. The decision is deferred to a visual
+	// comparison, so the module must not encode the winner.
 	heatCell: "■",                                   // U+25A0 — one swatch; colour carries the level
 	heatEmpty: "·",                                  // U+00B7 — byte-identical to /usage
 	heatMarker: "□",                                 // U+25A1
@@ -563,27 +659,97 @@ export function glyph(preset: SymbolPreset, role: GlyphRole, level = 0): string 
 }
 ```
 
+
 Note the ADR-0005 constraint that makes this module necessary rather than optional: `theme.symbol()` is a plain map read of 269 registered keys, and **none** of them is a data-ink ramp. There is no way to express "the fourth of eight block fills" through the registry without patching a package we do not own.
+
+> **The heatmap swap, spelled out.** To move from colour-carried intensity to a glyph-carried ramp, the executor changes exactly one value: `heatCell: "■"` → `heatCell: ["░","▒","▓","█"]` in `UNICODE_GLYPHS`. Because `nerd` shares the *same object* as `unicode`, that single edit covers both presets; `ASCII_GLYPHS` already carries its own 4-rung ladder and is untouched. Task 9's `heatmap.ts` reads levels through `glyph(preset, "heatCell", level)`, so it needs no change either, and the 108-cell row width holds because all five candidate glyphs measure 1. **Do not hardcode this choice in `heatmap.ts`.**
+
+- [ ] **Step 3b: Implement `src/tui/icons.ts`**
+
+The second preset table. It is *not* width-constrained the way `glyphs.ts` is: under `unicode` these are emoji at 2 cells, which is exactly why they are legal here and illegal in a ramp.
+
+```ts
+import type { SymbolPreset } from "@oh-my-pi/pi-tui/theme";
+
+export type IconRole =
+	| "cost" | "tokens" | "requests" | "time" | "models" | "providers"
+	| "tools" | "projects" | "errors" | "calendar" | "gains"
+	| "trendUp" | "trendDown" | "unknown" | "cache" | "warning";
+
+/** 12 of 16 roles already exist in omp's SYMBOL_PRESETS — reuse, do not reinvent. */
+export const HOST_ICON_KEYS = {
+	cost: "icon.cost", tokens: "icon.tokens", requests: "cmd.stats",
+	time: "icon.time", models: "icon.model", providers: "icon.host",
+	tools: "icon.extensionTool", projects: "icon.folder", errors: "status.error",
+	unknown: "cmd.question", cache: "icon.cache", warning: "icon.warning",
+} as const satisfies Partial<Record<IconRole, string>>;
+
+/** The only four roles this project adds. */
+export const NEW_ICON_ROLES = ["calendar", "gains", "trendUp", "trendDown"] as const satisfies readonly IconRole[];
+
+export const STATS_ICONS: Record<SymbolPreset, Record<IconRole, string>> = {
+	unicode: {
+		cost: "💲", tokens: "🪙", requests: "📊", time: "⏱", models: "⬢",
+		providers: "🛰", tools: "🛠", projects: "📁", errors: "❌",
+		calendar: "📅", gains: "💹",
+		trendUp: "↗", trendDown: "↘", unknown: "❓", cache: "💾", warning: "⚠",
+	},
+	nerd: {
+		cost: "\uF155", tokens: "\uE26B", requests: "\uF080", time: "\uF017",
+		models: "\uEC19", providers: "\u{F048B}", tools: "\uF0AD", projects: "\uF07C",
+		errors: "\uF057", calendar: "\uF073", gains: "\uF0E5",
+		trendUp: "\uF062", trendDown: "\uF063", unknown: "\uF059", cache: "\uF1C0",
+		warning: "\uF071",                       // nf-fa-warning — NEVER the VS16 form
+	},
+	ascii: {
+		cost: "$", tokens: "tok:", requests: "req:", time: "t:", models: "[M]",
+		providers: "host", tools: "TL", projects: "[D]", errors: "[!!]",
+		calendar: "cal", gains: "+", trendUp: "+", trendDown: "-", unknown: "?", cache: "cache", warning: "[!]",
+	},
+};
+
+/** Heading gutter. Emoji are 2 cells; Nerd PUA is 1; ASCII labels vary. */
+export const ICON_GUTTER: Record<SymbolPreset, number> = { unicode: 2, nerd: 1, ascii: 5 };
+```
+
+`statsIcon` prefers the host registry so a future upstream change propagates:
+
+```ts
+export function statsIcon(preset: SymbolPreset, role: IconRole, theme?: Theme): string {
+	const key = HOST_ICON_KEYS[role as keyof typeof HOST_ICON_KEYS];
+	if (key && theme) return theme.symbol(key as SymbolKey);
+	return STATS_ICONS[preset][role];
+}
+```
+
+The `theme` parameter is optional and passed only by the panel (which holds the live singleton). `bun test` calls the form without it and reads the table, which keeps the module pure and load-order-safe — the same discipline `glyphs.ts` follows for its preset parameter.
+
+All nerd codepoints above were verified against the Nerd Fonts cheat sheet and wiki, and all measured `Bun.stringWidth === 1`. Note `nf-md-server` is `U+F048B`, not the widely-copied `U+F233`; Nerd Fonts 3.x moved Material Design Icons into the five-digit `U+F0001`+ range.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `bun test test/glyphs.test.ts`
-Expected: `9 pass`.
+Expected: `19 pass` (the original 9 plus the ramp-shape, shade-swap, two measurement-trap, and four icon cases).
 
-- [ ] **Step 5: Repoint `scripts/probe-glyphs.ts` at the real module**
+- [ ] **Step 5: Repoint `scripts/probe-glyphs.ts` at the real module — ramps AND icons AND a heatmap comparison**
 
-Replace its hardcoded role list with an import of `glyphsFor`, iterating `Object.entries` over the returned `GlyphSet`, so it can never drift from the module.
+Replace its hardcoded role list with an import of `glyphsFor`, iterating `Object.entries` over the returned `GlyphSet`, so it can never drift from the module. Then extend it:
+
+1. **Ramp table** — every role × preset, with `codePointAt(0).toString(16)` and `Bun.stringWidth`, so the measurements behind this task are reproducible by the next person rather than trusted.
+2. **Icon table** — every role × preset, same two columns, from `STATS_ICONS`. Flag any icon wider than 1 cell under `unicode` as `2-cell (gutter)` rather than an error.
+3. **`--heatmap` mode** — render the same 7×53 heatmap row **side by side under each candidate ladder**: `■`+colour (ADR 0005) and `░▒▓█` (ratatui/btop). Print the `Bun.stringWidth` of each rendered row under both. **This is how the deferred heatmap decision gets made — by looking at it, not by arguing about it.**
+4. **Trap report** — assert and print that `sep.pipe` measures 3 under `unicode` and 1 under `nerd`, and that `⚠` measures 1 while `⚠️` measures 2.
 
 - [ ] **Step 6: Verify alignment by eye**
 
-Run: `bun run scripts/probe-glyphs.ts`
-Expected: every `width` is `1`, and `unicode` and `nerd` rows are byte-identical.
+Run: `bun run scripts/probe-glyphs.ts` and `bun run scripts/probe-glyphs.ts --heatmap`
+Expected: every ramp `width` is `1`; `unicode` and `nerd` ramp rows are byte-identical; the two heatmap ladders both render at 108 cells per row.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/tui/glyphs.ts test/glyphs.test.ts scripts/probe-glyphs.ts
-git commit -m "feat(tui): preset-aware glyph module, one switch, width-proved"
+git add src/tui/glyphs.ts src/tui/icons.ts test/glyphs.test.ts scripts/probe-glyphs.ts
+git commit -m "feat(tui): preset-aware glyph and icon tables, width-proved"
 ```
 
 ---
@@ -1522,6 +1688,7 @@ Every dashboard screen exists as a registry entry with its **data contract in pl
 
 **Files:**
 - Create: `src/tui/screens/types.ts`
+- Create: `src/tui/screens/placeholders.ts`
 - Create: `src/tui/screens/{costs,projects,requests,errors,tools,providers,gain,traces,frustration}.ts`
 - Create: `test/screens.test.ts`
 - Modify: `src/index.ts` (nothing yet — the panel is Task 11)
@@ -1565,12 +1732,12 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 // which is the whole reason the interface carries a Theme instead of reading
 // the theme singleton.
 ensureThemeSync();
-function ctxWith(data: Partial<PanelData>, width = 120): ScreenContext {
+function ctxWith(data: Partial<PanelData>, width = 120, override?: PanelData): ScreenContext {
 	return {
 		width, rows: 40, range: DEFAULT_RANGE, theme,
 		preset: "unicode", glyphs: glyphsFor("unicode"),
 		plan: planLayout(width, 40, "unicode"),
-		data: data as PanelData,
+		data: override ?? (data as PanelData),
 		colorFor: () => (t: string) => t,
 	};
 }
@@ -1591,13 +1758,44 @@ test("traces and frustration are excluded, not ported — ADR 0004", () => {
 	}
 });
 
-test("a scaffolded screen declares its real data contract and renders one dim line", () => {
+test("a scaffolded screen declares its real data contract and renders labelled PLACEHOLDER rows", () => {
 	const costs = screenById("costs");
 	expect(costs.status).toBe("scaffolded");
 	expect(costs.needs).toEqual(["costs"]);
 	const rows = costs.render(ctxWith({}));
-	expect(rows).toHaveLength(1);
-	expect(rows[0]).toContain("not built yet");
+	// Not one "not built yet" line: a reviewable layout with obviously fake values.
+	expect(rows.length).toBeGreaterThan(3);
+	expect(rows[0]).toContain(PLACEHOLDER_MARKER);          // snapshot-style: marker present
+	expect(rows.some(r => r.includes("placeholder"))).toBe(true);
+});
+
+test("PLACEHOLDER: every scaffolded screen's first row carries the marker", () => {
+	for (const s of SCREENS.filter(x => x.status === "scaffolded")) {
+		const rows = s.render(ctxWith({}));
+		expect(rows.length, s.id).toBeGreaterThan(1);
+		expect(rows[0], `${s.id} must be visibly marked as placeholder data`).toContain(PLACEHOLDER_MARKER);
+	}
+});
+
+test("PLACEHOLDER: a scaffolded screen NEVER fetches — selecting it issues no adapter call", () => {
+	// The hard rule. A scaffold renders its fixture and returns; ctx.data is never read
+	// and no fetchFor call is issued. Proven by handing it a ctx whose data access throws.
+	for (const s of SCREENS.filter(x => x.status === "scaffolded")) {
+		const trap = new Proxy({} as PanelData, {
+			get(_t, prop) { throw new Error(`scaffold ${s.id} must not read ctx.data.${String(prop)}`); },
+		});
+		expect(() => s.render(ctxWith({}, 120, trap))).not.toThrow();
+	}
+});
+
+test("PLACEHOLDER: the sample rows are recognisably fake, not plausible-looking data", () => {
+	// A placeholder that reads like real numbers is worse than no placeholder: the user
+	// reads a real number off the screen and believes it. Every fixture value must be
+	// obviously synthetic.
+	for (const s of SCREENS.filter(x => x.status === "scaffolded")) {
+		const rows = s.render(ctxWith({})).join("\n");
+		expect(rows, s.id).toMatch(/placeholder|example|sample/i);
+	}
 });
 
 test("providers declares no needs: provider-windows does network I/O and is forbidden", () => {
@@ -1634,25 +1832,62 @@ Expected: FAIL — `Cannot find module '../src/tui/screens/types'`.
 
 - [ ] **Step 3: Add `reason?: string` to the `Screen` interface**
 
-An excluded or a scaffolded screen states why, in the user's words, on the tab itself. A tab that says "not built yet" with no reason is indistinguishable from a bug.
+An excluded or a scaffolded screen states why, in the user's words, on the tab itself. A tab with no stated reason is indistinguishable from a bug.
 
-- [ ] **Step 4: Write the nine scaffold modules**
+- [ ] **Step 4: Write the nine scaffold modules, each rendering labelled PLACEHOLDER DATA**
 
-Each is the same shape — this is the boundary the plan commits to, and it is deliberately boring so that promoting one is a single self-contained task:
+This is the boundary the plan commits to, and it is deliberately boring so that promoting one is a single self-contained task. **The settled decision is placeholder data, not a "not built yet" line**: a scaffolded screen shows a small, realistic, obviously-fake sample so the layout can be reviewed and tested today. It **NEVER fetches**.
+
+`src/tui/screens/placeholders.ts` owns the shared marker and the shared renderer, so the rule lives in one place:
+
+```ts
+// src/tui/screens/placeholders.ts
+import type { ScreenContext } from "./types";
+
+/** The literal marker a human sees on a scaffolded screen. Pinned by test/screens.test.ts. */
+export const PLACEHOLDER_MARKER = "placeholder data — not real usage";
+
+/**
+ * Render a scaffolded screen's sample rows behind the marker.
+ * Deliberately never touches ctx.data: selecting a scaffold must issue no fetch.
+ */
+export function scaffold(ctx: ScreenContext, icon: string, label: string, rows: readonly string[]): readonly string[] {
+	const head = `${icon} ${label}  ${ctx.theme.fg("dim", PLACEHOLDER_MARKER)}`;
+	return [head, ctx.theme.fg("dim", "─".repeat(Math.min(ctx.width, 60))), ...rows];
+}
+```
+
+Each scaffold module then supplies only its own sample rows:
 
 ```ts
 // src/tui/screens/costs.ts
 import type { Screen } from "./types";
+import { scaffold } from "./placeholders";
+import { statsIcon } from "../icons";
+import { glyph } from "../glyphs";
+
+/** Sample values are deliberately round and obviously synthetic. */
+const SAMPLE = [
+	{ model: "example/model-a", cost: 111.11, requests: 1111, bar: 0.82 },
+	{ model: "example/model-b", cost: 22.22, requests: 222, bar: 0.41 },
+	{ model: "example/model-c", cost: 3.33, requests: 33, bar: 0.14 },
+	{ model: "example/model-d", cost: 0, requests: 7, bar: 0 },       // unpriced, still visible
+];
 
 export const costsScreen: Screen = {
-	id: "costs",
-	label: "Costs",
-	short: "Costs",
-	status: "scaffolded",
-	needs: ["costs"],
-	render: ctx => [`${ctx.theme.fg("dim", `${ctx.theme.symbol("md.colorSwatch") || "#"} Costs — not built yet.`)}`],
+	id: "costs", label: "Costs", short: "Costs", status: "scaffolded", needs: ["costs"],
+	render: ctx => scaffold(ctx, statsIcon(ctx.preset, "cost"), "Costs", [
+		...SAMPLE.map(r =>
+			`  ${r.model.padEnd(22)} ${glyph(ctx.preset, "barFill").repeat(Math.round(r.bar * 20)).padEnd(20, glyph(ctx.preset, "barEmpty"))} $${r.cost.toFixed(2)}`),
+		`  ${ctx.theme.fg("dim", `${SAMPLE.length} of an unknown number of rows`)}`,
+	]),
 };
 ```
+
+Two rules make the placeholder honest rather than misleading:
+
+- **The values are obviously fake** — `example/model-a`, round numbers, `1111`/`222`/`33`/`7` request counts. A reader must not be able to mistake one for a real figure.
+- **No fetch, ever.** `scaffold()` takes no data and the `render` above reads only `ctx.preset`, `ctx.width` and `ctx.theme`. `test/screens.test.ts` proves it with a `Proxy` that throws on any `ctx.data` read. A fetch whose results the user cannot see reads as a hang, which is worse than an honest stub.
 
 The `needs` arrays, exactly:
 
@@ -2030,7 +2265,7 @@ The empty-state test is Review Focus line 3; the bare-token test is Review Focus
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `bun test test/screens.test.ts -t overview`
-Expected: FAIL — the stub's single "not built yet" line does not satisfy any assertion.
+Expected: FAIL — the scaffold's placeholder rows do not satisfy any overview assertion.
 
 - [ ] **Step 3: Implement the screen**
 
@@ -2041,7 +2276,15 @@ Top to bottom:
 3. **Daily cost bars** — `renderDailyBars(overview.timeSeries.map(p => p.cost), …)` on a **zero baseline**, scaled by cost and never by tokens.
 4. **Requests sparkline** — `renderSparkline(overview.timeSeries.map(p => p.requests), plan.sparkWidth, glyphs)`, min-based baseline, because a sparkline's job is contrast, not magnitude.
 5. **Agent-type share bar** — `renderShareBar(buildAgentTokenShare(overview.byAgentType).segments, …)` plus a legend line. `buildAgentTokenShare` is reused verbatim from the package's `view-models.ts`, which is pure TS with no React binding.
+
 6. **Recent requests table** — `renderTableRow` with `TableCell` objects and `TableColumn` descriptors, sorted newest first.
+
+Each section heading takes its icon from `statsIcon(ctx.preset, role, ctx.theme)` — the Task 3 icon table — padded to `ICON_GUTTER[ctx.preset]` (2 under `unicode`, 1 under `nerd`, label width under `ascii`) so headings align regardless of emoji width. `cost` reads `icon.cost` (`💲` / `` / `$`), `tokens` reads `icon.tokens`, `requests` reads `cmd.stats`, `models` reads `icon.model`. **Never** hand-write a heading glyph in a screen module: if it is not in the table, add it to Task 3 instead.
+
+```ts
+const heading = (ctx: ScreenContext, role: IconRole, label: string): string =>
+	`${statsIcon(ctx.preset, role, ctx.theme).padEnd(ICON_GUTTER[ctx.preset])} ${label}`;
+```
 
 The cache caveat, printed as a footnote rather than a tooltip: `cacheRate`'s denominator is fresh + cache-read, so cache **writes** are excluded. Showing only the rate understates the write cost.
 
@@ -2379,13 +2622,21 @@ Each is named, bounded, and justified. If a reviewer objects to one, the objecti
 
 ## Appendix D — Open questions carried forward
 
-Each is a place where the plan needed a decision the evidence does not settle. Each names a recommended default and what would settle it.
+Each is a place where the plan still needs a decision the evidence does not settle. Four were closed by the user's settled decisions and are recorded below as **resolved**, not open; only **(1)** and **(2)** are genuinely open.
 
-1. **ADR 0003's no-sync clause versus the user's sync decision** — implement the subprocess ingest; the ADR needs superseding on that clause only. Settled by ADR 0006, and by one run of `scripts/probe-data.ts` after a heavy session to learn whether the host already syncs.
-2. **Heatmap data ink: one glyph with colour, or a shade ramp?** — keep `■` (ADR 0005, and "look native" against `/usage`). Settled by one look under a monochrome terminal.
-3. **How many screens in the first implemented batch?** — three: `overview`, `activity`, `models`. Settled by which numbers you actually open the panel for.
-4. **The stub → real boundary for scaffolded screens** — real data contract, real registry entry, selectable tab, one dim line, no fetch. Settled by whether a hidden fetch is acceptable.
-5. **Sync indicator: percentage or indeterminate?** — determinate where `SyncProgress.total > 0`, indeterminate otherwise. Settled by one look at a real 7141 ms ingest.
-6. **Does the host already call `syncAllSessions` before an extension runs?** — undetermined in the research. If it does, Task 12's subprocess is redundant and can be deferred. Settled by the `scripts/probe-data.ts` run described in (1).
-7. **What happens on a version skew** (our pin `18.4.10` against a `18.4.11` host)? — warn on mismatch and keep loading, never refuse. The failure mode is an obscure load failure rather than a clear error, so the warning must be loud. Settled by a deliberate skew test: pin `18.4.9` against a `18.4.10` host and record what happens.
-8. **`icon.cost` (`💲`) and `cmd.stats` (`📊`) are emoji and measure 2 cells** — fine as single labels, forbidden as a repeated data cell. Whether to use them at all in section headings is a taste call the plan does not make; the glyph module already routes the chrome side through `theme.icon.*`.
+**Genuinely open — two:**
+
+1. **Does the host already call `syncAllSessions` before an extension runs?** Undetermined in the research. If it does, Task 12's subprocess is redundant and can be deferred without reopening anything else. **Settled by one run** of `scripts/probe-data.ts` immediately after a heavy session, comparing `getRollupStatus().dirtyHours` against the newest session file's mtime. (The *larger* question — whether to sync at all — is **resolved**: option (a), ADR 0006, superseding ADR 0003's no-sync clause. See the Settled decisions table.)
+2. **Heatmap data ink: one glyph with colour, or a shade ramp?** Deliberately **deferred to an empirical comparison**. The glyph module models it as a per-preset ramp so the swap is one table value; `scripts/probe-glyphs.ts --heatmap` renders both ladders side by side. **Settled by running that script and looking at the two rows**, plus one look under a monochrome terminal with `symbolPreset: "unicode"`.
+
+**Resolved since the first draft — recorded for traceability, not open:**
+
+- ~~Sync policy~~ — **ADR 0006**, option (a): background ingest in a `SIGKILL`-able subprocess. ADR 0003 superseded on that clause only.
+- ~~First batch of screens~~ — **option (a)**: `overview` + `activity` + `models`. The other nine routes keep their data contracts as scaffolds.
+- ~~Stub → real boundary for scaffolded screens~~ — **placeholder data**, not a "not built yet" line: a small, visibly-fake, reviewable sample behind a dim `placeholder data — not real usage` marker, and **never a fetch**.
+- ~~`icon.cost` / `cmd.stats` emoji in headings~~ — **allowed**, as section-heading icons under the `unicode` preset in a reserved 2-cell gutter, reusing `theme.symbol()` for 10 of the 16 roles; still forbidden as repeated data cells. Recorded as an **ADR-0007 candidate** in Task 3 (not written by this plan).
+
+**Still open, but narrow — implementation detail, not policy:**
+
+3. **Sync indicator: percentage or indeterminate?** — determinate where `SyncProgress.total > 0`, indeterminate otherwise. Settled by one look at a real 7141 ms ingest.
+4. **What happens on a version skew** (our pin `18.4.10` against a `18.4.11` host)? — warn on mismatch and keep loading, never refuse. The failure mode is an obscure load failure rather than a clear error, so the warning must be loud. Settled by a deliberate skew test: pin `18.4.9` against a `18.4.10` host and record what happens.
