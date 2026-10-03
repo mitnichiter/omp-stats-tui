@@ -1,11 +1,25 @@
+/**
+ * `test/unpriced-render.test.ts` — unknown spend reads N/A, real zero reads $0.
+ *
+ * The no-card-vs-free distinction is asserted at render level in
+ * `test/models-screen.test.ts` (Cost column) and `test/overview-screen.test.ts`
+ * (cost tile + hint). What lives HERE: the headline-cost pipeline assertion and
+ * the LIVE database classification that guards the data seam's no-catalog-card
+ * workaround in `src/data/api.ts`.
+ */
+
 import { test, expect } from "bun:test";
-import { overviewScreen } from "../src/tui/screens/overview";
-import { fetchModelDashboard, fetchOverview } from "../src/data/api";
+import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
+import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+
+import { SCREEN_SPECS } from "../src/layout/spec";
+import { screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
-import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ScreenContext } from "../src/tui/screens/types";
-import type { ModelDashboardPayload, PanelData } from "../src/data/api";
+import { SERIES_COLORS, stripForTest } from "../src/tui/palette";
+import { DEFAULT_RANGE } from "../src/data/ranges";
+import { fetchModelDashboard, fetchOverview } from "../src/data/api";
+import type { PanelData } from "../src/data/api";
 import type { ModelStats } from "@oh-my-pi/omp-stats/shared-types";
 import { initDb } from "@oh-my-pi/omp-stats/db";
 
@@ -36,24 +50,10 @@ function model(name: string, cost: number, unpriced: number, requests: number): 
 	};
 }
 
-function ctx(data: PanelData): ScreenContext {
-	return {
-		width: 100,
-		rows: 40,
-		range: "all",
-		theme,
-		preset: "unicode",
-		glyphs: glyphsFor("unicode"),
-		plan: planLayout(100, 40, "unicode"),
-		data,
-		colorFor: () => (t: string) => t,
-	};
-}
-
 /**
- * The shape the live database actually has: a priced model, a genuinely free
- * one, and a NO-CARD one whose spend is unknown. The no-card model is the bug;
- * the free one is the regression guard beside it.
+ * A priced model, a genuinely free one, and a NO-CARD one whose spend is
+ * unknown. The no-card model is the bug; the free one is the regression guard
+ * beside it.
  */
 const payload: PanelData = {
 	overview: {
@@ -93,28 +93,31 @@ const payload: PanelData = {
 	},
 } as PanelData;
 
-test("a no-card model with unknown spend renders N/A in the model list", () => {
-	const rows = overviewScreen.render(ctx(payload)).join("\n");
-	const line = rows.split("\n").find(l => l.includes("gemini-3.7-flash-high"));
-	expect(line, "the no-card model must be listed").toBeDefined();
-	expect(line).toContain("N/A");
-	expect(line).toContain("4,197 unpriced");
-	expect(line).not.toContain("$0.00");
-});
-
-test("an explicit-zero-card model still renders $0 beside the same list", () => {
-	// The regression guard. Without it, the fix above would mark every
-	// free-tier model unknown and the test for N/A would pass anyway.
-	const rows = overviewScreen.render(ctx(payload)).join("\n");
-	const line = rows.split("\n").find(l => l.includes("space-bunny-free"))!;
-	expect(line).toContain("$0");
-	expect(line).not.toContain("N/A");
-	expect(line).not.toContain("unpriced");
-});
+const overviewSpec = SCREEN_SPECS.find(s => s.id === "overview")!;
 
 test("the headline cost carries the corrected unpriced count", () => {
-	const rows = overviewScreen.render(ctx(payload)).join("\n");
-	expect(rows).toMatch(/\$900\.00 · 4,197 unpriced/);
+	// The pipeline cost tile reads its unpriced count from its own hint, so
+	// "$900.00" beside "4,197 unpriced" is one honest figure, never a total
+	// that silently excludes the unmeasured requests.
+	const bands = screenBands({
+		spec: overviewSpec,
+		data: payload,
+		plan: planLayout(100, 40, "unicode"),
+		preset: "unicode",
+		range: DEFAULT_RANGE,
+		now: Date.now(),
+		fg: (color: ThemeColor, text: string) => theme.fg(color, text),
+		bold: text => theme.bold(text),
+		palette: theme,
+		seriesColorFor: index => SERIES_COLORS[index % SERIES_COLORS.length],
+		glyphs: glyphsFor("unicode"),
+	} satisfies ScreenRenderOptions);
+	const first = bands.find(b => b.kind === "statRow");
+	expect(first, "overview has no statRow band").toBeTruthy();
+	if (first === undefined || first.kind !== "statRow") throw new Error("first band is not a statRow");
+	const cost = first.stats.find(t => t.label === "API-equivalent cost")!;
+	expect(stripForTest(cost.value)).toBe("$900.00");
+	expect(stripForTest(cost.hint ?? "")).toBe("4,197 unpriced");
 });
 
 test("LIVE: the real database classifies both populations correctly", async () => {
@@ -137,62 +140,6 @@ test("LIVE: the real database classifies both populations correctly", async () =
 	expect(overview.overall.unpricedRequests).toBeGreaterThanOrEqual(4197);
 });
 
-
-/**
- * The live database's real shape: FIVE zero-cost models with more requests than
- * the no-card one. A restore list capped at 3 and ranked by request count alone
- * pushes the unknown-spend model off the panel entirely — and makes the
- * "+N more at $0, none of them spend money" note false, because folded models
- * are no longer all free.
- */
-const crowdedPayload: PanelData = {
-	...payload,
-	modelDashboard: {
-		byModel: [
-			model("gpt-5.6-sol", 900, 0, 20_000),
-			model("space-bunny-free", 0, 0, 36_496),
-			model("muse-spark-1.2-contributor-free", 0, 0, 7_212),
-			model("muse-spark-1.3-contributor-free", 0, 0, 6_213),
-			model("deepseek-v4-flash-free", 0, 0, 4_263),
-			// Fewer requests than every free model above it, but its spend is UNKNOWN.
-			model("gemini-3.7-flash-high", 0, 4197, 4_205),
-			model("agnes-2.5-flash", 0, 162, 162),
-		],
-		modelSeries: [],
-		modelPerformanceSeries: [],
-	},
-} as PanelData;
-
-test("an unknown-spend model outranks free ones when the restore list is capped", () => {
-	// Ranking by request count alone put gemini fifth and dropped it. Unknown
-	// spend is the row the user most needs, so it ranks first.
-	const rows = overviewScreen.render(ctx(crowdedPayload)).join("\n");
-	expect(rows, "the no-card model must survive a capped list").toContain("gemini-3.7-flash-high");
-	expect(rows).toContain("N/A");
-});
-
-test("the folded-more note counts unpriced models instead of claiming all are free", () => {
-	// Needs FOUR unpriced models, so that one is actually folded. Unpriced ranks
-	// first now, so a folded unpriced model can only happen past the cap.
-	const many: PanelData = {
-		...crowdedPayload,
-		modelDashboard: {
-			byModel: [
-				model("gpt-5.6-sol", 900, 0, 20_000),
-				model("no-card-a", 0, 4000, 4000),
-				model("no-card-b", 0, 3000, 3000),
-				model("no-card-c", 0, 2000, 2000),
-				model("no-card-d", 0, 1000, 1000),
-				model("space-bunny-free", 0, 0, 36_496),
-			],
-			modelSeries: [],
-			modelPerformanceSeries: [],
-		},
-	} as PanelData;
-	const rows = overviewScreen.render(ctx(many)).join("\n");
-	expect(rows).toMatch(/\+ \d+ more at \$0, [\d,]+ of them unpriced/);
-	expect(rows).not.toMatch(/none of them spend money/);
-});
 /** True when a real stats database is present; keeps this out of CI. */
 async function hasDb(): Promise<boolean> {
 	return (await Bun.file(`${process.env.HOME}/.omp/stats.db`).size) > 0;
