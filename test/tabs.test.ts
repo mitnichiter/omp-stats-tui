@@ -101,6 +101,28 @@ describe("TAB_SHORT", () => {
 			expect(known.has(TAB_SHORT.nerd[spec.id])).toBe(true);
 		}
 	});
+
+	test("unicode literals measure one cell in the table as shipped", () => {
+		// The geometric one-cell forms. Width is measured (via visibleWidth,
+		// so SGR-wrapped values would still count right); the EAW classes
+		// are pinned in comments because an Ambiguous glyph measures 1
+		// everywhere EXCEPT CJK-locale terminals, where it measures 2 and the
+		// tab strip wraps. ▣ ≡ ◈ are Ambiguous — accepted, and pinned here so
+		// that acceptance stays a decision rather than drifting into an
+		// accident.
+		const literals: Record<string, string> = {
+			"◫": "U+25EB WHITE SQUARE WITH VERTICAL BISECTING LINE, EAW=N",
+			"⚒": "U+2692 HAMMER AND PICK bare, EAW=N — the VS16 form is 2 cells",
+			"▣": "U+25A3 WHITE SQUARE CONTAINING BLACK SMALL SQUARE, EAW=A accepted",
+			"≡": "U+2261 IDENTICAL TO, EAW=A accepted",
+			"◈": "U+25C8 WHITE DIAMOND CONTAINING BLACK SMALL DIAMOND, EAW=A accepted",
+			$: "U+0024 DOLLAR SIGN, EAW=Na",
+		};
+		for (const [glyph, evidence] of Object.entries(literals)) {
+			expect(Object.values(TAB_SHORT.unicode), evidence).toContain(glyph);
+			expect(visibleWidth(glyph), evidence).toBe(1);
+		}
+	});
 });
 
 describe("buildTabs", () => {
