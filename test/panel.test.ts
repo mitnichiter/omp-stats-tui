@@ -228,6 +228,19 @@ test("every key the panel advertises maps to an action, and nothing else does", 
 	}
 });
 
+test("tab switches screens everywhere — the fallthrough rule is closed as contradicted", () => {
+	// F23 §1.4 argued `tab` should fall through to next-screen only when a screen had
+	// ≤ 1 band, reserving it for landmark jumping. F23's own key table lists `tab` →
+	// "next screen" in BOTH rows, and this panel has no landmark-focus model at all:
+	// no `landmark` action, no section-focus, nothing to reserve it for. A reserved
+	// dead key is worse than either behaviour, so `tab` is next-screen everywhere.
+	// If a real landmark model ever lands, the commit that reclaims `tab` adds an
+	// action — it does not re-read this mapping.
+	expect(panelAction(TAB)).toEqual({ type: "screen", by: 1 });
+	expect(panelAction(TAB)).toEqual(panelAction(RIGHT));
+	expect(panelAction(SHIFT_TAB)).toEqual({ type: "screen", by: -1 });
+});
+
 test("every selectable screen is on the number row, so no digit is a dead key", () => {
 	expect(SELECTABLE.length).toBeLessThanOrEqual(DIGIT_KEYS.length);
 	for (let index = 0; index < SELECTABLE.length; index++) {

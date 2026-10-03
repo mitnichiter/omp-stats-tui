@@ -201,6 +201,26 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
  */
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
+/**
+ * THE `tab` DECISION, stated once so it never goes ambiguous again.
+ *
+ * F23 §1.4 argued `tab` should fall through to next-screen only when a screen
+ * had ≤ 1 band, reserving it for landmark jumping otherwise. F23's own key
+ * table in the same section lists `tab` → "next screen" in BOTH rows, and
+ * closer to the point, this panel has no landmark-focus model at all: there is
+ * no `landmark` action, no section-focus state, and no jump to reserve `tab`
+ * for. A key that is "reserved" for a jump that does not exist is a dead key,
+ * and a dead key is worse than either behaviour — the reader presses it and
+ * the panel silently does nothing.
+ *
+ * So `tab` switches screens everywhere, exactly like `→`. The brief's
+ * `tab`-falls-through rule is closed as CONTRADICTED by F23's own table, and
+ * this comment is the record: should a real landmark model ever land, THAT is
+ * the commit that reclaims `tab`, and it reclaims it by adding an action, not
+ * by re-reading this mapping.
+ */
+const TAB_SWITCHES_SCREENS = true;
+
 export function panelAction(data: string): PanelAction | null {
 	let wheel: number | null = null;
 	if (
@@ -217,7 +237,8 @@ export function panelAction(data: string): PanelAction | null {
 	if (matchesKey(data, "shift+r")) return { type: "range", by: -1 };
 	if (matchesKey(data, "s")) return { type: "sync" };
 	if (matchesKey(data, "left") || matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
-	if (matchesKey(data, "right") || matchesKey(data, "tab")) return { type: "screen", by: 1 };
+	if (matchesKey(data, "right")) return { type: "screen", by: 1 };
+	if (TAB_SWITCHES_SCREENS && matchesKey(data, "tab")) return { type: "screen", by: 1 };
 	const digit = DIGITS.indexOf(data);
 	if (digit !== -1) return { type: "screenIndex", index: digit };
 	if (matchesSelectUp(data)) return { type: "scroll", rows: -1 };
@@ -230,9 +251,6 @@ export function panelAction(data: string): PanelAction | null {
 }
 
 // ---------------------------------------------------------------------------
-// The panel's own body for `overview`, pending Task 13
-// ---------------------------------------------------------------------------
-
 /**
  * Panel state, held in a module-level WeakMap rather than in `#private` fields.
  *
