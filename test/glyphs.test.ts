@@ -63,32 +63,26 @@ test("barFill is the full block, barEmpty the light shade — the daily-bar pair
 	expect(glyph("unicode", "barEmpty")).toBe("░"); // U+2591
 });
 
-test("heatCell is a RAMP, so the ladder is a one-line table edit, not a code change", () => {
-	// The heatmap ladder is a deferred decision (see the plan's Global Constraints):
-	// ■-plus-colour and the ░▒▓█ shade ramp are both admissible. Asserting the SHAPE
-	// rather than a ladder is what keeps that swap free. Every level must still be
-	// one cell wide, so swapping ladders can never break the row width below.
+test("heatCell is one repeated rung, so a codepoint swap is the only edit", () => {
+	// Every level is one cell wide under every preset; that is what keeps a
+	// ladder swap free. The U+25A0 identity itself is pinned by the next test.
 	for (const preset of PRESETS) {
-		const value = glyphsFor(preset).heatCell;
-		expect(Array.isArray(value), `${preset} heatCell must be a ramp`).toBe(true);
+		expect(glyphsFor(preset).heatCell).toHaveLength(HEAT_LEVELS);
 		for (let level = 0; level < HEAT_LEVELS; level++) {
 			expect(Bun.stringWidth(glyph(preset, "heatCell", level)), `${preset} heat level ${level}`).toBe(1);
 		}
 	}
-	// Distinct rungs: a ramp of four identical glyphs would carry no level at all.
-	for (const preset of PRESETS) {
-		const ramp = glyphsFor(preset).heatCell as readonly string[];
-		expect(new Set(ramp).size, `${preset} heatCell rungs`).toBe(HEAT_LEVELS);
-	}
 });
 
-test("the shade-ramp alternative is admissible without any code change (deferred decision)", () => {
-	// Proves the SWAP is cheap; it does not pick a winner. If someone changes
-	// UNICODE_GLYPHS.heatCell to this ladder, everything here must keep passing.
-	const SHADE = ["░", "▒", "▓", "█"] as const;
-	expect(SHADE).toHaveLength(HEAT_LEVELS);
-	for (const g of SHADE) expect(Bun.stringWidth(g)).toBe(1);
-	expect(glyph("unicode", "heatCell", 1)).not.toBe(glyph("unicode", "heatCell", 2));
+test("heatCell is the single U+25A0 square at every level under unicode/nerd", () => {
+	// usage-dashboard.ts:867 renders every level 1..4 as the same square; the
+	// ramp lives in the colour, not the glyph. Distinct rungs would
+	// double-encode the level beside the colour.
+	for (const preset of ["unicode", "nerd"] as const) {
+		for (let level = 0; level < HEAT_LEVELS; level++) {
+			expect(glyph(preset, "heatCell", level).codePointAt(0), `${preset} level ${level}`).toBe(0x25a0);
+		}
+	}
 });
 
 test("MEASUREMENT TRAP: sep.pipe is 3 cells under unicode but 1 under nerd — never a column separator", () => {

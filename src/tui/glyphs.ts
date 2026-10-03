@@ -45,14 +45,11 @@ const UNICODE_GLYPHS = {
 	barFill: "█", // U+2588
 	barEmpty: "░", // U+2591
 	sparkRamp: ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"], // U+2581..U+2588
-	// heatCell is a RAMP, and the ladder is a DELIBERATELY UNDECIDED value.
-	// ADR 0005's starting point is one ■ with colour carrying the level; the
-	// shade ramp below (ratatui `symbols::shade`, btop's `tty_up` mode) is the
-	// monochrome alternative. Whichever wins, the swap is this one line: because
-	// `nerd` shares this object and `heatmap.ts` reads levels through
-	// `glyph(preset, "heatCell", level)`, no render code changes either way. All
-	// five candidates measure 1 cell, so the row width holds under both.
-	heatCell: ["░", "▒", "▓", "█"], // U+2591, U+2592, U+2593, U+2588
+// heatCell is ONE square at every level: `/usage` renders levels 1..4 as the
+// same ■ with the level carried by the colour alone
+// (usage-dashboard.ts:867). A shade ramp here would double-encode the level
+// beside the colour and read as a different calendar next to the real one.
+heatCell: ["■", "■", "■", "■"], // U+25A0 ×4 — every rung is BLACK SQUARE
 	heatEmpty: "·", // U+00B7 — byte-identical to the host's own /usage heatmap
 	heatMarker: "□", // U+25A1
 	// Bare U+2502, never `theme.symbol("sep.pipe")`: sep.pipe measures 3 cells
