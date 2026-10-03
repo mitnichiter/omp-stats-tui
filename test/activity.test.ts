@@ -215,3 +215,63 @@ test("day arithmetic stays on local dates across a month boundary", () => {
 		.toBeGreaterThanOrEqual(8);
 	expect(DAY_MS).toBe(86_400_000);
 });
+/**
+ * REGRESSION: both of these were found by reading the section-4 capture in
+ * RENDER-OUTPUT.txt rather than by any test.
+ */
+
+// The probe capture showed bar rows 283 BYTES long, which reads as an overflow.
+// Measured in CELLS they are 95 against a 96 inner width. This pins the
+// distinction so a future reader does not "fix" a non-bug, and so a real overflow
+// cannot hide behind the same measurement.
+test("bar rows fit the inner width in CELLS, not bytes", () => {
+	// `░` is three bytes in UTF-8, so a byte count of ~285 is 95 cells. Measuring
+	// bytes is what produced the false-positive overflow report.
+	const row = "░".repeat(95);
+	expect(Buffer.byteLength(row, "utf8")).toBe(285); // `░` is three UTF-8 bytes
+	expect(Bun.stringWidth(row)).toBe(95); // ...but one terminal cell
+	for (const preset of ["unicode", "ascii"] as const) {
+		for (const width of [60, 100, 140]) {
+			const rows = activityScreen.render(
+				makeCtx({ dailyActivity: busyDays(), costs: costsFor(busyDays()) }, width, preset),
+			);
+			for (const row of rows) {
+				const stripped = row.replace(/\x1b\[[0-9;]*m/g, "");
+				expect(Bun.stringWidth(stripped), `cells w=${width} ${preset}`).toBeLessThanOrEqual(
+					makeCtx({}, width, preset).plan.innerWidth,
+				);
+			}
+		}
+	}
+});
+
+// BUG: the busiest-day figure rendered as `611.395` — a bare quantity with three
+// decimals, because the screen passed it through `formatInteger`. It is money and
+// must go through `formatCost`, like the summary's own total.
+test("the busiest day's cost is rendered as money, not a bare number", () => {
+	const days: DailyActivityPoint[] = [
+		{ day: "2026-06-15", cost: 611.395, requests: 4, totalTokens: 900 },
+	];
+	const text = activityScreen
+		.render(makeCtx({ dailyActivity: days, costs: costsFor(days) }, 140))
+		.join("\n");
+	expect(text).toContain("busiest");
+	// Money, with the cents formatCost applies.
+	expect(text).toMatch(/busiest 2026-06-15 · \$611\.40/);
+	// And explicitly NOT the bare three-decimal quantity.
+	expect(text).not.toMatch(/· 611\.395/);
+});
+
+test("every money figure on this screen is currency-formatted", () => {
+	const days: DailyActivityPoint[] = [
+		{ day: "2026-06-15", cost: 611.395, requests: 4, totalTokens: 900 },
+		{ day: "2026-06-16", cost: 0.5, requests: 2, totalTokens: 100 },
+	];
+	const text = activityScreen
+		.render(makeCtx({ dailyActivity: days, costs: costsFor(days) }, 140))
+		.join("\n");
+	// Any number directly after the `busiest` separator must be money.
+	for (const match of text.matchAll(/busiest [\d-]+ · ([^\s]+)/g)) {
+		expect(match[1], `busiest figure ${match[1]}`).toMatch(/^\$/);
+	}
+});

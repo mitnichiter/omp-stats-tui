@@ -34,7 +34,7 @@ import type { Screen, ScreenContext } from "./types";
 import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
 import { renderDailyBars } from "../charts/bars";
 import { statsIcon, type IconRole } from "../icons";
-import { costWithUnpriced, formatInteger, compactTokens } from "../format";
+import { costWithUnpriced, formatCost, formatInteger, compactTokens } from "../format";
 import type { GlyphValue } from "../glyphs";
 
 /** Rows the daily-bars block gets. Small: the calendar is the star, not the bars. */
@@ -199,8 +199,11 @@ export const activityScreen: Screen = {
 					`   ${dim(ctx)(`${formatInteger(totals.requests)} requests`)}` +
 					`   ${dim(ctx)(`${compactTokens(totals.tokens)} tokens`)}` +
 					(busiest
-						? `   ${dim(ctx)(`busiest ${busiest.day} · ${formatInteger(busiest.cost)}`)}`
-						: ""),
+					// formatCost, not formatInteger: this is MONEY. formatInteger
+					// rendered it as a bare `611.395` — three decimals and no currency,
+					// so it read as a quantity rather than as spend.
+					? `   ${dim(ctx)(`busiest ${busiest.day} · ${formatCost(busiest.cost)}`)}`
+					: ""),
 				width,
 			),
 			"",
