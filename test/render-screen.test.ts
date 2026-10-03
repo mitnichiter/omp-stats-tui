@@ -245,6 +245,18 @@ test("a chart band draws marks, so the grammar is not quietly dropping bodies", 
 	}
 });
 
+test("activity's summary reads like the host: cost, requests, and the window", () => {
+	// usage-dashboard.ts:839-848 — bold-accent "Activity" head, dim
+	// "$COST · N requests · last W weeks", cost $X integer ≥1 else 2dp,
+	// requests compact 1dp. The unpriced count rides on the COST TILE's hint;
+	// the grid summary is the host's own totals line, not a second encoding.
+	const spec = FILLABLE.find(s => s.id === "activity")!;
+	const text = stripForText(renderScreen(opts(spec, liveData(), { width: 120 })));
+	expect(text).toMatch(/Activity/);
+	expect(text).toMatch(/last \d+ weeks/);
+	expect(text).toMatch(/\$\d[\d,]* · [\d.]+[KMB]? requests/);
+});
+
 // ─── structure: one grammar for every screen ────────────────────────────────
 
 test("no screen starts or ends on a blank row, and none doubles a blank", () => {

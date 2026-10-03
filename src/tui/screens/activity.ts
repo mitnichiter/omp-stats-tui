@@ -224,6 +224,7 @@ export const activityScreen: Screen = {
 				ramp: Array.from({ length: HEAT_LEVELS }, (_, i) =>
 					ctx.colorFor(i + 1)(PROBE).replace(PROBE, ""),
 				),
+				dim: dim(ctx),
 				today: new Date(),
 			}).map(row => clamp(row, width)),
 		);

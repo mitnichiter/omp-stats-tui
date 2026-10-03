@@ -82,6 +82,7 @@ import type {
 } from "../../layout/spec";
 import { renderBands, type Band, type BandRenderOptions } from "../band";
 import { renderSeriesChart } from "../charts/compose";
+import { buildHeatmapLayout as heatmapLayoutFor } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
 import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
 import { renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
 import {
@@ -159,6 +160,12 @@ export interface ScreenRenderOptions {
 	palette: PaletteTheme;
 	/** Injected "today" for the heatmap's `null` future cells. */
 	today?: Date;
+	/**
+	 * True while a background sync is still streaming activity in: the summary
+	 * carries the host's own ` · syncing…` suffix (usage-dashboard.ts:847).
+	 * Absent means settled — no suffix, exactly like the host after `#loadActivity`.
+	 */
+	syncing?: boolean;
 	glyphs?: GlyphSet;
 	/**
 	 * The shares every `shareBar` ABOVE this band published, in band order, so a
@@ -628,10 +635,11 @@ function chartRows(chart: ChartSpec, opts: ScreenRenderOptions): readonly string
 function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[] {
 	const points = rowsFor("dailyActivity", opts.data);
 	if (points.length === 0) return [];
-	return renderHeatmap(points as never, {
+	const weeks = weeksForWidth(HEAT_LABEL_WIDTH, width);
+	const grid = renderHeatmap(points as never, {
 		innerWidth: width,
 		labelWidth: HEAT_LABEL_WIDTH,
-		weeks: weeksForWidth(HEAT_LABEL_WIDTH, width),
+		weeks,
 		glyphs: opts.glyphs ?? glyphsFor(opts.preset),
 		// Four stops, one per level (usage-dashboard.ts:812 + :867) — a
 		// three-stop ramp leaves level 4 uncoloured.
@@ -639,6 +647,38 @@ function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[
 		dim: text => opts.fg("dim", text),
 		...(opts.today ? { today: opts.today } : {}),
 	});
+	// The host's own summary shape (usage-dashboard.ts:839-848): bold-accent
+	// head, dim "$COST · N requests · last W weeks", dim sync suffix while
+	// syncing. Cost $X integer ≥1 else 2dp; requests compact 1dp.
+	const totals = gridTotals(points as never, weeks, opts.today);
+	const head = opts.bold(opts.fg("accent", "Activity"));
+	const detail = opts.fg("dim", `${totals.cost} · ${totals.requests} requests · last ${weeks} weeks`);
+	const syncing = opts.syncing === true ? opts.fg("dim", " · syncing…") : "";
+	return [`${head} ${detail}${syncing}`, "", ...grid];
+}
+
+/**
+ * The window's totals in the host's own number formats
+ * (usage-dashboard.ts:839-844, shared with formatActivityTotals:467-475).
+ */
+function gridTotals(points: readonly DataRow[], weeks: number, today?: Date): { cost: string; requests: string } {
+	const layout = heatmapLayoutFor(
+		points.map(row => {
+			const record = row as Record<string, unknown>;
+			const day = typeof record.day === "string" ? record.day : "";
+			const cost = typeof record.cost === "number" ? record.cost : 0;
+			const requests = typeof record.requests === "number" ? record.requests : 0;
+			return { day, cost, requests };
+		}),
+		weeks,
+		today,
+	);
+	const cost =
+		layout.totalCost >= 1
+			? `$${layout.totalCost.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+			: `$${layout.totalCost.toFixed(2)}`;
+	const requests = layout.totalRequests.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 });
+	return { cost, requests };
 }
 
 /**
