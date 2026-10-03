@@ -1,0 +1,411 @@
+/**
+ * `test/chart-primitives.test.ts` — the four chart primitives, and the proof
+ * that a multi-series chart is COMPOSITION rather than a second geometry.
+ *
+ * WHY THIS FILE IS SHAPE-SENSITIVE. Charts in this panel have broken four times
+ * in one session, and every time the same way: a working single-series renderer
+ * existed, and a new multi-series rendering path was written beside it. The
+ * breakage looked like `░█░░░░█░░░░█░░░█░░░█░░░░` on one line — one glyph per
+ * sample, interleaved, a reader unable to say which series any column belonged
+ * to. Nothing threw; the tests passed, because the new path was tested on its
+ * own terms and was internally consistent.
+ *
+ * So the invariant is not "the chart looks right", which a human judges once and
+ * a machine never. It is BY EQUALITY: {@link renderSeriesChart} must produce
+ * byte-identical output to calling the existing single-series renderer once per
+ * series. That is a claim a machine can check, and it fails the moment someone
+ * writes a new geometry instead of composing the old one — which is the only
+ * moment that matters.
+ *
+ * The four primitives are also swept here across widths and all three symbol
+ * presets. They are the load-bearing rendering code for the whole panel and the
+ * renderer is being refactored around them, so a regression in a primitive
+ * should surface in THIS file, which nothing else is editing, rather than as a
+ * mystery three layers up.
+ */
+
+import { expect, test } from "bun:test";
+
+import { renderDailyBars, renderModelCostBars } from "../src/tui/charts/bars";
+import { renderHeatmap } from "../src/tui/charts/heatmap";
+import { renderSparkline } from "../src/tui/charts/sparkline";
+import { bandHeights, renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
+import { PALETTE, resolveSeries, stripForTest, type PaletteTheme } from "../src/tui/palette";
+import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
+import type { CostTimeSeriesPoint, DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
+
+const PRESETS: readonly SymbolPreset[] = ["unicode", "ascii", "nerd"];
+const WIDTHS = [40, 80, 120, 200] as const;
+
+/**
+ * A theme that needs no omp runtime. `getColorHex` must return a DISTINCT hex
+ * per token or `resolveSeries`'s dedupe collapses the palette to one colour and
+ * the multi-series colour tests would prove nothing.
+ */
+const THEME: PaletteTheme = {
+	getColorHex: (token: string) => `#${(token.length * 7919).toString(16).padStart(6, "0").slice(-6)}`,
+	getColorMode: () => "truecolor",
+	getSymbolPreset: () => "unicode",
+};
+
+/** Identity styling: colour is applied by the caller, so tests compare geometry. */
+const paint = (text: string) => text;
+
+/** Width of a rendered line in cells, ANSI excluded. */
+const cells = (line: string): number => Bun.stringWidth(stripForTest(line));
+
+// ─── The sweep: every primitive, every width, every preset ───────────────────
+
+test("renderDailyBars renders at every width and preset without overflowing", () => {
+	const values = [0, 3, 12, 40, 41, 7, 0, 19, 25, 11];
+	for (const preset of PRESETS) {
+		for (const width of WIDTHS) {
+			const rows = renderDailyBars(values, {
+				width,
+				height: 6,
+				glyphs: glyphsFor(preset),
+				accent: paint,
+				dim: paint,
+			});
+			expect(rows.length).toBe(6);
+			for (const row of rows) expect(cells(row)).toBe(width);
+		}
+	}
+});
+
+test("renderDailyBars scales by VALUE, and that value is cost", () => {
+	// THE INVARIANT EVERY CHART MUST HOLD. Bars scale by cost, never tokens: this
+	// database carries a 41x price spread at comparable token volume, so scaling
+	// by tokens inverts the ranking — the cheapest model would draw the tallest
+	// bar and the panel would be confidently, silently wrong.
+
+	// The scale is set by the LARGEST value in the chart, so the probe is a
+	// two-column chart with a known peak beside the value under test. Column 0's
+	// filled-row count is then its height against that peak: the peak gets all 8
+	// rows, half of it gets 4, a quarter gets 2 (the primitive floors a recorded
+	// value at one row, and a quarter of 8 is exactly 2).
+	const height = 8;
+	const PEAK = 4;
+	const columnHeight = (value: number): number =>
+		renderDailyBars([value, PEAK], {
+			width: 2,
+			height,
+			glyphs: glyphsFor("unicode"),
+			accent: paint,
+			dim: paint,
+		}).filter(row => stripForTest(row)[0] === "█").length;
+
+	expect(columnHeight(PEAK)).toBe(height);
+	expect(columnHeight(PEAK / 2)).toBe(height / 2);
+	expect(columnHeight(PEAK / 4)).toBe(2);
+	// Monotonic: a bigger value never draws a shorter column.
+	expect(columnHeight(3)).toBeGreaterThan(columnHeight(2));
+	// Nothing recorded draws nothing, which is what separates "no spend" from
+	// "never queried".
+	expect(columnHeight(0)).toBe(0);
+});
+
+test("renderDailyBars says so when a range has no data at all", () => {
+	const rows = renderDailyBars([], {
+		width: 40,
+		height: 4,
+		glyphs: glyphsFor("unicode"),
+		accent: paint,
+		dim: paint,
+	});
+	expect(rows.length).toBe(1);
+	expect(rows[0]).toContain("No activity");
+});
+
+test("renderSparkline renders at every width and preset, one cell per sample", () => {
+	const values = [3, 9, 1, 14, 7, 0, 22, 11];
+	for (const preset of PRESETS) {
+		for (const width of WIDTHS) {
+			const line = renderSparkline(values, { width, preset });
+			expect(cells(line)).toBe(width);
+		}
+	}
+});
+
+test("renderSparkline scales by magnitude, so the peak is the tallest rung", () => {
+	// The peak sample must use the top of the ramp. `sparkRamp` is 8 rungs and
+	// the top one is the full block, so a peak that renders as anything shorter
+	// means the scale is off by a rung.
+	const ramp = glyphsFor("unicode").sparkRamp;
+	const top = Array.isArray(ramp) ? ramp[ramp.length - 1] : ramp;
+	const line = renderSparkline([1, 2, 99, 2, 1], { width: 5, preset: "unicode" });
+	expect(stripForTest(line)[2]).toBe(top);
+});
+
+const ACTIVITY: readonly DailyActivityPoint[] = Array.from({ length: 40 }, (_, i) => ({
+	day: `2026-06-${String((i % 28) + 1).padStart(2, "0")}`,
+	cost: i === 12 ? 42 : i % 7,
+	requests: 100 + i,
+	totalTokens: 1_000_000 * (i + 1),
+}));
+
+test("renderHeatmap renders at every width and preset without overflowing", () => {
+	for (const preset of PRESETS) {
+		for (const width of WIDTHS) {
+			const rows = renderHeatmap(ACTIVITY, {
+				innerWidth: width,
+				labelWidth: 2,
+				weeks: 12,
+				glyphs: glyphsFor(preset),
+				ramp: [PALETTE.heat1, PALETTE.heat2, PALETTE.heat3].map(() => ""),
+				today: new Date("2026-07-15T12:00:00Z"),
+			});
+			expect(rows.length).toBe(8); // month row + seven weekday rows
+			for (const row of rows) expect(cells(row)).toBeLessThanOrEqual(width);
+		}
+	}
+});
+
+const COST_POINTS: readonly CostTimeSeriesPoint[] = [
+	{
+		timestamp: 1_700_000_000_000,
+		model: "gpt-5.6-terra",
+		provider: "openrouter",
+		cost: 42,
+		unpricedRequests: 0,
+		costInput: 4,
+		costOutput: 2,
+		costCacheRead: 34,
+		costCacheWrite: 2,
+		requests: 900,
+	},
+	{
+		timestamp: 1_700_000_000_000,
+		model: "deepseek-v4-flash",
+		provider: "deepseek",
+		cost: 1,
+		unpricedRequests: 3,
+		costInput: 0.1,
+		costOutput: 0.05,
+		costCacheRead: 0.8,
+		costCacheWrite: 0.05,
+		requests: 4_000,
+	},
+];
+
+test("renderModelCostBars renders at every width and preset without overflowing", () => {
+	for (const preset of PRESETS) {
+		for (const width of WIDTHS) {
+			const rows = renderModelCostBars(COST_POINTS, {
+				width,
+				height: 5,
+				glyphs: glyphsFor(preset),
+				accent: paint,
+				dim: paint,
+			});
+			expect(rows.length).toBe(5);
+			for (const row of rows) expect(cells(row)).toBeLessThanOrEqual(width);
+		}
+	}
+});
+
+test("renderModelCostBars ranks by COST: the 42x token spender is the shorter bar", () => {
+	// The token-scaled inversion, caught directly. `deepseek-v4-flash` moves 4x
+	// the tokens of `gpt-5.6-terra` here and costs 1/42 as much. Scale by tokens
+	// and the cheapest model draws the tallest column, which inverts the whole
+	// chart. Two models, two columns: column 0 is the dearer one.
+	const rows = renderModelCostBars(COST_POINTS, {
+		width: 2,
+		height: 8,
+		glyphs: glyphsFor("unicode"),
+		accent: paint,
+		dim: paint,
+	});
+	const filled = (col: number) => rows.filter(row => stripForTest(row)[col] === "█").length;
+	expect(filled(0)).toBeGreaterThan(filled(1));
+	expect(filled(0)).toBe(8);
+});
+
+// ─── Composition: the multi-series chart IS the primitive, N times ───────────
+
+/**
+ * Series with EQUAL peaks.
+ *
+ * Equal peaks are what make the shared allocation give every series the same
+ * band height, which is what lets the composition be asserted as plain
+ * byte-equality against `series.flatMap(…)`. The unequal-peak case is covered
+ * by the band-by-band test and by `bandHeights` directly.
+ */
+const REQUEST_SERIES: readonly SeriesChartSeries[] = [
+	{ label: "Succeeded", values: [12, 30, 8, 20, 21] },
+	{ label: "Failed", values: [12, 30, 8, 20, 21] },
+];
+
+/**
+ * The mark-only form, which is what the equality tests compare.
+ *
+ * `labels: false` is the pure composition: no band names, so the output is
+ * exactly `renderDailyBars` once per series. Labelled output is that plus one
+ * row per band, and has its own test below.
+ */
+function marks(
+	series: readonly SeriesChartSeries[],
+	width: number,
+	height: number,
+	preset: SymbolPreset = "unicode",
+): readonly string[] {
+	return renderSeriesChart(series, {
+		width,
+		height,
+		preset,
+		theme: THEME,
+		paint: (_color, text) => text,
+		labels: false,
+	});
+}
+
+/** The primitive, called exactly as `compose` must call it. */
+function primitive(values: readonly number[], width: number, height: number, preset: SymbolPreset) {
+	return renderDailyBars(values, {
+		width,
+		height,
+		glyphs: glyphsFor(preset),
+		accent: (_text: string) => _text,
+		dim: (_text: string) => _text,
+	});
+}
+
+test("renderSeriesChart IS renderDailyBars called once per series", () => {
+	// THE EQUALITY THAT MATTERS. Not "looks like a stacked chart" — byte-identical
+	// to the composition a caller would have written by hand. A new multi-series
+	// geometry fails this; composing passes.
+	const series = REQUEST_SERIES;
+	const width = 20;
+	const height = 6;
+	const perSeries = Math.floor(height / series.length);
+
+	const handRolled = series.flatMap(s => primitive(s.values, width, perSeries, "unicode"));
+
+	expect(marks(series, width, height)).toEqual(handRolled);
+});
+
+test("renderSeriesChart of ONE series is exactly the primitive", () => {
+	const one: SeriesChartSeries[] = [{ label: "Calls", values: [4, 9, 2, 7] }];
+	expect(marks(one, 12, 3)).toEqual(primitive(one[0]!.values, 12, 3, "unicode"));
+});
+
+test("every series in a multi-series chart is the primitive, band by band", () => {
+	// The whole-chart equality above could still pass if one series were rendered
+	// correctly and another fudged. This asks, for EACH series, whether its own
+	// band is the primitive over its own values — and it uses UNEVEN peaks, so it
+	// also covers the unequal-band case the equal-peak equality cannot reach.
+	const series: SeriesChartSeries[] = [
+		{ label: "Succeeded", values: [44, 40, 44, 38] },
+		{ label: "Failed", values: [4, 4, 4, 4] },
+	];
+	const width = 20;
+	const budget = 8;
+	const rows = marks(series, width, budget * series.length);
+
+	const heights = bandHeights([44, 4], budget);
+	let offset = 0;
+	for (const [index, entry] of series.entries()) {
+		const band = rows.slice(offset, offset + (heights[index] ?? 0));
+		expect(band.slice()).toEqual([...primitive(entry.values, width, heights[index] ?? 0, "unicode")]);
+		offset += heights[index] ?? 0;
+	}
+});
+
+test("composition holds at every preset and every width", () => {
+	const series = REQUEST_SERIES;
+	const height = 6;
+	for (const preset of PRESETS) {
+		for (const width of WIDTHS) {
+			const perSeries = Math.floor(height / series.length);
+			const expected = series.flatMap(s => primitive(s.values, width, perSeries, preset));
+			expect(marks(series, width, height, preset)).toEqual(expected);
+			for (const row of expected) expect(cells(row)).toBe(width);
+		}
+	}
+});
+
+test("the SHARED scale is what stops a 4% failure rate reading as 100%", () => {
+	// THE REGRESSION THIS MODULE EXISTS TO PREVENT, stated as arithmetic. Failed
+	// peaks at 4; Succeeded peaks at 44. If each series scaled against its OWN
+	// maximum both bands would fill and the chart would claim a hundred percent
+	// failure. Under a shared scale the quiet band is a fraction of the loud one.
+	//
+	// Asserted on the ALLOCATION rather than on the pixels: `renderDailyBars`
+	// rounds any fraction of a row up to at least one filled cell, so measuring
+	// pixels here would be testing the primitive's rounding, not this rule.
+	expect(bandHeights([44, 4], 8)).toEqual([8, 1]);
+	// Equal peaks get equal bands — the case the composition equalities rely on.
+	expect(bandHeights([10, 10, 10], 3)).toEqual([3, 3, 3]);
+	// A series that recorded something keeps at least one row, so "drew nothing"
+	// and "recorded nothing" stay distinguishable.
+	expect(bandHeights([100, 1], 4)).toEqual([4, 1]);
+	// No budget, no bands.
+	expect(bandHeights([44, 4], 0)).toEqual([0, 0]);
+	// Nothing recorded anywhere: every series still gets its share of the rows, so
+	// "no data" reads as a flat empty chart rather than a missing one.
+	expect(bandHeights([0, 0], 4)).toEqual([4, 4]);
+});
+
+test("a labelled chart names every band and still holds the width", () => {
+	const width = 20;
+	const rows = renderSeriesChart(REQUEST_SERIES, {
+		width,
+		height: 9,
+		preset: "unicode",
+		theme: THEME,
+		paint: (_color, text) => text,
+	});
+	expect(rows.some(row => row.includes("Succeeded"))).toBe(true);
+	expect(rows.some(row => row.includes("Failed"))).toBe(true);
+	expect(rows.length).toBeLessThanOrEqual(9);
+	for (const row of rows) expect(cells(row)).toBe(width);
+});
+
+test("renderSeriesChart colours each series from resolveSeries", () => {
+	// Asserting only that the palette returns two different tokens would pass even
+	// if `compose` ignored the palette entirely. This counts what `compose`
+	// actually handed to `paint`, so a dropped `resolveSeries` call fails.
+	const tokens = resolveSeries(2, THEME);
+	expect(tokens[0]).not.toBe(tokens[1]);
+
+	const seen = new Map<string, number>();
+	const rows = renderSeriesChart(REQUEST_SERIES, {
+		width: 20,
+		height: 4,
+		preset: "unicode",
+		theme: THEME,
+		paint: (color, text) => {
+			seen.set(color, (seen.get(color) ?? 0) + 1);
+			return text;
+		},
+	});
+
+	expect(rows.length).toBeGreaterThan(0);
+	for (const token of tokens) expect(seen.get(token) ?? 0).toBeGreaterThan(0);
+});
+
+test("renderSeriesChart renders nothing for no series, rather than a blank block", () => {
+	expect(
+		renderSeriesChart([], {
+			width: 20,
+			height: 4,
+			preset: "unicode",
+			theme: THEME,
+			paint: (_color, text) => text,
+		}),
+	).toEqual([]);
+});
+
+test("renderSeriesChart drops the remainder rather than giving it to the last series", () => {
+	// 5 rows across 3 series is 1 row each with 2 spare. Handing the spare rows to
+	// the final series would make its apparent magnitude a function of its
+	// position in the list.
+	const many: SeriesChartSeries[] = [
+		{ label: "a", values: [1, 2] },
+		{ label: "b", values: [2, 1] },
+		{ label: "c", values: [1, 1] },
+	];
+	const rows = marks(many, 10, 5);
+	expect(rows.length).toBe(3);
+	for (const row of rows) expect(cells(row)).toBe(10);
+});
