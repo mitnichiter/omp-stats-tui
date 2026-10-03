@@ -128,6 +128,41 @@ function tokensUsed(text: string): string[] {
  * body. So the assertion is written LITERALLY — match a run of rule characters
  * and assert none is produced — rather than trusting a rendering convention.
  */
+// ─── G1: a band is a heading line plus body lines ───────────────────────────
+
+test("G1: a headed band is EXACTLY ONE heading line followed by body lines", () => {
+	// G1 is the shape the other rules decorate, and it was only ever implied:
+	// every G2/G3/G4 test asserts something about a line without asserting that
+	// the band HAS the right number of them. A renderer that emitted two heading
+	// lines, or none, or a heading after the body, satisfied all of them.
+	for (const preset of PRESETS) {
+		const ctxFor = (o: Partial<BandRenderOptions> = {}) => ctx({ preset, glyphs: glyphsFor(preset), ...o });
+
+		for (const band of ALL_KINDS) {
+			if (band.kind === "custom") continue; // its body is the screen's own
+			const rows = renderBands([band], ctxFor());
+			const hasHeading = band.kind === "chart" || band.kind === "table";
+
+			if (!hasHeading) {
+				// G3: statRow, note and legend carry no heading, so the band is
+				// body alone — and it must not be empty if it is in the list.
+				expect(rows.length, `${band.kind}/${preset}`).toBeGreaterThan(0);
+				continue;
+			}
+
+			// Exactly one heading, and it is FIRST. A body row above it, or a
+			// second heading, breaks G1 even though G2 and G4 still hold.
+			const title = band.kind === "chart" ? band.title : band.title;
+			const headingAt = rows.findIndex(row => plain(row).includes(title));
+			expect(headingAt, `${band.kind}/${preset}: heading missing`).toBe(0);
+
+			const headings = rows.filter(row => plain(row).includes(title));
+			expect(headings.length, `${band.kind}/${preset}: more than one heading`).toBe(1);
+			expect(rows.length, `${band.kind}/${preset}: a band is a heading PLUS body`).toBeGreaterThan(1);
+		}
+	}
+});
+
 const RULE_RUN = /[─━═]{3,}/;
 
 test("G5: no band body emits a rule — for every kind, under every preset", () => {

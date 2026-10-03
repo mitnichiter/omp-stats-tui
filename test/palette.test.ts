@@ -163,9 +163,14 @@ test("the palette survives getSymbolPreset() === 'ascii' unchanged", () => {
 	// Colour and glyph are independent axes: the same theme must yield the same
 	// colours whatever the preset says.
 	expect([0, 1, 2, 3].map(l => heatRamp(ascii, l))).toEqual([0, 1, 2, 3].map(l => heatRamp(unicode, l)));
-	expect(PALETTE).toEqual(PALETTE);
 	expect(resolveSeries(6, ascii)).toEqual(resolveSeries(6, unicode));
 	expect(ascii.getSymbolPreset()).toBe("ascii");
+	// Every role resolves, and every role is a token the host's validator
+	// accepts — a misspelled token is a compile error here and a runtime
+	// uncoloured cell if it ever slips through.
+	for (const role of Object.keys(PALETTE) as PaletteRole[]) {
+		expect(isValidThemeColor(PALETTE[role]), role).toBe(true);
+	}
 });
 
 test("stripForTest removes ANSI so glyph assertions ignore colour", () => {
@@ -176,4 +181,32 @@ test("stripForTest removes ANSI so glyph assertions ignore colour", () => {
 	// Plain text passes through untouched, so it is safe to call unconditionally.
 	expect(stripForTest("plain")).toBe("plain");
 	expect(stripForTest("")).toBe("");
+});
+
+test("palette.ts is the ONLY module allowed to emit a colour escape", async () => {
+	// The behavioural test in `band.test.ts` proves the band grammar does not
+	// leak a literal escape, but the screens compose their own rows and do not
+	// go through it — so a screen could hand-write `\x1b[38;2;…` and break every
+	// user theme without anything failing. This is the structural version of the
+	// same rule, and it covers every module regardless of how it renders.
+	//
+	// A colour-SETTING SGR: 30–37/90–97 (basic fg), 38/48/58 (extended fg/bg/
+	// underline), 40–47/100–107 (basic bg). A bare reset like `\x1b[39m` is not
+	// a colour choice and is deliberately not matched.
+	const COLOUR_ESCAPE = /\\x1b\\?\[\s*(?:3[0-7]|9[0-7]|4[0-7]|10[0-7]|38|48|58)\b/;
+
+	// `palette.ts` owns the ramp; the host owns everything else. Nothing else may
+	// name a colour directly.
+	const ALLOWED = new Set(["src/tui/palette.ts"]);
+	const offenders: string[] = [];
+
+	for (const file of new Bun.Glob("src/**/*.ts").scanSync({ cwd: import.meta.dir + "/.." })) {
+		if (ALLOWED.has(file)) continue;
+		const source = await Bun.file(`${import.meta.dir}/../${file}`).text();
+		// Comments document escapes legitimately; only code can leak one.
+		const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+		if (COLOUR_ESCAPE.test(code)) offenders.push(file);
+	}
+
+	expect(offenders, `hardcoded colour escape in: ${offenders.join(", ")}`).toEqual([]);
 });
