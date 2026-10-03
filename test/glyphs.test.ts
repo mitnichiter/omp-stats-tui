@@ -219,3 +219,40 @@ test("BAR_LEVELS matches the eight vertical levels the daily bar chart downsampl
 	expect(BAR_LEVELS).toBe(8);
 	expect(glyphsFor("unicode").sparkRamp).toHaveLength(BAR_LEVELS);
 });
+
+/**
+ * The `nf-*` name each nerd PUA value is supposed to be. Source: the
+ * nerd-fonts cheat sheet CSS
+ * (https://raw.githubusercontent.com/ryanoasis/nerd-fonts/master/css/nerd-fonts-generated.css),
+ * read codepoint-first: the glyph at a codepoint IS whatever name the sheet
+ * assigns that codepoint to. A name that matches nothing makes its column tofu
+ * under a Nerd Font; a wrong name fails this test before it ships.
+ */
+const NERD_CP_BY_ROLE: Record<string, { cp: string; nf: string }> = {
+	cost: { cp: "F155", nf: "nf-fa-dollar" },
+	tokens: { cp: "E26B", nf: "nf-fae-coins" },
+	requests: { cp: "F201", nf: "nf-fa-line_chart" },
+	time: { cp: "F017", nf: "nf-fa-clock_o" },
+	models: { cp: "EC19", nf: "nf-cod-chip" },
+	providers: { cp: "F048B", nf: "nf-md-server" },
+	tools: { cp: "F0AD", nf: "nf-fa-wrench" },
+	projects: { cp: "F07C", nf: "nf-fa-folder_open" },
+	errors: { cp: "F057", nf: "nf-fa-times_circle" },
+	calendar: { cp: "F073", nf: "nf-fa-calendar" },
+	gains: { cp: "F0535", nf: "nf-md-trending_up" },
+	trendUp: { cp: "F062", nf: "nf-fa-arrow_up" },
+	trendDown: { cp: "F063", nf: "nf-fa-arrow_down" },
+	unknown: { cp: "F059", nf: "nf-fa-circle_question" },
+	cache: { cp: "F1C0", nf: "nf-fa-database" },
+	warning: { cp: "F071", nf: "nf-fa-warning" },
+};
+
+test("nerd codepoints are the cheat-sheet codepoints for their nf-* names", () => {
+	const mismatches: string[] = [];
+	for (const [role, want] of Object.entries(NERD_CP_BY_ROLE)) {
+		const actual = STATS_ICONS.nerd[role as keyof typeof STATS_ICONS.nerd];
+		const actualCp = [...actual].map((c) => (c.codePointAt(0) ?? 0).toString(16).toUpperCase()).join("+");
+		if (actualCp !== want.cp) mismatches.push(`${role}: table has U+${actualCp}, cheat sheet has ${want.nf} = U+${want.cp}`);
+	}
+	expect(mismatches).toEqual([]);
+});
