@@ -257,6 +257,30 @@ export function withHonestUnpriced<T extends object>(payload: T, counts: Readonl
 			};
 		});
 	}
+	// `costSeries` rows are per (day, model, provider) while the counts map is
+	// per model, so each model's total lands on its FIRST row and the payload's
+	// sum stays exact. The daily/provider split is approximate until the upstream
+	// fix prices these rows for real; the range totals are not. Never invent a
+	// row for a model with no series row: a new timestamp would corrupt the
+	// active-day denominator behind `avgDailyCost`.
+	const series = patched.costSeries;
+	if (Array.isArray(series)) {
+		const claimed = new Set<string>();
+		patched.costSeries = series.map(row => {
+			if (!row || typeof row !== "object") return row;
+			if (!("model" in row)) return row;
+			const model = row.model;
+			if (typeof model !== "string") return row;
+			if (claimed.has(model)) return row;
+			const delta = counts.get(model);
+			if (!delta) return row;
+			claimed.add(model);
+			if (!("unpricedRequests" in row)) return { ...row, unpricedRequests: delta };
+			const current = row.unpricedRequests;
+			const base = typeof current === "number" ? current : 0;
+			return { ...row, unpricedRequests: base + delta };
+		});
+	}
 
 	return patched as T;
 }
@@ -278,8 +302,12 @@ export async function fetchModelDashboard(
 	const payload = await apiGet<ModelDashboardPayload>("/api/stats/model-dashboard", { range }, read);
 	return withHonestUnpriced(payload, readNoCardUnpriced(range));
 }
-export function fetchCosts(range: Range, read: Reader = liveReader): Promise<CostPayload> {
-	return apiGet<CostPayload>("/api/stats/costs", { range }, read);
+export async function fetchCosts(
+	range: Range,
+	read: Reader = liveReader,
+): Promise<CostPayload> {
+	const payload = await apiGet<CostPayload>("/api/stats/costs", { range }, read);
+	return withHonestUnpriced(payload, readNoCardUnpriced(range));
 }
 
 export function fetchFolders(range: Range, read: Reader = liveReader): Promise<FolderStats[]> {

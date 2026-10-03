@@ -126,3 +126,44 @@ test("a payload with no overall and no byModel is returned untouched", () => {
 	const empty = {};
 	expect(withHonestUnpriced(empty, counts)).toEqual(empty);
 });
+
+/** A minimal CostPayload-shaped object for the costs-route correction. */
+function costsPayload(rows: Record<string, unknown>[]) {
+	return { costSeries: rows };
+}
+
+function costRow(day: number, model: string) {
+	return {
+		timestamp: day,
+		model,
+		provider: "test-provider",
+		cost: 0,
+		unpricedRequests: 0,
+		requests: 100,
+	};
+}
+
+test("a no-card model's missing unpriced count lands on the cost series exactly once", () => {
+	// Rows are per (day, model, provider) while the counts map is per model: adding
+	// the whole delta to EVERY matching row would multiply it by days × providers.
+	const DAY = 86_400_000;
+	const rows = [
+		costRow(DAY, "gemini-3.7-flash-high"),
+		costRow(2 * DAY, "gemini-3.7-flash-high"),
+		costRow(DAY, "space-bunny-free"),
+	];
+	const out = withHonestUnpriced(costsPayload(rows), new Map([["gemini-3.7-flash-high", 4197]])) as {
+		costSeries: { model: string; unpricedRequests: number }[];
+	};
+	const total = out.costSeries.reduce((sum, r) => sum + r.unpricedRequests, 0);
+	expect(total).toBe(4197);
+	for (const row of out.costSeries) {
+		if (row.model === "space-bunny-free") expect(row.unpricedRequests).toBe(0);
+	}
+});
+
+test("a cost series with no missing counts is returned untouched", () => {
+	const rows = [costRow(86_400_000, "space-bunny-free")];
+	const input = costsPayload(rows);
+	expect(withHonestUnpriced(input, new Map())).toBe(input);
+});
