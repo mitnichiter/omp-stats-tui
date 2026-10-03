@@ -1445,3 +1445,313 @@ WHAT TO LOOK AT, AND WHY:
 ├──────────────────────────────────────────────────────────┤
 │ ↑/↓ scroll · ←/→ screen · r range · s sync · ⎋/q close   │
 ╰──────────────────────────────────────────────────────────╯
+
+==============================================================================
+11) $ for s in costs projects tools requests; do bun scripts/probe-render.ts $s --width 100 --width 60; done
+==============================================================================
+
+FOUR SCREENS, ONE GRAMMAR. costs, projects, tools and requests retired their
+hand-written scaffolds this section: each registry entry now carries identity and
+contract and defers render to renderScreen via src/tui/screens/render.ts. What
+follows is the pipeline's output on live data from ~/.omp/stats.db at width 100
+and width 60, ANSI stripped. Earlier sections are untouched history.
+
+------------------------------------------------------------------------------
+### costs
+------------------------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+costs  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent estimate                           Average per day                              …
+$0                                                $0                                           …
+0                                                                                              …
+                                                                                               …
+Per priced request                                Unpriced requests                            …
+$0                                                0                                            …
+                                                                                               …
+                                                                                               …
+
+⏱ Daily estimate per day, by billing component
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Input                                                                                          
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Output                                                                                         
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Cache read                                                                                     
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Cache write                                                                                    
+
+📊 By model
+Model           Requests     Estimate        Share        Split  Per request     Unpriced
+muse-spark-1.3-contributor-free           88           $0           $0           $0           $…
+space-bunny-free        4,257           $0           $0           $0           $0            0
+~typesafe/jev-latest            2           $0           $0           $0           $0          …
+muse-spark-1.3-contributor-free           88           $0           $0           $0           $…
+4 of 5
+
+Bars scale by cost, never by tokens: this data carries a 41x price spread at comparable token v…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+32 rows
+
+════════════════════════════════════════════════════════════
+costs  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+API-equivalent estimate
+$0
+0
+Average per day
+$0
+Per priced request
+$0
+Unpriced requests
+0
+
+⏱ Daily estimate per day, by billing component
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Input                                                  
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Output                                                 
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Cache read                                             
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+ Cache write                                            
+
+📊 By model
+Model           Requests     Estimate        Share     …
+muse-spark-1.3-contributor-free           88           …
+space-bunny-free        4,257           $0           $0…
+~typesafe/jev-latest            2           $0         …
+3 of 5
+
+Bars scale by cost, never by tokens: this data carries …
+────────────────────────────────────────────────────────────
+28 rows
+
+fetched costs: 2 route(s) in 1ms
+
+------------------------------------------------------------------------------
+### projects
+------------------------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+projects  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Folders                                           Requests                                     …
+4                                                 4,347                                        …
+                                                  94                                           …
+                                                                                               …
+API-equivalent cost                               Conversation tokens                          …
+$0                                                631M                                         …
+0                                                                                              …
+                                                                                               …
+Cache rate
+0.926
+
+⏱ Top by cost share of the total
+Share of API-equivalent cost ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.0% 0
+
+⏱ Top by requests share of the total
+Share of all requests █████████████████████████████████████████████████████████████ 100.0% 3,186
+
+📊 Folders
+Folder            Requests         Cost       Tokens   Cache rate Cache savings       Errors Av…
+-Documents-Projects-omp-stats-tui        3,186           $0         424M        93.1%         0…
+-Documents-Projects-vorssaint-utils          642           $0          88M        91.3%        …
+-Documents-Projects-astryx-dracula          516           $0         118M        92.4%         …
+/private-tmp/            3           $0         748K         0.1%         0.0%         none    …
+────────────────────────────────────────────────────────────────────────────────────────────────────
+23 rows
+
+════════════════════════════════════════════════════════════
+projects  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Folders
+4
+Requests
+4,347
+94
+API-equivalent cost
+$0
+0
+Conversation tokens
+631M
+Cache rate
+0.926
+
+⏱ Top by cost share of the total
+Share of API-equivalent cost ░░░░░░░░░░░░░░░░░░░░ 0.0% 0
+
+⏱ Top by requests share of the total
+Share of all requests █████████████████████ 100.0% 3,186
+
+📊 Folders
+Folder            Requests         Cost       Tokens   …
+-Documents-Projects-omp-stats-tui        3,186         …
+-Documents-Projects-vorssaint-utils          642       …
+-Documents-Projects-astryx-dracula          516        …
+3 of 4
+────────────────────────────────────────────────────────────
+25 rows
+
+fetched projects: 2 route(s) in 1ms
+
+------------------------------------------------------------------------------
+### tools
+------------------------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+tools  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Tool calls                                        Distinct tools                               …
+4,883                                             20                                           …
+                                                                                               …
+                                                                                               …
+Error rate                                        Attributed tokens                            …
+0.05                                              592M                                         …
+                                                                                               …
+                                                                                               …
+Attributed cost
+0
+
+Result text                                       Call arguments                               …
+12M                                               4.2M                                         …
+                                                                                               …
+                                                                                               …
+Avg result per call
+2.4K
+
+⏱ Calls over time calls per bucket
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░███░███░░░░░░░░░░████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+ Calls                                                                                          
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+ Errors                                                                                         
+
+📊 By tool
+Tool                Trend        Calls       Errors         Args       Result Attr. tokens   At…
+bash         ▁▁▁▁▁▁▁▂▄▅▆▃ ████████████           82         898K         3.3M         270M     …
+read         ▁▁▁▁▁▁▁▁▃▇█▂ ██████░░░░░░            4         122K         6.6M         119M     …
+edit         ▁▁▁▁▁▁▁▁▃▇█▃ ███░░░░░░░░░          131         483K         480K          90M     …
+grep         ▁▁▁▁▁▁▁▂▄▅█▂ █░░░░░░░░░░░            3          34K         786K          15M     …
+4 of 16
+
+📊 By tool and model
+Tool                Model        Calls       Errors Attr. tokens   Attr. cost
+bash         space-bunny-free        2,301           82         270M            0
+read         space-bunny-free        1,140            4         119M            0
+edit         space-bunny-free          567          131          90M            0
+grep         space-bunny-free          214            3          15M            0
+4 of 16
+
+Attributed tokens and cost are per-call SHARES of the assistant turn that asked for them, never…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+46 rows
+
+════════════════════════════════════════════════════════════
+tools  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Tool calls
+4,883
+Distinct tools
+20
+Error rate
+0.05
+Attributed tokens
+592M
+Attributed cost
+0
+
+Result text
+12M
+Call arguments
+4.2M
+Avg result per call
+2.4K
+
+⏱ Calls over time calls per bucket
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░███░███░░░░░░░░░░████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+ Calls                                                  
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████░░░░░░░░░█████
+ Errors                                                 
+
+📊 By tool
+Tool                Trend        Calls       Errors    …
+bash         ▁▁▁▁▁▁▁▂▄▅▆▃ ████████████           82    …
+read         ▁▁▁▁▁▁▁▁▃▇█▂ ██████░░░░░░            4    …
+edit         ▁▁▁▁▁▁▁▁▃▇█▃ ███░░░░░░░░░          131    …
+3 of 12
+
+📊 By tool and model
+Tool                Model        Calls       Errors Att…
+bash         space-bunny-free        2,301           82…
+read         space-bunny-free        1,140            4…
+edit         space-bunny-free          567          131…
+3 of 12
+
+Attributed tokens and cost are per-call SHARES of the a…
+────────────────────────────────────────────────────────────
+42 rows
+
+fetched tools: 2 route(s) in 2ms
+
+------------------------------------------------------------------------------
+### requests
+------------------------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+requests  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Requests                                          Failed                                       …
+50                                                50                                           …
+                                                                                               …
+                                                                                               …
+Tokens                                            API-equivalent cost                          …
+15M                                               $0                                           …
+                                                                                               …
+                                                                                               …
+
+📊 Request log
+Model              When      Project        Input   Cache read       Output         Cost     Du…
+space-bunny-free       3h ago -Documents-Projects-omp-stats-tui          216         434K      …
+space-bunny-free       3h ago -Documents-Projects-omp-stats-tui          703         434K      …
+space-bunny-free       3h ago -Documents-Projects-omp-stats-tui          860         433K      …
+space-bunny-free       3h ago -Documents-Projects-omp-stats-tui           3K         430K      …
+4 of 16
+────────────────────────────────────────────────────────────────────────────────────────────────────
+16 rows
+
+════════════════════════════════════════════════════════════
+requests  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Requests
+50
+Failed
+50
+Tokens
+15M
+API-equivalent cost
+$0
+
+📊 Request log
+Model              When      Project        Input   Cac…
+space-bunny-free       3h ago -Documents-Projects-omp-s…
+space-bunny-free       3h ago -Documents-Projects-omp-s…
+space-bunny-free       3h ago -Documents-Projects-omp-s…
+3 of 12
+────────────────────────────────────────────────────────────
+15 rows
+
+fetched requests: 3 route(s) in 1ms
+

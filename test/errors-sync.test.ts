@@ -6,8 +6,8 @@ import type { LayoutPlan } from "../src/tui/layout";
 import type { SymbolPreset } from "../src/tui/glyphs";
 import { renderScreen, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { describeSyncProgress, type SyncEvent } from "../src/sync/client";
+import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme";
-import { PALETTE } from "../src/tui/palette";
 
 /**
  * Piece 1 (errors screen) and Piece 2 (sync indicator): end-to-end rendering
@@ -21,6 +21,8 @@ import { PALETTE } from "../src/tui/palette";
  * hand-written body is how the renderer and the screen diverged in F24, and it
  * is why this file resolves the spec by id instead of importing a component.
  */
+
+ensureThemeSync();
 
 const NOW = 1_790_995_200_000;
 
@@ -82,7 +84,7 @@ function opts(width: number, data: PanelData = DATA, preset: SymbolPreset = "uni
 		now: NOW,
 		fg: ((color: ThemeColor, text: string) => text) as ScreenRenderOptions["fg"],
 		bold: (text: string) => text,
-		palette: PALETTE,
+		palette: theme,
 	};
 }
 
