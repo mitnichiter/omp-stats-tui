@@ -556,18 +556,29 @@ export class StatsPanel implements Component {
 
 		// The sidebar is a COLUMN beside the body and costs no body row, but a
 		// terminal too short for its eleven nav rows degrades full → rail rather
-		// than overflowing (framePolicy decides the width half).
-		const sidebarLines =
-			policy.sidebar === "hidden"
-				? []
-				: policy.sidebar === "full" && rows >= MIN_SIDEBAR_ROWS
-					? sidebar(this.#theme, preset, state.screenId).lines
-					: [sidebarRail(this.#theme, preset, state.screenId)];
+		// than overflowing (framePolicy decides the width half). Below both, the
+		// web hides the sidebar behind a hamburger drawer; a terminal drawer is
+		// one keystroke of state, so the strip stands in as the drawer — the
+		// reader still sees every screen, one row, without a body row lost.
+		let drawerLines: readonly string[] = NO_ROWS;
+		const spec = specById(state.screenId);
+		const railLines =
+			policy.sidebar === "full" && rows >= MIN_SIDEBAR_ROWS
+				? sidebar(this.#theme, preset, state.screenId).lines
+				: [sidebarRail(this.#theme, preset, state.screenId)];
+		const drawer = policy.sidebar === "hidden" && spec !== undefined;
+		if (drawer) {
+			const tabs = buildTabs(preset, this.#theme, spec.id);
+			this.#tabBar.setTabs(tabs, spec.id);
+			drawerLines = this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT));
+		}
+		const sidebarLines = drawer ? [] : railLines;
 		const sidebarWidth = sidebarLines.length === 0 ? 0 : Math.max(...sidebarLines.map(line => visibleWidth(line)));
 
-		// Chrome is the topbar (+progress) replacing the one strip row the budget
-		// already charged, so `bodyRows` stays the single row arithmetic.
-		const body = bodyRows(rows, topLines.length);
+		// Chrome is the topbar (+progress) plus the drawer strip when the sidebar
+		// is gone; `bodyRows` is the same one row arithmetic `/settings` uses.
+		const headerLines = drawer ? [...topLines, ...drawerLines] : topLines;
+		const body = bodyRows(rows, headerLines.length);
 		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
 
 		state.source = this.#bodyLines(plan, preset, sidebarLines.length > 0 ? sidebarLines : null, sidebarWidth);
@@ -578,8 +589,8 @@ export class StatsPanel implements Component {
 
 		state.title = `Stats · ${rangeLabel(state.range)}`;
 		this.#panel.title = state.title;
-		this.#header.setLines(topLines);
-		this.#header.setHeight(topLines.length);
+		this.#header.setLines(headerLines);
+		this.#header.setHeight(headerLines.length);
 		this.#body.setLines(state.source.slice(state.scroll, state.scroll + plan.bodyRows));
 		this.#body.setHeight(plan.bodyRows);
 		this.#footer.setLines([this.#footerLine(plan)]);
