@@ -557,3 +557,33 @@ fetched 3 route(s) in 100ms for activity
 Cell widths of every row above, measured with Bun.stringWidth against inner=96:
 bar rows: 6, cell widths: 95
 widest non-rule row: 95
+
+==============================================================================
+UPDATE 2026-10-03 — after the unpriced-cost fix (commit 7a2ea03)
+==============================================================================
+
+NOTE: an earlier version of this section was clobbered by a concurrent commit
+to this shared file. Re-appended here so the evidence survives.
+
+The discriminator is live in src/data/api.ts. Measured against the same
+database. Models with NO catalog price card:
+
+overall.unpricedRequests = 4359
+
+⬢  Cost by model
+────────────────────────────────────────────────────────────
+gemini-3.7-flash-high █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ N/A · 4,197 unpriced
+gpt-5.6-sol           █████████████████████████████████████████████████████            $1,292.85
+gpt-5.6-terra         ██████████████████████████████████████░░░░░░░░░░░░░░░              $935.72
+agnes-2.5-flash       █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   N/A · 162 unpriced
+space-bunny-free      █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░      $0 · 36,616 req
+
+  gemini-3.7-flash-high and agnes-2.5-flash read N/A with their unpriced counts,
+  because they have NO catalog card. space-bunny-free still reads $0, because
+  it has an EXPLICIT all-zero card: a price was determined and it is zero.
+  Same glyph, same $0 column, opposite meanings — that is the whole bug.
+
+  Both unpriced models rank ABOVE the priced ones, because renderRankedBars
+  ranks a row by its unpriced request count rather than by its zero cost.
+  Pre-existing behaviour in charts/sparkline.ts, not introduced here, and
+  arguably right: unknown spend is unbounded and should not be buried.
