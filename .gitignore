@@ -1,1 +1,13 @@
 node_modules/
+
+# Machine-local dev-loop config. Anchored to the repo root and naming the single
+# file, so a legitimate future `.omp/` (e.g. committed per-project modelRoles)
+# stays trackable. Ignored rather than committed: an `extensions:` array here
+# SUPPRESSES the global one for sessions rooted in this repo (settings arrays
+# replace, project layer wins), which is a silent behaviour change for anyone
+# who checks out the repo without also having our global config.
+/.omp/config.yml
+
+# Scratch files agents have repeatedly dropped in scripts/. The real probes
+# (probe-*.ts) and sync-worker.ts are tracked; only the tmp- prefix is caught.
+/scripts/tmp-*.ts
