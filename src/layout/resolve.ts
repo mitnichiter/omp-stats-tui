@@ -35,6 +35,9 @@
  * testable without a terminal and without a 321 MB database.
  */
 
+import { groupErrorsBySignature } from "@oh-my-pi/omp-stats/client/data/view-models";
+import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
+
 import type { DataNeed, PanelData } from "../data/api";
 import { hostDerived } from "./host-derived";
 import {
@@ -349,17 +352,7 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): Resolv
 			// "Models used 0" is a claim about the database, and the database was
 			// never asked.
 			if (rows.length === 0 && row === undefined && !isFetched(base.source, data)) return null;
-			if (base.kind === "label" && row === undefined) {
-				// "Distinct tools" / "affected models" counts DISTINCT values, not
-				// rows: a payload with two rows per tool has three tools.
-				const seen = new Set<string>();
-				for (const candidate of rows) {
-					const value = asLabel(readPath(candidate, base.field));
-					if (value !== null) seen.add(value);
-				}
-				return seen.size;
-			}
-			return rows.length;
+			return distinctCount(base, rows);
 		}
 		case "share": {
 			if (!ref.against) return null;
@@ -381,6 +374,58 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): Resolv
 			return Math.max(...values);
 		}
 	}
+}
+
+/**
+ * HOW MANY DISTINCT things a base ref names — the `count` op's whole meaning.
+ *
+ * Distinctness is NOT "distinct raw strings", and that distinction is the whole
+ * reason this is its own function. Two fields need the HOST's own notion:
+ *
+ *  - `errorMessages.errorMessage` counts SIGNATURES. Two failures differing only
+ *    by a request id and a retry count are one failure to a reader, and counting
+ *    the raw strings overstates it by however many ids that failure carried. The
+ *    host's `groupErrorsBySignature` is the definition — a second regex pipeline
+ *    here would drift from the dashboard the moment either side changed.
+ *  - `errorMessages.model` counts model::PROVIDER. One model served by two
+ *    providers is two things as far as a per-provider table is concerned, and
+ *    `modelKey` is the host's name for that identity.
+ *
+ * Everything else counts distinct raw values, which is what "distinct tools" and
+ * "folders" mean.
+ */
+function distinctCount(base: BaseRef, rows: readonly DataRow[]): number {
+	const field = base.field;
+
+	// A NUMERIC field names no distinct things — "count byModel.totalRequests" is
+	// the number of models, and counting distinct request TOTALS would collapse
+	// every model that served the same number of requests into one. So a
+	// non-label base counts ROWS.
+	if (base.kind !== "label") {
+		if (base.source === "errorMessages" && field === "model") {
+			// The one numeric case that is genuinely not a row count: "affected
+			// models" is the number of model::provider identities behind the
+			// failures, and one model behind two providers is two of them.
+			const seen = new Set<string>();
+			for (const row of rows) {
+				const model = asLabel(readPath(row, "model"));
+				if (model === null) continue;
+				seen.add(modelKey(model, asLabel(readPath(row, "provider")) ?? ""));
+			}
+			return seen.size;
+		}
+		return rows.length;
+	}
+
+	if (base.source === "errorMessages" && field === "errorMessage") {
+		return groupErrorsBySignature(rows as never).length;
+	}
+	const seen = new Set<string>();
+	for (const row of rows) {
+		const value = asLabel(readPath(row, field));
+		if (value !== null) seen.add(value);
+	}
+	return seen.size;
 }
 
 /**

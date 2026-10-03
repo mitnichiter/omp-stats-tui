@@ -160,6 +160,12 @@ export interface ScreenRenderOptions {
 	/** Injected "today" for the heatmap's `null` future cells. */
 	today?: Date;
 	glyphs?: GlyphSet;
+	/**
+	 * The shares every `shareBar` ABOVE this band published, in band order, so a
+	 * legend adopts them rather than re-deriving the same number. Populated by
+	 * {@link screenBands} on the way through; callers never set it.
+	 */
+	publishedShares?: readonly ReadonlyMap<string, number>[];
 }
 
 // ─── Formatting ──────────────────────────────────────────────────────────────
@@ -422,7 +428,7 @@ function toBand(band: IRBand, opts: ScreenRenderOptions): Band | null {
 		case "table":
 			return tableBand(band.title, band.columns, band.rows, opts);
 		case "legend":
-			return legendBand(band.items, opts);
+			return legendBand(band.items, opts, opts.publishedShares ?? []);
 		case "note":
 			// The one place the IR's own words reach the user unchanged, and that
 			// is the point: `note` is where "This is not a zero", the per-call
@@ -444,8 +450,18 @@ function toBand(band: IRBand, opts: ScreenRenderOptions): Band | null {
 }
 
 /** The bands for one screen, in IR order. Empty bands are already dropped. */
-export function screenBands(opts: ScreenRenderOptions): readonly Band[] {
-	return opts.spec.bands.flatMap(band => {
+export function screenBands(options: ScreenRenderOptions): readonly Band[] {
+	// Walks the bands in ORDER, accumulating what each chart published, so a
+	// legend can adopt the shares of the chart above it. A copy of the options is
+	// threaded rather than the caller's object mutated: `renderScreen` runs once
+	// per frame per resize, and a leaked accumulator would make the second frame
+	// disagree with the first.
+	const published: ReadonlyMap<string, number>[] = [];
+	const opts: ScreenRenderOptions = { ...options, publishedShares: published };
+	return options.spec.bands.flatMap(band => {
+		if (band.kind === "chart" && band.chart.type === "shareBar") {
+			published.push(chartShares(band.chart, options.data));
+		}
 		const converted = toBand(band, opts);
 		return converted ? [converted] : [];
 	});
@@ -492,6 +508,9 @@ function bandOptions(opts: ScreenRenderOptions): BandRenderOptions {
 		tableLimit: opts.plan.tableColumns,
 		labelWidth: opts.plan.labelWidth,
 		valueWidth: opts.plan.valueWidth,
+		// F23 §2.3's sparkline seam. Injected rather than imported so the band
+		// layer never depends on the chart layer.
+		sparkline: (values, width) => renderSparkline(values, { width, preset: opts.preset }),
 	};
 }
 
@@ -560,21 +579,44 @@ function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[
  * height as a one-series chart. NEVER summed — see the module header.
  */
 function barRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
-	const height = Math.max(1, opts.plan.barHeight);
-	const perSeries = Math.max(1, Math.floor(height / Math.max(1, chart.series.length)));
 	const glyphs = opts.glyphs ?? glyphsFor(opts.preset);
+	// A multi-series chart is ONE chart with the series distinguished, not N
+	// charts stacked. The web overlays its two `ACTIVITY_OPTIONS` series in a
+	// single `TimeChart` (`OverviewRoute.tsx:167-175`); a terminal cannot overlay
+	// two column sets in one cell without inventing a stacked-cell glyph, so each
+	// series gets its own band of rows INSIDE the chart body and is NAMED.
+	//
+	// Naming is not decoration. Unlabelled, two blocks are one chart drawn twice,
+	// which is exactly what the probe showed: fourteen identical-looking rows and
+	// no way to tell which was failures. `renderDailyBars` is used per series —
+	// it already handles a single series correctly — and the height splits so a
+	// two-series chart is the same total height as a one-series chart.
+	const single = chart.series.length === 1;
+	const block = Math.max(single ? 2 : 3, Math.floor(Math.max(1, opts.plan.barHeight) / Math.max(1, chart.series.length)));
+
+	// Each series is drawn as its own self-scaled chart, which is what every other
+	// chart in this panel does and what `renderDailyBars` is built for: one divisor
+	// per chart, so a reader compares SHAPES within a chart and reads the FIGURE
+	// from the label beside it. Two series of similar shape therefore draw similar
+	// bars — which is why each block is LABELLED and COLOURED, and why the two
+	// must never be laid out as one unlabelled run of rows.
+	const all = chart.series.map(series => bucketedValues(series.metric, opts));
+
 	const rows: string[] = [];
-	for (const series of chart.series) {
+	chart.series.forEach((series, index) => {
+		if (!single) rows.push(clampLine(opts.fg(PALETTE.muted, `  ${series.label}`), width));
 		rows.push(
-			...renderDailyBars(bucketedValues(series.metric, opts), {
+			...renderDailyBars(all[index] ?? [], {
 				width,
-				height: perSeries,
+				height: block,
 				glyphs,
-				accent: text => opts.fg(PALETTE.primary, text),
+				// Each series wears its OWN colour, so a block is identifiable by hue
+				// as well as by its label.
+				accent: text => opts.fg(opts.seriesColorFor?.(index) ?? PALETTE.primary, text),
 				dim: text => opts.fg(PALETTE.dim, text),
 			}),
 		);
-	}
+	});
 	return rows;
 }
 
@@ -618,22 +660,130 @@ function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly num
 }
 
 /**
- * One share bar per group: label, bar, percentage of a STATED whole.
+ * ONE share computation, read by BOTH the bar and the legend under it.
  *
- * The denominator is the sum of the entries this chart plots, not the largest
- * bar. A bar whose length is a fraction of nothing in particular is decoration;
- * a percentage whose denominator is the set the legend names is a fact.
+ * THE D4 FIX, and the only reason this function exists. The share bar divided
+ * the entries it plotted; the legend divided by every item on its band. Overview's
+ * legend names the four token kinds AND three agent rows which the IR points at
+ * the same `overall.totalRequests`, so 196,380 requests leaked into a token
+ * denominator and the same quantity printed as 94.5% beside 94.6%.
+ *
+ * The web has one number and two renderings of it — `mix[key] / total`
+ * (`OverviewRoute.tsx:186-224`). So a share is computed HERE, once, and both
+ * renderers print it. `test/stat-tile.test.ts` asserts they agree, because the
+ * next person to re-derive a denominator will otherwise bring the disagreement
+ * straight back.
+ *
+ * THE GROUPING IS BY METRIC, NOT BY LABEL. Overview's three agent rows carry
+ * three different LABELS reading ONE field; grouping by label would give each a
+ * 100% of itself and no composition at all. Grouping by the metric's own identity
+ * makes the token four sum to 100% and the agent three sum to 100%, each against
+ * its own total — which is what the web draws as two separate `ShareBar`s.
+ */
+interface ShareEntry {
+	label: string;
+	value: number;
+	/** This entry's share of the group it belongs to. */
+	share: number;
+}
+
+/** A legend or bar item, carrying the metric that decides its composition. */
+interface ShareItem {
+	label: string;
+	metric: MetricRef;
+	value: number | null;
+}
+
+/**
+ * The metric identity two items must share to belong to ONE composition.
+ *
+ * Overview's three agent rows carry three different LABELS reading the same
+ * field, so grouping by label would give each a 100% of itself and no
+ * composition at all. Grouping by the metric's own identity makes the token four
+ * sum to 100% and the agent three sum to 100%, each against its own total — which
+ * is what the web draws as two separate `ShareBar`s.
+ */
+function groupKeyOf(metric: MetricRef): string {
+	const base = metric.kind === "derived" ? metric.of : metric;
+	return base.kind === "derived" ? groupKeyOf(base.of) : `${base.source}.${base.field}`;
+}
+
+/**
+ * Items → their shares, each against its OWN metric group's total.
+ *
+ * The fallback for a composition no chart published: an item nobody plotted still
+ * belongs to a group with the items reading the same field, and a share with no
+ * denominator at all would print `NaN`.
+ */
+function sharesOf(items: readonly ShareItem[]): readonly ShareEntry[] {
+	const groups = new Map<string, number[]>();
+	for (const item of items) {
+		if (item.value === null) continue;
+		const key = groupKeyOf(item.metric);
+		const rows = groups.get(key) ?? [];
+		rows.push(item.value);
+		groups.set(key, rows);
+	}
+	return items.flatMap(item => {
+		if (item.value === null) return [];
+		const total = (groups.get(groupKeyOf(item.metric)) ?? []).reduce((sum, value) => sum + value, 0);
+		return [{ label: item.label, value: item.value, share: total === 0 ? 0 : item.value / total }];
+	});
+}
+
+/**
+ * The shares a `shareBar` chart PUBLISHES, keyed by metric identity, so the
+ * legend beneath it can adopt them instead of re-deriving.
+ *
+ * THIS IS THE D4 FIX, and it is a map rather than a second computation because
+ * the two renderings previously disagreed: the bar divided the entries it
+ * plotted, the legend divided by every item on its band, and Overview's legend
+ * names the four token kinds AND three agent rows which the IR points at the
+ * same `overall.totalRequests`. 196,380 requests leaked into a token
+ * denominator and one quantity printed as 94.5% beside 94.6%.
+ *
+ * The web has one number and two renderings of it — `mix[key] / total`
+ * (`OverviewRoute.tsx:186-224`). A `shareBar` chart IS that `total`: its series
+ * are by construction one composition even though they read four DIFFERENT
+ * fields, which is exactly why grouping by field cannot work here. So the chart
+ * computes the shares and the legend looks them up.
+ */
+function chartShares(chart: ChartSpec, data: PanelData): ReadonlyMap<string, number> {
+	const entries = chart.series.flatMap(series => {
+		const value = resolveNumber(series.metric, data);
+		return value === null ? [] : [{ metric: series.metric, value }];
+	});
+	const total = entries.reduce((sum, entry) => sum + entry.value, 0);
+	const shares = new Map<string, number>();
+	for (const entry of entries) {
+		shares.set(groupKeyOf(entry.metric), total === 0 ? 0 : entry.value / total);
+	}
+	return shares;
+}
+
+/**
+ * One share bar per series: label, bar, and the share the chart published.
+ *
+ * An item the chart does not publish falls back to its own metric group, so the
+ * bar set and the legend set are computed by the same rule and agree wherever
+ * they overlap.
  */
 function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
-	const entries = foldTo(chart.foldTo, groupedEntries(chart, opts));
+	const published = chartShares(chart, opts.data);
+	const entries = chart.series.flatMap(series => {
+		const value = resolveNumber(series.metric, opts.data);
+		return value === null ? [] : [{ label: series.label, value }];
+	});
 	if (entries.length === 0) return [];
-	const total = entries.reduce((sum, entry) => sum + entry.value, 0);
-	const labelWidth = Math.min(
-		Math.max(...entries.map(entry => entry.label.length)),
-		Math.max(1, Math.floor(width / 2)),
+	const fallback = sharesOf(
+		entries.map(entry => ({ label: entry.label, metric: chart.series[entries.indexOf(entry)].metric, value: entry.value })),
 	);
+	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
 	return entries.map(entry => {
-		const share = total === 0 ? 0 : entry.value / total;
+		const series = chart.series.find(candidate => candidate.label === entry.label);
+		const share = (series ? published.get(groupKeyOf(series.metric)) : undefined) ??
+			fallback.find(candidate => candidate.label === entry.label)?.share ??
+			0;
 		const readout = `${formatPercent(share)} ${formatInteger(entry.value)}`;
 		const label = padEndTo(entry.label, labelWidth);
 		const bar = renderShareBar(share, {
@@ -899,21 +1049,36 @@ function sortRows(
  * resolving to nothing makes the band disappear rather than drawing a column of
  * `0.0%` that reads as a measurement.
  */
-function legendBand(items: readonly IRLegendItem[], opts: ScreenRenderOptions): Band | null {
+function legendBand(
+	items: readonly IRLegendItem[],
+	opts: ScreenRenderOptions,
+	published: readonly ReadonlyMap<string, number>[],
+): Band | null {
 	if (items.length === 0) return null;
-	const denominator = sharedDenominator(
-		"overall",
-		items.map(item => item.metric),
-		opts.data,
-	);
-	const entries = items.map(item => {
-		const value = resolveNumber(item.metric, opts.data);
-		return {
-			label: item.label,
-			share: value === null || denominator === 0 ? 0 : value / denominator,
-		};
+	const measured = items.map(item => ({
+		label: item.label,
+		metric: item.metric,
+		value: resolveNumber(item.metric, opts.data),
+	}));
+
+	// An item a chart above already PUBLISHED takes that share. Everything else is
+	// grouped by the metric it reads, so Overview's three agent rows — all on
+	// `totalRequests`, none of them a token kind — are shares of each other rather
+	// than fractions of a token total they have nothing to do with.
+	const entries = measured.map(item => {
+		const adopted = published.map(shares => shares.get(groupKeyOf(item.metric))).find(v => v !== undefined);
+		return { label: item.label, metric: item.metric, value: item.value, share: adopted };
 	});
-	return entries.some(entry => entry.share > 0) ? { kind: "legend", items: entries } : null;
+	const own = sharesOf(entries.filter(entry => entry.share === undefined));
+	return entries.some(entry => (entry.share ?? own.find(c => c.label === entry.label)?.share ?? 0) > 0)
+		? {
+				kind: "legend",
+				items: entries.map(entry => ({
+					label: entry.label,
+					share: entry.share ?? own.find(candidate => candidate.label === entry.label)?.share ?? 0,
+				})),
+			}
+		: null;
 }
 
 // ─── Measured helpers ────────────────────────────────────────────────────────

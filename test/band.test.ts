@@ -293,9 +293,12 @@ test("G3: a statRow is tiles only — no heading line, no icon", () => {
 		expect(row).not.toContain("Stats");
 		expect(row).not.toMatch(RULE_RUN);
 	}
-	// The first line is a tile line: it carries a tile's label and value.
+	// A tile is STACKED, the web's shape: the label is on its own row and the
+	// value on the next, so a label longer than the pad width can never run into
+	// its value (D1, `API-equivalent cost$112.36`).
 	expect(rendered[0]).toContain("Cost");
-	expect(rendered[0]).toContain("$2,582.33");
+	expect(rendered[0]).not.toContain("$2,582.33");
+	expect(rendered[1]).toContain("$2,582.33");
 });
 
 test("G3: a note is one dim line with no heading and no icon", () => {
@@ -386,24 +389,37 @@ test("an empty legend contributes nothing", () => {
 
 test("statRow lays tiles out in columns of at least 1 and fills the row", () => {
 	const rendered = renderBands([{ kind: "statRow", stats: tiles }], ctx({ innerWidth: 78 }));
-	// 78 / 34 = 2 columns → 2 tile rows for 4 tiles.
-	expect(rendered).toHaveLength(2);
+	// 78 / 34 = 2 columns → 2 tile rows for 4 tiles, and each tile is label +
+	// value + hint = 3 rows. A row of tiles is a RECTANGLE: every tile
+	// contributes its rows or none, so the grid never goes ragged.
+	expect(rendered).toHaveLength(6);
 	for (const row of rendered) expect(row.trim()).not.toBe("");
 });
 
 test("statRow drops a hint that does not fit whole and never truncates one", () => {
 	// F23 2.3 rule 2: hints are DROPPED, never truncated — "a half-printed
 	// '34,870 unpr' is a worse claim than no hint".
-	const wide: StatTile[] = [{ label: "Cost", value: "$935.72", hint: "34,870 unpriced requests" }];
+	// The tile is stacked now, so a hint has the WHOLE tile width to itself rather
+	// than sharing a row with a padded label — so the hint that exercises this rule
+	// has to be longer than a whole 34-cell tile, which is what it was before.
+	const wide: StatTile[] = [{ label: "Cost", value: "$935.72", hint: "34,870 requests had no price card at all" }];
 	const narrow = renderBands([{ kind: "statRow", stats: wide }], ctx({ innerWidth: 34 }));
-	expect(narrow[0]).toContain("$935.72");
-	expect(narrow.join("")).not.toContain("34,870 unpriced requests");
+	expect(narrow.join("")).toContain("$935.72");
+	expect(narrow.join("")).not.toContain("34,870 requests had no price card");
 	expect(narrow.join("")).not.toContain("…");
+	// And a hint that DOES fit a whole tile is kept whole.
+	const fits = renderBands(
+		[{ kind: "statRow", stats: [{ label: "Cost", value: "$935.72", hint: "34,870 unpriced" }] }],
+		ctx({ innerWidth: 34 }),
+	);
+	expect(fits.join("\n")).toContain("34,870 unpriced");
 });
 
 test("statRow keeps a hint that fits whole", () => {
 	const rendered = renderBands([{ kind: "statRow", stats: [{ label: "Cost", value: "$935.72", hint: "0 unpriced" }] }], ctx({ innerWidth: 78 }));
-	expect(rendered[0]).toContain("0 unpriced");
+	// On its OWN row, because inline it read as a second value (D2).
+	expect(rendered.join("\n")).toContain("0 unpriced");
+	expect(rendered[1], "the hint never shares the value's row").not.toContain("0 unpriced");
 });
 
 test("statRow truncates the VALUE, never the label, when a tile is too narrow", () => {
@@ -413,8 +429,8 @@ test("statRow truncates the VALUE, never the label, when a tile is too narrow", 
 		ctx({ innerWidth: 20 }),
 	);
 	expect(rendered[0]).toContain("Cache rate");
-	expect(rendered[0]).not.toContain("cannot-fit");
-	expect(visibleWidth(rendered[0] as string)).toBeLessThanOrEqual(20);
+	expect(rendered.join("")).not.toContain("cannot-fit");
+	for (const row of rendered) expect(visibleWidth(row as string)).toBeLessThanOrEqual(20);
 });
 
 test("a chart body is the renderer's rows verbatim, with a heading and nothing else", () => {
@@ -502,20 +518,24 @@ test("glyphs come from the glyph module: ascii differs and stays one cell wide",
 // ─── Colour: roles come from the palette, never from tokens chosen here ─────
 
 test("colour: a primary tile is bold accent, secondary tiles are default text", () => {
-	const [row] = renderBands([{ kind: "statRow", stats: tiles }], ctx({ innerWidth: 78 }));
-	expect(tokensUsed(row as string)).toContain(PALETTE.primary);
-	expect(tokensUsed(row as string)).toContain(PALETTE.label);
+	// The LABEL row carries the label token; the VALUE row carries the accent.
+	const rendered = renderBands([{ kind: "statRow", stats: tiles }], ctx({ innerWidth: 78 }));
+	const valueRow = rendered[1] as string;
+	expect(tokensUsed(valueRow)).toContain(PALETTE.primary);
+	expect(tokensUsed(valueRow)).toContain(PALETTE.label);
 	// Weight is emphasis, not a colour, so `bold` wraps the accent token.
-	expect(row).toContain(SET_BOLD);
+	expect(valueRow).toContain(SET_BOLD);
 });
 
 test("colour: statRow labels are label-coloured and hints are dim", () => {
-	const [row] = renderBands(
+	const rendered = renderBands(
 		[{ kind: "statRow", stats: [{ label: "Cost", value: "$935.72", hint: "0 unpriced" }] }],
 		ctx({ innerWidth: 78 }),
 	);
-	expect(tokensUsed(row as string)).toContain(PALETTE.label);
-	expect(tokensUsed(row as string)).toContain(PALETTE.dim);
+	// label row → label token, hint row → dim token. Checked per ROW now that the
+	// tile is stacked, because that separation IS the fix.
+	expect(tokensUsed(rendered[0] as string)).toContain(PALETTE.label);
+	expect(tokensUsed(rendered[2] as string)).toContain(PALETTE.dim);
 });
 
 test("colour: a note is entirely dim — it is prose, not data", () => {

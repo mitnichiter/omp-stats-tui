@@ -165,6 +165,13 @@ export interface BandRenderOptions {
 	tableLimit: number;
 	labelWidth: number;
 	valueWidth: number;
+	/**
+	 * `renderSparkline`, injected rather than imported. F23 §2.3 asks for a trend
+	 * line under a tile and the grammar must own WHERE it goes; importing the
+	 * chart here would make the band layer depend on the chart layer, which is the
+	 * dependency direction the whole refactor exists to remove.
+	 */
+	sparkline?: (values: readonly number[], width: number) => string;
 }
 
 /** Stat tiles are laid out in fixed columns this wide (F23 §2.3). */
@@ -194,17 +201,34 @@ function padStartTo(text: string, width: number): string {
 // ─── Per-kind layout, as F23 §2.3 determines it ──────────────────────────────
 
 /**
- * `statRow` — tiles in fixed columns.
+ * `statRow` — tiles in fixed columns, each tile STACKED.
  *
  * F23 §2.3 fixes the column maths: `columns = clamp(floor(innerWidth / 34), 1, 3)`.
- * The four rules are applied in order and without discretion:
- *   1. `label.padEnd(labelWidth) + value`;
- *   2. a hint is appended ONLY if the whole thing fits — a hint is DROPPED,
- *      never truncated, because "a half-printed '34,870 unpr' is a worse claim
- *      than no hint" (F23 §2.3 rule 2);
- *   3. if the label+value still does not fit, the VALUE is truncated and the
- *      LABEL never is — "a truncated label is still a label" (F23 §2.3 rule 3);
- *   4. pad to the tile width; join a row's tiles with two spaces.
+ * The LAYOUT within a tile is the web's, not F23's, and F23's `label.padEnd +
+ * value` is what produced the defect a reader can see in the probe: a label
+ * longer than the pad width ran straight into its value, printing
+ * `API-equivalent cost$112.36` as one word.
+ *
+ * The web's `Stat` puts the label on its own line above the value
+ * (`Stat.tsx`: `.stat-label`, `.stat-value`, `.stat-foot`). That is the shape
+ * copied here, and it fixes THREE things at once:
+ *
+ *  1. **D1, the gutter.** A label can be any length and still never touch its
+ *     value, because they are on different rows. No pad width can promise that
+ *     — `LABEL_WIDTH` is 12 and "API-equivalent cost" is 18.
+ *  2. **D2, one value per tile.** The hint was being appended INLINE, so a tile
+ *     read `Requests 65,460 1,315`: two figures, one cell, and nothing in the
+ *     layout to say which was the measurement and which was the caveat. On its
+ *     own row the hint is unambiguously secondary — exactly as `.stat-foot` is.
+ *  3. **Room for a sparkline.** F23 §2.3 asks for `renderSparkline` under the
+ *     tile when `columns <= 2`; it had nowhere to go.
+ *
+ * The F23 rules that survive unchanged, and are still load-bearing:
+ *   - a hint is DROPPED rather than truncated ("a half-printed '34,870 unpr' is
+ *     a worse claim than no hint", F23 §2.3 rule 2);
+ *   - the VALUE is truncated and the LABEL never is ("a truncated label is
+ *     still a label", F23 §2.3 rule 3);
+ *   - `emphasis: "primary"` is bold + accent, the web's larger first tile.
  */
 function renderStatRow(stats: readonly StatTile[], ctx: BandRenderOptions): readonly string[] {
 	if (stats.length === 0) return [];
@@ -212,38 +236,56 @@ function renderStatRow(stats: readonly StatTile[], ctx: BandRenderOptions): read
 	const inner = Math.max(1, ctx.innerWidth);
 	const columns = Math.max(1, Math.min(3, Math.floor(inner / TILE_WIDTH)));
 	const tileWidth = Math.floor(inner / columns);
-	const rows: string[] = [];
+	const sparkWidth = Math.max(0, tileWidth - 1);
+	const sparkVisible = columns <= 2;
+	const lines: string[] = [];
 
 	for (let start = 0; start < stats.length; start += columns) {
-		const cells: string[] = [];
-		for (const tile of stats.slice(start, start + columns)) {
-			// Rule 1: label in `muted`, value in default `text`.
-			const label = ctx.fg(PALETTE.label, tile.label.padEnd(ctx.labelWidth));
+		const tiles = stats.slice(start, start + columns);
+		// One row of slots PER TILE ROW. A shared set of slots across every tile row
+		// would append each row's tiles onto the previous row's, so a five-tile
+		// statRow rendered three tiles and silently dropped the other two.
+		const slots: string[][] = [[], [], [], []];
+
+		for (const tile of tiles) {
+			// Rule 3: the LABEL is never truncated — "a truncated label is still a
+			// label" (F23 §2.3). On its own row it cannot collide with the value,
+			// which is what D1 was.
+			slots[0].push(padEndTo(clamp(ctx.fg(PALETTE.label, tile.label), tileWidth), tileWidth));
+
 			let value = ctx.fg(PALETTE.label, tile.value);
-
-			// `emphasis: "primary"` is the one number the screen is about — the
-			// web's larger first tile. It gets bold + `accent` (web `--chart-primary`).
 			if (tile.emphasis === "primary") value = ctx.bold(ctx.fg(PALETTE.primary, value));
+			// The VALUE truncates, because it is the thing that can lose precision
+			// least legibly.
+			slots[1].push(padEndTo(clamp(value, tileWidth), tileWidth));
 
-			// Rule 2: the whole hint or nothing. A hint is prose, so `dim`.
-			let text = label + value;
-			if (tile.hint) {
-				const candidate = `${text} ${ctx.fg(PALETTE.dim, tile.hint)}`;
-				if (visibleWidth(candidate) <= tileWidth) text = candidate;
-			}
+			// Rule 2: the whole hint or nothing. A hint is prose, so `dim`, and it
+			// lives on its OWN row — inline it read as a second value (D2).
+			const hint = tile.hint ? ctx.fg(PALETTE.dim, tile.hint) : "";
+			slots[2].push(padEndTo(visibleWidth(hint) <= tileWidth ? hint : "", tileWidth));
 
-			// Rule 3: truncate the value, never the label.
-			if (visibleWidth(text) > tileWidth) {
-				text =
-					ctx.fg(PALETTE.label, tile.label.padEnd(ctx.labelWidth)) +
-					truncateToWidth(tile.value, Math.max(0, tileWidth - ctx.labelWidth));
-			}
-
-			cells.push(padEndTo(text, tileWidth));
+			// F23 §2.3: a sparkline under the tile, only when it will not be a
+			// 34-cell smear. Injected, so this module keeps no chart dependency.
+			slots[3].push(
+				padEndTo(
+					tile.spark && sparkVisible && sparkWidth > 0
+						? (ctx.sparkline ?? (() => ""))(tile.spark, sparkWidth)
+						: "",
+					tileWidth,
+				),
+			);
 		}
-		rows.push(clamp(cells.join("  "), ctx.width).trimEnd());
+
+		const rows = slots.map(cells => clamp(cells.join("  "), ctx.width).trimEnd());
+		// Drop ALL trailing blank slot-rows, never an interior one. Dropping only
+		// the last left the hint row blank when there was no hint, and G4 then
+		// added its own separator — two consecutive blanks, reading as a section
+		// break that is not there.
+		let end = rows.length;
+		while (end > 0 && rows[end - 1].trim() === "") end--;
+		lines.push(...rows.slice(0, end));
 	}
-	return rows;
+	return lines;
 }
 
 /**
@@ -323,6 +365,11 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
  * did (F23 §2.2).
  *
  * Shares sit in a fixed right-hand column so the decimal points line up.
+ *
+ * The swatch is ONE glyph. Two was a bar, not a key: the reader saw a magnitude
+ * where the web's `.swatch` shows a single coloured square, and the extra cell
+ * pushed the label one column right of where the chart's own row put it. The
+ * COLOUR is what identifies the series; the glyph only has to exist.
  */
 function renderLegend(band: Extract<Band, { kind: "legend" }>, ctx: BandRenderOptions): readonly string[] {
 	if (band.items.length === 0) return [];
@@ -333,10 +380,10 @@ function renderLegend(band: Extract<Band, { kind: "legend" }>, ctx: BandRenderOp
 		// Each swatch wears its OWN series colour, so a legend key is the same
 		// hue as its series elsewhere on the page — the web's `Legend` and ours
 		// are the same object for exactly this reason.
-		const swatch = ctx.fg(seriesToken(ctx, index), glyph(ctx.preset, "barFill").repeat(2));
+		const swatch = ctx.fg(seriesToken(ctx, index), glyph(ctx.preset, "barFill"));
 		const label = ctx.fg(PALETTE.muted, padEndTo(item.label, labelWidth));
 		const share = padStartTo(formatPercent(item.share), SHARE_COL);
-		return clamp(`${swatch} ${label}${share}`, ctx.width);
+		return clamp(`${swatch} ${label} ${share}`, ctx.width).trimEnd();
 	});
 }
 
