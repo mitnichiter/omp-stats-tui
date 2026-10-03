@@ -7,7 +7,8 @@
     "test": "bun test",
     "probe:data": "bun run scripts/probe-data.ts",
     "probe:glyphs": "bun run scripts/probe-glyphs.ts",
-    "probe:render": "bun run scripts/probe-render.ts"
+    "probe:render": "bun run scripts/probe-render.ts",
+    "test:mutation": "bun run scripts/mutate.ts"
   },
   "omp": {
     "name": "omp-stats-tui",
