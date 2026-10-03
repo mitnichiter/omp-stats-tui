@@ -144,7 +144,43 @@ conversation untouched beneath it.
 A place where behaviour can be altered without editing the thing that holds it. Three seams matter here:
 the data seam, which decides whether an answer is read from rollups or from facts; the view seam, which
 decides how a set of rows becomes lines of text; and the mount seam, which decides how much of the terminal
-a view claims. Choosing a seam is the design decision; what sits behind it is not.
+
+### The layout IR
+
+**Band**:
+The unit of vertical layout a screen is composed from — `statRow`, `chart`, `table`, `legend`,
+`note`, or `custom` (`src/layout/spec.ts`). A screen is a vertical stack of bands with exactly one
+blank line between consecutive bands, and no band body may emit a full-width rule
+(`src/tui/band.ts` G4–G5).
+_Not to be confused with_: a web card. A card carries its own border and header; a band carries
+neither and gets both from the grammar.
+
+**ScreenSpec**:
+One screen's declared layout: its id, labels, `needs`, and `Band[]` (`src/layout/spec.ts`).
+The tab strip, the screen registry and the fetch needs all read the same specs, so there is one
+source of truth rather than three lists that can disagree.
+_Not to be confused with_: the registry's `Screen` record, which carries identity and contract and
+defers rendering to the pipeline.
+
+**MetricRef**:
+A declared read of one figure — which payload, which field, which row (`src/layout/spec.ts`).
+The IR says what a tile measures; `src/layout/resolve.ts` says how that declaration reads against
+real data. A value that cannot be resolved is `null`, never a blank cell a human has to notice.
+_Not to be confused with_: a formatter. A ref names the value; a formatter decides how it reads.
+
+**Resolve**:
+The act of answering a `MetricRef` from a payload (`resolveCell` / `resolveNumber` /
+`resolveLabel` in `src/layout/resolve.ts`). The only place numbers become strings.
+
+**Resolver**:
+The test harness's name for the same code: `test/parity.test.ts` calls the web's own functions
+and asserts the resolver answers identically on one shared fixture.
+
+**Parity**:
+Agreement with the web dashboard on the same input, checked by machine rather than by eye.
+`test/parity.test.ts` calls the web's functions from `@oh-my-pi/omp-stats` and asserts our
+answers match, so "we show the same number" is a test result rather than a claim.
+_Not to be confused with_: pixel equivalence. Parity is about figures, not about drawing.
 
 **Symbol preset**:
 The person's choice of glyph repertoire — `unicode`, `nerd`, or `ascii`. It is a setting and never a
