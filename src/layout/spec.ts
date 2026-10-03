@@ -928,7 +928,25 @@ const errors: ScreenSpec = {
 				},
 				{ header: "Models", align: "left", source: { kind: "label", source: "errorMessages", field: "model" } },
 				{ header: "Last seen", align: "right", source: { kind: "aggregate", source: "errorMessages", field: "timestamp" } },
+				{ header: "Failures", align: "right", cell: "meter", source: { kind: "derived", name: "signatureFailures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } } },
 			],
+		},
+		{
+			kind: "chart",
+			title: "Failures by model",
+			source: "ErrorsRoute.tsx:197-228",
+			chart: {
+				type: "rankedBars",
+				axis: "count",
+				foldTo: { limit: 12, label: "Other" },
+				series: [
+					{
+						key: "failures",
+						label: "Failures per model",
+						metric: { kind: "series", source: "errorMessages", field: "id", groupBy: "model" },
+					},
+				],
+			},
 		},
 		{
 			kind: "table",

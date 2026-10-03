@@ -40,6 +40,7 @@
 import {
 	buildCostSummary,
 	buildFolderRows,
+	errorSignature as errorSignatureOf,
 	groupErrorsBySignature,
 	requestStatus,
 	summarizeRequests,
@@ -186,6 +187,23 @@ export const HOST_DERIVED: Readonly<
 		source: "errorMessages",
 		compute: rows => groupErrorsBySignature(rowsAs<Parameters<typeof groupErrorsBySignature>[0][number]>(rows))
 			.length,
+	},
+
+	/**
+	 * `ErrorsRoute.tsx:296-340` — one signature's share of the failures: the
+	 * group count for the row's own normalized signature, from the host's
+	 * `groupErrorsBySignature`. Row-scoped by construction: the table resolves
+	 * it per row, so the meter divides by the largest group on screen.
+	 */
+	signatureFailures: {
+		source: "errorMessages",
+		compute: rows => {
+			const [row] = rows as readonly { errorMessage?: unknown }[];
+			if (!row || typeof row.errorMessage !== "string") return null;
+			const groups = groupErrorsBySignature(rowsAs<Parameters<typeof groupErrorsBySignature>[0][number]>(rows));
+			const signature = errorSignatureOf(row.errorMessage);
+			return groups.find(group => group.signature === signature)?.count ?? null;
+		},
 	},
 
 	/**

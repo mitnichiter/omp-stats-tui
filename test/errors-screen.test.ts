@@ -18,6 +18,7 @@ import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 import { groupErrorsBySignature } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
 import { SCREEN_SPECS } from "../src/layout/spec";
+import { resolveNumber } from "../src/layout/resolve";
 import { glyphsFor } from "../src/tui/glyphs";
 import { renderScreen, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
@@ -142,4 +143,37 @@ test("errors: affected models are model::provider identities, not bare names", (
 	// The affected-model tile shows the host-derived count.
 	expect(body.length).toBeGreaterThan(0);
 	expect(body).toMatch(/Affected models[\s\S]*1/);
+});
+
+test("errors: the signatures table carries the web's Failures meter", () => {
+	// ErrorsRoute.tsx buildGroupColumns: the fourth column is a MeterCell of
+	// the group count against the largest group — the only in-table magnitude
+	// cue. The spec carried three columns; the meter is the fourth.
+	const band = spec.bands.find(b => b.kind === "table" && b.title === "Error signatures");
+	if (band === undefined || band.kind !== "table") throw new Error(`"Error signatures" has no spec band`);
+	expect(band.columns.map(c => c.header)).toContain("Failures");
+	expect(band.columns.find(c => c.header === "Failures")!.cell).toBe("meter");
+	expect(groupErrorsBySignature(ERRORS as never).length).toBeGreaterThan(0);
+});
+
+test("errors: failures group by model identity beside the signatures", () => {
+	// ErrorsRoute.tsx:197-228 "By model" card: failures per modelKey(model,
+	// provider), top 12, beside the signatures table. The spec had no band for
+	// it; the IR carries it as a rankedBars chart over errorMessages grouped
+	// by provider-qualified identity.
+	const band = spec.bands.find(b => b.kind === "chart" && b.title === "Failures by model");
+	expect(band, `"Failures by model" chart band missing`).toBeTruthy();
+	if (band === undefined || band.kind !== "chart") throw new Error(`"Failures by model" is not a chart band`);
+	expect(band.chart.series[0]?.metric).toMatchObject({ kind: "series", source: "errorMessages", groupBy: "model" });
+});
+
+test("errors: the signature meter matches the host's group count per row", () => {
+	// The meter resolves row-scoped against the host's own groups: each row
+	// reads its normalized signature's count, not a raw-string count.
+	const first = ERRORS[0] as never;
+	expect(resolveNumber(
+		{ kind: "derived", name: "signatureFailures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } },
+		liveData(),
+		first,
+	)).toBe(groupErrorsBySignature(ERRORS as never)[0]!.count);
 });
