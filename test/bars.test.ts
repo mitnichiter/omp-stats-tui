@@ -1,0 +1,285 @@
+import { expect, test } from "bun:test";
+import { densify, pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
+import { buildCostSummary } from "@oh-my-pi/omp-stats/client/data/view-models";
+import type { CostTimeSeriesPoint } from "@oh-my-pi/omp-stats/shared-types";
+import {
+	costsForBuckets,
+	renderDailyBars,
+	renderModelCostBars,
+} from "../src/tui/charts/bars";
+import { glyphsFor } from "../src/tui/glyphs";
+
+const identity = (t: string) => t;
+const opts = (width: number, height = 8, preset: "unicode" | "nerd" | "ascii" = "unicode") => ({
+	width,
+	height,
+	glyphs: glyphsFor(preset),
+	accent: identity,
+	dim: identity,
+});
+
+const fill = glyphsFor("unicode").barFill as string;
+const empty = glyphsFor("unicode").barEmpty as string;
+
+/**
+ * Column heights recovered from the rendered rows, so tests assert on output
+ * rather than on an internal number.
+ *
+ * Rows come top to bottom, so only the TOPMOST filled cell marks the top of a
+ * bar; its distance from the baseline (the last row) is the bar's height.
+ */
+function columnHeights(rows: readonly string[], width: number): number[] {
+	const heights = new Array<number>(width).fill(0);
+	rows.forEach((row, rowIndex) => {
+		for (let col = 0; col < width; col++) {
+			if ([...row][col] === fill && heights[col] === 0) heights[col] = rows.length - rowIndex;
+		}
+	});
+	return heights;
+}
+
+const DAY = 86_400_000;
+
+function costPoint(day: number, model: string, cost: number, unpriced = 0): CostTimeSeriesPoint {
+	return {
+		timestamp: day * DAY,
+		model,
+		provider: "openai",
+		cost,
+		unpricedRequests: unpriced,
+		costInput: cost,
+		costOutput: 0,
+		costCacheRead: 0,
+		costCacheWrite: 0,
+	} as CostTimeSeriesPoint;
+}
+
+/** Same shape, named for tests that do not care about the provider detail. */
+const point = costPoint;
+
+// ─── Host agreement: the tests that stop our wrappers drifting ───────────────
+
+test("costsForBuckets is the host's densify, not a reimplementation", () => {
+	// `densify` SUMS points into their bucket and drops points that fall off the
+	// axis. We wrap it rather than writing the loop again, and this test is what
+	// notices if the wrapper ever starts doing its own thing.
+	const points = [
+		{ timestamp: 0, cost: 1 },
+		{ timestamp: 0, cost: 2 },
+		{ timestamp: DAY, cost: 4 },
+		{ timestamp: 999 * DAY, cost: 1000 }, // off-axis: must be dropped
+	];
+	const buckets = [0, DAY];
+
+	expect(costsForBuckets(points, buckets)).toEqual([3, 4]);
+	expect(costsForBuckets(points, buckets)).toEqual(densify(points, buckets, (p) => p.cost));
+	expect(costsForBuckets([], buckets)).toEqual([0, 0]);
+	expect(costsForBuckets(points, [])).toEqual([]);
+});
+
+test("renderModelCostBars ranks with the host's pivotSeries, Other tail included", () => {
+	// pivotSeries owns the ranking policy: rank by total, keep the top `limit`,
+	// fold the rest into a trailing "Other (n)". Reproducing that comparator
+	// ourselves is exactly the duplication F15 was written to stop.
+	const series = pivotSeries(
+		[
+			{ timestamp: 0, model: "a", provider: "p", cost: 1 },
+			{ timestamp: 0, model: "b", provider: "p", cost: 5 },
+			{ timestamp: DAY, model: "c", provider: "p", cost: 3 },
+		],
+		{
+			buckets: [0, DAY],
+			key: (p) => `${p.model}::${p.provider}`,
+			value: (p) => p.cost,
+			limit: 1,
+		},
+	);
+	expect(series.map((s) => s.key)).toEqual(["b::p", "__other__"]);
+	expect(series.at(-1)?.label).toBe("Other (2)");
+
+	// Our wrapper must agree with that ranking on the same input.
+	const rows = renderModelCostBars(
+		[point(0, "a", 1), point(0, "b", 5), point(1, "c", 3)],
+		opts(2, 4),
+	);
+	expect(rows.length).toBeGreaterThan(0);
+	// Ranked first is `b` at $5, so its column must be the full height.
+	expect(columnHeights(rows, 2)[0]).toBe(4);
+});
+
+test("renderModelCostBars derives its totals with the host's buildCostSummary", () => {
+	const points = [costPoint(0, "gpt-5.6-terra", 935.72), costPoint(1, "deepseek-v4-flash", 22.85, 34_870)];
+
+	const summary = buildCostSummary(points);
+	expect(summary.totalCost).toBeCloseTo(958.57, 5);
+	expect(summary.unpricedRequests).toBe(34_870);
+	expect(summary.models[0]?.model).toBe("gpt-5.6-terra");
+
+	const rows = renderModelCostBars(points, opts(2, 4));
+	// The costlier model keeps the tall bar even though its bucket is one day.
+	// The cheaper one gets the one-row floor, never an empty column.
+	expect(columnHeights(rows, 2)).toEqual([4, 1]);
+});
+
+// ─── The chart itself ─────────────────────────────────────────────────────────
+
+test("an empty series renders an honest empty state, not a wall of zero bars", () => {
+	// At a width that fits the message.
+	expect(renderDailyBars([], opts(40))).toEqual(["No activity recorded in this range."]);
+	// And truncated, never overflowing, when the panel is narrower than the
+	// message — the empty state obeys the width rule like every other line.
+	const narrow = renderDailyBars([], opts(20))[0] ?? "";
+	expect(narrow).toBe("No activity recorded");
+	expect(Bun.stringWidth(narrow)).toBe(20);
+});
+
+test("a zero-cost day and a high-cost day render visibly differently", () => {
+	// Asserted on the rendered LINES, not on an internal number: a bar of the
+	// wrong height is a rendering bug no value-level assertion would catch.
+	const quiet = renderDailyBars([0, 0, 0], opts(3, 4));
+	const busy = renderDailyBars([0, 0, 900], opts(3, 4));
+	expect(quiet.join("\n")).not.toBe(busy.join("\n"));
+	expect(quiet.join("")).not.toContain(fill);
+	expect(busy.join("")).toContain(fill);
+});
+
+test("an all-zero series is distinguishable from a sparse one but is not an error", () => {
+	const rows = renderDailyBars([0, 0, 0], opts(3, 4));
+	expect(rows.length).toBeGreaterThan(0);
+	expect(rows.join("")).toContain(empty);
+});
+
+test("a missing day renders as an empty cell, never as a short bar", () => {
+	// The distinction that matters: an absent bucket is "not yet built" (ADR
+	// 0003), a zero bucket is "nothing happened", and a small cost is "cheap".
+	// Both of the first two render as a FULL-height EMPTY column, so neither can
+	// be mistaken for a small spend. A real cost always gets at least one filled
+	// row, however small.
+	const missing = renderDailyBars([0, 0, 0], opts(3, 4));
+	const cheap = renderDailyBars([0, 0, 1], opts(3, 4));
+	expect(missing.join("")).not.toContain(fill);
+	expect(cheap.join("")).toContain(fill);
+	expect(cheap.join("\n")).not.toBe(missing.join("\n"));
+
+	// And within ONE chart, a cheap day and an expensive day are distinguishable.
+	expect(columnHeights(renderDailyBars([1, 500], opts(2, 4)), 2)).toEqual([1, 4]);
+});
+
+test("no rendered row ends in a newline, and no row is empty", () => {
+	for (const row of renderDailyBars([1, 2, 3], opts(10, 5))) {
+		expect(row.includes("\n")).toBe(false);
+		expect(row.length).toBeGreaterThan(0);
+	}
+});
+
+test("every rendered row is exactly the requested width, across a sweep", () => {
+	// Swept 20..200 inclusive rather than a handful of widths: an overflow usually
+	// appears only at some widths, and it corrupts the whole overlay.
+	for (let width = 20; width <= 200; width++) {
+		const values = Array.from({ length: 40 }, (_, i) => (i * 37) % 91);
+		for (const row of renderDailyBars(values, opts(width))) {
+			expect(Bun.stringWidth(row), `width ${width}: ${row}`).toBe(width);
+		}
+	}
+});
+
+test("no row ever exceeds the width, even for degenerate heights", () => {
+	for (const height of [1, 2, 3, 24, 40]) {
+		for (const values of [[], [0], [5], [1, 2, 3, 4, 5]]) {
+			for (const row of renderDailyBars(values, opts(20, height))) {
+				expect(Bun.stringWidth(row)).toBeLessThanOrEqual(20);
+			}
+		}
+	}
+});
+
+test("the chart is height rows tall, top to bottom", () => {
+	expect(renderDailyBars([1, 2, 3], opts(3, 6)).length).toBe(6);
+});
+
+test("the tallest bar reaches the top row and the baseline is zero", () => {
+	const rows = renderDailyBars([0, 5, 10], opts(3, 4));
+	expect(columnHeights(rows, 3)).toEqual([0, 2, 4]);
+	// The maximum column, and only the maximum column, touches the top row.
+	expect(rows[0]).toBe(`${empty}${empty}${fill}`);
+	// The baseline row is where the two shorter bars reach their tops.
+	expect(rows[3]).toBe(`${empty}${fill}${fill}`);
+});
+
+test("equal costs get equal heights — the chart does not invent differences", () => {
+	expect(columnHeights(renderDailyBars([7, 7, 7], opts(3, 4)), 3)).toEqual([4, 4, 4]);
+});
+
+test("bars scale on COST, never on token count", () => {
+	// The two models from this database: the busy one reads MORE cache tokens
+	// (4.04B vs 2.39B) but costs 41x less. A token-scaled chart would draw the
+	// cheap one tallest — confidently, silently wrong.
+	const byCost = costsForBuckets(
+		[
+			{ timestamp: 0, cost: 22.85 },
+			{ timestamp: DAY, cost: 935.72 },
+		],
+		[0, DAY],
+	);
+	// 22.85 / 935.72 rounds to zero rows, so it gets the one-row floor — a real
+	// cost must never render as an empty column, or a cheap day would be
+	// indistinguishable from an hour whose rollup was never built.
+	expect(columnHeights(renderDailyBars(byCost, opts(2, 4)), 2)).toEqual([1, 4]);
+
+	// Token volume for those same two buckets runs the OPPOSITE way: the bucket
+	// with FEWER tokens is the one that must be the taller bar.
+	const byTokens = [4_040_000_000, 2_390_000_000];
+	expect(byTokens[0]).toBeGreaterThan(byTokens[1] as number);
+	expect(columnHeights(renderDailyBars(byCost, opts(2, 4)), 2)[1]).toBeGreaterThan(
+		columnHeights(renderDailyBars(byCost, opts(2, 4)), 2)[0] as number,
+	);
+});
+
+test("the chart never uses the 8-level ramp: magnitude lives in row count", () => {
+	// If magnitude were compressed into sparkRamp levels, two bars differing by
+	// one row would be indistinguishable and the height axis would be useless.
+	for (const row of renderDailyBars([10, 5, 7, 2, 9, 3, 8, 1], opts(8, 8))) {
+		for (const ch of [...row]) expect(ch === fill || ch === empty).toBe(true);
+	}
+});
+
+test("the same data renders differently under unicode and ascii", () => {
+	const values = [3, 1, 4, 1, 5];
+	const u = renderDailyBars(values, opts(12, 4, "unicode")).join("");
+	const a = renderDailyBars(values, opts(12, 4, "ascii")).join("");
+	expect(u).not.toBe(a);
+	expect(a).not.toContain(fill);
+	expect(a).toContain(glyphsFor("ascii").barFill as string);
+});
+
+test("nerd is byte-identical to unicode, because block elements are not Nerd-specific", () => {
+	// Verified rather than assumed: the claim is that no Nerd Font codepoint's
+	// semantics is magnitude, so the two presets must agree exactly.
+	const values = [3, 1, 4, 1, 5, 9, 2, 6];
+	expect(renderDailyBars(values, opts(12, 4, "nerd"))).toEqual(renderDailyBars(values, opts(12, 4, "unicode")));
+});
+
+test("the ascii ladder renders the same geometry as unicode", () => {
+	const values = [3, 1, 4, 1, 5];
+	const u = renderDailyBars(values, opts(12, 4, "unicode"));
+	const a = renderDailyBars(values, opts(12, 4, "ascii"));
+	expect(u.length).toBe(a.length);
+	for (let i = 0; i < u.length; i++) expect(Bun.stringWidth(a[i]!)).toBe(12);
+});
+
+test("colours arrive as callbacks, so the render is headless and style-agnostic", () => {
+	const seen = { accent: 0, dim: 0 };
+	renderDailyBars([0, 5], {
+		...opts(2, 2),
+		accent: (t) => {
+			seen.accent++;
+			return t;
+		},
+		dim: (t) => {
+			seen.dim++;
+			return t;
+		},
+	});
+	expect(seen.accent).toBeGreaterThan(0);
+	expect(seen.dim).toBeGreaterThan(0);
+});

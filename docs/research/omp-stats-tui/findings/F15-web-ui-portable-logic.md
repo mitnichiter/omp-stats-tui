@@ -577,14 +577,28 @@ FAIL @oh-my-pi/omp-stats/client/charts/Chart
   -> ResolveMessage: Cannot find package '@oh-my-pi/omp-stats'
 ```
 
-`charts/Chart.tsx` imports `react` directly (`:9`), and react is not resolvable
-from this project — correctly, since a terminal panel must not carry React. So
-the split is clean and it is the split we wanted:
+**CORRECTION (found while applying this audit).** This file originally said
+`charts/Chart` fails *because it imports `react`* and that "react is not
+resolvable from this project". **Both were wrong.** `react` DOES resolve here —
+it is installed transitively (`node_modules/react`, reachable via `require.resolve`).
+The real cause is the package's own exports map:
 
-| Layer | Imports? | Use it for |
-|---|---|---|
-| `client/data/*` | **Yes — measured working** | items 1–11 below |
-| `client/charts/*` | No (needs `react`) | port the arithmetic only |
+```jsonc
+"./client/*": { "import": "./src/client/*.ts" }   // .ts only
+```
+
+`charts/Chart.tsx` is a `.tsx` file, and `.tsx` does not resolve through a `*.ts`
+mapping — so the import fails with `Cannot find package '@oh-me-pi/omp-stats'`,
+a message that reads like a missing dependency and is not one. Verified:
+`@oh-me-pi/omp-stats/client/data/*`, `.../charts/types` and `.../charts/useWidth`
+all import fine; only the `.tsx` component modules fail.
+
+The conclusion is unchanged, the reason is now correct:
+
+| Layer | Imports? | Why | Use it for |
+|---|---|---|---|
+| `client/data/*` | **Yes — measured working** | plain `.ts`, React-free | items 1–11 below |
+| `client/charts/*` components | No | `.tsx` is not in the exports map | port the arithmetic only |
 
 **Revised guidance: IMPORT the `client/data/` modules; PORT only
 `niceScale` and the inline chart arithmetic.** This is better than copying —
@@ -686,7 +700,8 @@ narrow-terminal degradation plan). `icons.ts` reuses host symbol keys by design.
    our plan excluding both.
 3. **The `exports` map question is now RESOLVED — in our favour.** See §
    Recommended ports. `client/data/*` deep subpaths import and execute; only
-   `client/charts/*` fails, and only because it needs `react`. Import, don't copy.
+   `client/charts/*` components are `.tsx` and absent from the exports map, so they cannot
+   be imported at all. Import, don't copy.
    The one thing to re-verify is under the **runtime extension loader**, not just
    under `bun run`: F9's failure mode was loader-specific, and a `bun test` pass
    is not evidence about the loader. Static imports only (F9).
@@ -711,7 +726,7 @@ narrow-terminal degradation plan). `icons.ts` reuses host symbol keys by design.
   `./formatters`, `../charts/types` and `@oh-my-pi/pi-utils/dates`
 - Runtime import of all three data subpaths → **OK, ~10 ms, zero React**;
   `pivotSeries` output matches its documented contract. `charts/Chart` → **FAIL**
-  (needs `react`)
+  (is `.tsx`; absent from the exports map)
 
 ## Recommendation
 
