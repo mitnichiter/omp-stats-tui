@@ -1,6 +1,6 @@
 import { colorLuma, hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils";
 import { colorToAnsi } from "@oh-my-pi/pi-tui/theme/color";
-import type { SymbolPreset } from "@oh-my-pi/pi-tui/theme/schema";
+import type { SymbolPreset } from "@oh-my-pi/pi-tui/theme/symbols";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 
 /**
