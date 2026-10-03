@@ -44,8 +44,8 @@ import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
 import type {
 	CostTimeSeriesPoint,
 	FolderStats,
-	MessageStats,
 } from "@oh-my-pi/omp-stats/shared-types";
+import type { MessageRow } from "./fixtures/panel";
 
 import type { PanelData } from "../src/data/api";
 import { SCREEN_SPECS, type Band, type MetricRef, type StatTile } from "../src/layout/spec";
@@ -105,6 +105,10 @@ const COST_SERIES: readonly CostTimeSeriesPoint[] = [
 function folder(over: Partial<FolderStats> & { folder: string }): FolderStats {
 	return {
 		totalRequests: 0,
+		// `successfulRequests` is REQUIRED by the host's `AggregatedStats`, and a
+		// missing default here would type as `number | undefined` and be a hole in
+		// the fixture rather than a deliberate zero.
+		successfulRequests: 0,
 		failedRequests: 0,
 		totalInputTokens: 0,
 		totalOutputTokens: 0,
@@ -163,7 +167,7 @@ const FOLDERS: readonly FolderStats[] = [
 	}),
 ];
 
-function msg(over: Partial<MessageStats> & { id: number }): MessageStats {
+function msg(over: Partial<MessageRow> & { id: number }): MessageRow {
 	return {
 		model: "gpt-5.6-terra",
 		provider: "openrouter",
@@ -185,7 +189,7 @@ function msg(over: Partial<MessageStats> & { id: number }): MessageStats {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.1 },
 		},
 		...over,
-	} as MessageStats;
+	} as MessageRow;
 }
 
 /**
@@ -193,7 +197,7 @@ function msg(over: Partial<MessageStats> & { id: number }): MessageStats {
  * retry count are stripped — which is the whole point of `errorSignature` — and
  * so one model appears under two providers.
  */
-const ERRORS: readonly MessageStats[] = [
+const ERRORS: readonly MessageRow[] = [
 	msg({
 		id: 1,
 		errorMessage: "429 rate limit for req_abc123def after 3 tries",
@@ -222,7 +226,7 @@ const ERRORS: readonly MessageStats[] = [
 	}),
 ];
 
-const RECENT: readonly MessageStats[] = [
+const RECENT: readonly MessageRow[] = [
 	msg({ id: 10, timestamp: NOW }),
 	msg({ id: 11, timestamp: NOW - 5_000, usage: { ...msg({ id: 0 }).usage, totalTokens: 200, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.25 } } }),
 	msg({
