@@ -20,11 +20,13 @@ import { initDb } from "@oh-my-pi/omp-stats/db";
 
 import { fetchFor, type PanelData } from "../src/data/api";
 import { RANGES, DEFAULT_RANGE, isRange, type Range } from "../src/data/ranges";
-import { SCREENS, screenById, type ScreenContext, type ScreenId } from "../src/tui/screens/types";
+import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
+import { renderScreen } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
+import { SERIES_COLORS } from "../src/tui/palette";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { SymbolPreset } from "@oh-my-pi/pi-tui";
+import type { SymbolPreset, ThemeColor } from "@oh-my-pi/pi-tui";
 
 ensureThemeSync();
 
@@ -64,13 +66,24 @@ for (let i = 0; i < args.length; i++) {
 
 if (widths.length === 0) widths.push(100, 60);
 
-const known = SCREENS.map(s => s.id);
-if (!known.includes(screenId as ScreenId)) {
-	console.error(`unknown screen "${screenId}"; expected one of ${known.join(", ")}`);
+const specs = SCREEN_SPECS.filter(spec => !spec.deferred);
+const known = specs.map(s => s.id);
+/**
+ * EVERY screen by default, and one screen when named. A reviewer judging whether
+ * this now looks like the web dashboard needs all of them side by side: a layout
+ * that reads well on one screen and badly on the next is exactly the inconsistency
+ * the band grammar exists to prevent, and it is invisible if the probe only ever
+ * shows the first screen.
+ */
+const wanted: readonly ScreenSpec[] =
+	screenId === "all"
+		? specs
+		: specs.filter(spec => spec.id === screenId);
+if (wanted.length === 0) {
+	console.error(`unknown screen "${screenId}"; expected one of ${known.join(", ")}, all`);
 	process.exit(1);
 }
 
-const screen = screenById(screenId as ScreenId);
 const ROWS = 40;
 
 // The extension inits the database at LOAD (src/index.ts, F16), before any
@@ -81,35 +94,43 @@ const ROWS = 40;
 // warm here is what makes this probe match what the panel actually sees.
 await initDb();
 
-// The same seam the panel uses: fetch exactly what the screen declared.
-const started = performance.now();
-const data: PanelData = await fetchFor(screen.needs, range);
-const elapsed = Math.round(performance.now() - started);
-
-for (const width of widths) {
-	const ctx: ScreenContext = {
-		width,
-		rows: ROWS,
-		range,
-		theme,
-		preset,
-		glyphs: glyphsFor(preset),
-		plan: planLayout(width, ROWS, preset),
-		data,
-		// Index-stable colours, so two runs of the same screen are diffable. The
-		// panel substitutes its live palette here.
-		colorFor: () => (text: string) => text,
-	};
-
-	const rendered = screen.render(ctx);
-	const over = rendered.filter(r => Bun.stringWidth(r) > ctx.plan.innerWidth);
-
-	console.log(`\n${"═".repeat(width)}`);
-	console.log(`${screen.id}  width=${width}  range=${range}  preset=${preset}  inner=${ctx.plan.innerWidth}`);
-	console.log(`${"─".repeat(width)}`);
-	console.log(rendered.join("\n"));
-	console.log(`${"─".repeat(width)}`);
-	console.log(`${rendered.length} rows${over.length === 0 ? "" : `, ${over.length} OVER WIDE`}`);
+// The SAME seam the panel uses: fetch exactly what each screen declared, and draw
+// it through the same renderer. A probe that took a different path would show a
+// panel nobody runs.
+const data: PanelData = {};
+const timings: string[] = [];
+for (const spec of wanted) {
+	const started = performance.now();
+	Object.assign(data, await fetchFor(spec.needs, range));
+	timings.push(`${spec.id}: ${spec.needs.length} route(s) in ${Math.round(performance.now() - started)}ms`);
 }
 
-console.log(`\nfetched ${screen.needs.length} route(s) in ${elapsed}ms for ${screen.id}`);
+const now = Date.now();
+for (const width of widths) {
+	for (const spec of wanted) {
+		const plan = planLayout(width, ROWS, preset);
+		const rendered = renderScreen({
+			spec,
+			data,
+			plan,
+			preset,
+			range,
+			now,
+			fg: (color, text) => theme.fg(color, text),
+			bold: text => theme.bold(text),
+			palette: theme,
+			seriesColorFor: (index): ThemeColor => SERIES_COLORS[index % SERIES_COLORS.length],
+			glyphs: glyphsFor(preset),
+		});
+		const over = rendered.filter(r => Bun.stringWidth(r) > plan.innerWidth);
+
+		console.log(`\n${"═".repeat(width)}`);
+		console.log(`${spec.id}  width=${width}  range=${range}  preset=${preset}  inner=${plan.innerWidth}`);
+		console.log(`${"─".repeat(width)}`);
+		console.log(rendered.join("\n"));
+		console.log(`${"─".repeat(width)}`);
+		console.log(`${rendered.length} rows${over.length === 0 ? "" : `, ${over.length} OVER WIDE`}`);
+	}
+}
+
+console.log(`\nfetched ${timings.join(", ")}`);

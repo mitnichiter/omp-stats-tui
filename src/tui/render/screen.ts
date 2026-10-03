@@ -237,7 +237,7 @@ const elapsed: Formatter = value => formatElapsed(value);
  * A rate of throughput keeps its unit. A bare `61` next to "Tokens/s" in a
  * separate cell would be a quantity; `61/s` is a rate.
  */
-const speed: Formatter = value => `${formatInteger(value)}/s`;
+const speed: Formatter = value => `${formatInteger(Math.round(value))}/s`;
 
 /**
  * An unpriced COUNT only carries information when it is non-zero, so it says
@@ -688,14 +688,28 @@ function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly num
 
 	const bucketMs = base.source === "costSeries" ? COST_BUCKET_MS : bucketMsFor(opts.range);
 	const width = Math.max(1, opts.plan.innerWidth);
-	const buckets = bucketAxis(opts.range, timestamps, bucketMs, opts.now);
-	// A series longer than the panel keeps its NEWEST columns: a time series that
-	// has run out of room should lose its oldest, not its newest.
-	const axis = buckets.length > width ? buckets.slice(-width) : buckets;
+
+	// EXACTLY `width` buckets, aligned the way the host aligns them.
+	//
+	// `bucketAxis(range, …)` returns the range's NATURAL bucket count — 31 for
+	// `30d` — and `renderDailyBars` then stretches that to the panel width by
+	// re-bucketing on ARRAY INDEX, which smears one day's value across three
+	// columns and draws a wall of identical full-height bars. A chart whose x-axis
+	// is an array index rather than a time is not a time chart.
+	//
+	// So the axis is WIDENED, not stretched: the same alignment rule, as many
+	// buckets as there are columns, reaching further back to fill them. A gap
+	// bucket is a real zero — that day simply had no rows — which is what makes
+	// the quiet days visible instead of interpolating them away.
+	const newest = timestamps.reduce((max, value) => (value > max ? value : max), 0);
+	const alignedEnd = Math.floor(newest / bucketMs) * bucketMs;
+	const axis = Array.from({ length: width }, (_, i) => alignedEnd - (width - 1 - i) * bucketMs);
+
 	return axis.map(timestamp => {
 		let sum = 0;
 		for (const row of rows) {
-			if ((row as Record<string, unknown>).timestamp !== timestamp) continue;
+			const at = (row as Record<string, unknown>).timestamp;
+			if (typeof at !== "number" || Math.floor(at / bucketMs) * bucketMs !== timestamp) continue;
 			const value = resolveNumber(base, opts.data, row);
 			if (value !== null) sum += value;
 		}
@@ -703,31 +717,10 @@ function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly num
 	});
 }
 
-/**
- * ONE share computation, read by BOTH the bar and the legend under it.
- *
- * THE D4 FIX, and the only reason this function exists. The share bar divided
- * the entries it plotted; the legend divided by every item on its band. Overview's
- * legend names the four token kinds AND three agent rows which the IR points at
- * the same `overall.totalRequests`, so 196,380 requests leaked into a token
- * denominator and the same quantity printed as 94.5% beside 94.6%.
- *
- * The web has one number and two renderings of it — `mix[key] / total`
- * (`OverviewRoute.tsx:186-224`). So a share is computed HERE, once, and both
- * renderers print it. `test/stat-tile.test.ts` asserts they agree, because the
- * next person to re-derive a denominator will otherwise bring the disagreement
- * straight back.
- *
- * THE GROUPING IS BY METRIC, NOT BY LABEL. Overview's three agent rows carry
- * three different LABELS reading ONE field; grouping by label would give each a
- * 100% of itself and no composition at all. Grouping by the metric's own identity
- * makes the token four sum to 100% and the agent three sum to 100%, each against
- * its own total — which is what the web draws as two separate `ShareBar`s.
- */
+/** One item's value and its share of the group it belongs to. */
 interface ShareEntry {
 	label: string;
 	value: number;
-	/** This entry's share of the group it belongs to. */
 	share: number;
 }
 

@@ -587,3 +587,679 @@ space-bunny-free      █░░░░░░░░░░░░░░░░░░�
   ranks a row by its unpriced request count rather than by its zero cost.
   Pre-existing behaviour in charts/sparkline.ts, not introduced here, and
   arguably right: unknown spend is unbounded and should not be buried.
+
+==============================================================================
+9) $ bun scripts/probe-render.ts all --width 100 --width 60 --range 30d
+==============================================================================
+
+THE RENDERER IS THE PANEL'S. `scripts/probe-render.ts` now drives
+`src/tui/render/screen.ts` against the same `SCREEN_SPECS` the panel navigates
+and the same `fetchFor` seam the panel loads through, so what follows is what
+`/stats-tui` paints. It previously drove `Screen.render(ctx)` on the hand-written
+registry, which is why the earlier sections of this file and these look like
+different products.
+
+ALL EIGHT non-deferred screens, at width 100 and width 60, on live data from
+~/.omp/stats.db. ANSI stripped. No row is over width (the probe's own overflow
+check reports 0 at every width).
+
+WHAT TO LOOK AT, AND WHY:
+  - The stat grid is the WEB's `Stat` shape: label on its own row, value on the
+    next, hint under that, sparkline under that. The label can be any length and
+    still cannot touch its value.
+  - `API-equivalent cost` reads `$112.36` over `50 unpriced` — the unpriced count
+    rides with the figure, never as a bare `$0.00`.
+  - No section rule anywhere. The only divider in the frame is the one between
+    the body and the footer.
+  - Each chart is the SINGLE-SERIES renderer called once per declared series, each
+    block labelled and tinted. `renderDailyBars` is not reimplemented here.
+  - The share bar and the legend beneath it print the SAME percentage, because
+    the chart publishes its shares and the legend adopts them.
+
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+overview  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent cost                               Requests                                     …
+$112.36                                           65,784                                       …
+50 unpriced                                       1,320                                        …
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▁▂█▁▇▂▁▂▁▂▁▁▁▁▇▁▁▁▁▁▁▁▁▁▁   ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▂▁▁▄▁▇▃▄▂▁▃▁▁▁▁▂▁▃▇█▇▄▃▁…
+Conversation tokens                               Cache rate                                   …
+9B                                                95.9%                                        …
+42M                                               88.3%                                        …
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▁▁▄▁█▃▃▃▁▄▁▁▁▁▂▁▂▇██▄▃▁▃▃                                                …
+Error rate
+2.0%
+64,464
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁▁▁▁▁▂▁▂▂▁▂▁▁▁▁▂▁▃█▄█▃▃▁▂▂
+
+Uncached input                                    Cache read                                   …
+363M                                              8.6B                                         …
+                                                                                               …
+                                                                                               …
+Cache write                                       Output                                       …
+0                                                 42M                                          …
+                                                                                               …
+                                                                                               …
+Premium requests                                  Tokens/s                                     …
+0                                                 66/s                                         …
+                                                                                               …
+                                                                                               …
+Avg latency                                       Avg TTFT                                     …
+8.8s                                              3.8s                                         …
+                                                                                               …
+                                                                                               …
+
+⏱ Activity requests per bucket
+  Succeeded
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+  Failed
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+
+⏱ Token mix share of the total
+Uncached input ███░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 4.1% 363,051,073
+Cache read     ██████████████████████████████████████████████████████████░░░ 95.5% 8,555,144,899
+Cache write    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.0% 0
+Output         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.5% 42,325,045
+█ Uncached input    4.1%
+█ Cache read       95.5%
+█ Cache write       0.0%
+█ Output            0.5%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model        Provider         When       Tokens         Cost     Duration       Status
+space-bunny-free  opencode-go       2h ago         435K           $0        16.4s             
+space-bunny-free  opencode-go       2h ago         434K           $0         4.3s             
+space-bunny-free  opencode-go       2h ago         434K           $0        10.9s             
+space-bunny-free  opencode-go       2h ago         433K           $0        48.4s             
+4 of 12
+
+The web Activity card offers requests, tokens or cost; a panel has no mode switch, so this scre…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+70 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+activity  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Activity cost                                     Activity requests                            …
+$2,582.33                                         186,976                                      …
+                                                                                               …
+                                                                                               …
+
+⏱ Activity per day, by billing component
+  Apr     May     Jun       Jul     Aug       Sep     
+M · · · · · · · · · · · · · · · █ ▓ ░ ░ ░ ░ ░ ░ ░ ░ · 
+  · · · · · · · · · · · · · · · ▓ ░ ▓ ░ · ░ ░ ░ · · · 
+W · · · · · · · · · · · · · · ░ ░ · ░ ░ ░ ░ ░ ░ ░ · · 
+  · · · · · · · · · · · · · · ░ ░ ▒ ░ ░ ░ ░ ░ ░ ░ · · 
+F · · · · · · · · · · · · · · ░ ▓ · · ░ ░ · ░ ░ ░ · · 
+  · · · · · · · · · · · · · · ▓ · ░ · ░ ░ · · ░ ░ · · 
+  · · · · · · · · · · · · · · █ ▓ ░ ░ ▒ ░ ░ ░ ░ · ·   
+
+Levels are square-root compressed against the busiest day, over per-day cost, falling back to r…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+16 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+models  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Models used                                       Most used                                    …
+10                                                space-bunny-free                             …
+                                                                                               …
+                                                                                               …
+Requests                                          API-equivalent cost                          …
+65,784                                            $112.36                                      …
+1,320                                             50 unpriced                                  …
+▁▂▁▁▁▁▁▁▃▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▇▁▁█▁▁▇▁▁▄▁▁▃▁▁▁▁▃▁▁▃                                                …
+
+⏱ Request share share of the total
+Requests per bucket ██████████████████████████████████████████████████████████████ 100.0% 65,784
+█ Share of requests  100.0%
+
+📊 All models
+Model          Provider     Requests         Cost       Tokens   Cache rate       Errors     To…
+space-bunny-free  opencode-go ████████████           $0         4.7B        96.5%         0.3% …
+muse-spark-1.3-contributor  opencode-go ████░░░░░░░░       $15.04         2.1B        95.5%    …
+muse-spark-1.3-contributor-free opencode-zen ██░░░░░░░░░░           $0         575M        95.0…
+gemini-3.8-flash google-antigravity █░░░░░░░░░░░       $90.73         679M        93.0%        …
+4 of 10
+
+Per-model token and cost figures are shares of the assistant turn that asked for them, not meas…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+22 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+costs  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent estimate                           Average per day                              …
+$112.36                                           $4.16                                        …
+0                                                                                              …
+                                                                                               …
+Top model                                         Per priced request                           …
+gemini-3.8-flash                                  $0.0017                                      …
+                                                                                               …
+                                                                                               …
+Unpriced requests
+0
+
+⏱ Daily estimate per day, by billing component
+  Input
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░████░░░██░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Output
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Cache read
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Cache write
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+⏱ Where it went per day, by billing component
+gemini-3.8-flash                      ████████████████████████████████████████████████ 1,088.803
+muse-spark-1.3-contributor            █████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░   210.582
+meta/muse-spark-1.3-contributor       █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    11.663
+deepseek/deepseek-v4.1-flash          █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     6.943
+cline-free/muse-spark-1.3-contributor █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░     0.386
+█ Input        100.0%
+█ Output       100.0%
+█ Cache read   100.0%
+█ Cache write    0.0%
+
+📊 By model
+Model           Requests     Estimate        Share        Split  Per request     Unpriced
+gemini-3.8-flash        3,799       $90.73       $90.73       $35.37       $90.73            0
+gemini-3.8-flash        3,799       $90.73       $90.73       $35.37       $90.73            0
+gemini-3.8-flash        3,799       $90.73       $90.73       $35.37       $90.73            0
+gemini-3.8-flash        3,799       $90.73       $90.73       $35.37       $90.73            0
+4 of 16
+
+Bars scale by cost, never by tokens: this data carries a 41x price spread at comparable token v…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+49 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+projects  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Folders                                           Requests                                     …
+40                                                65,784                                       …
+                                                  1,320                                        …
+                                                                                               …
+API-equivalent cost                               Conversation tokens                          …
+$112.36                                           9B                                           …
+0                                                                                              …
+                                                                                               …
+Cache rate
+0.959
+
+⏱ Top by cost share of the total
+Share of API-equivalent cost █████████████████████████████████████████████████████ 100.0% 33.267
+
+⏱ Top by requests share of the total
+Share of all requests ████████████████████████████████████████████████████████████ 100.0% 16,212
+
+📊 Folders
+Folder            Requests         Cost       Tokens   Cache rate Cache savings       Errors Av…
+-Documents-Projects-astryx-dracula       16,212       $33.27         2.5B        96.5%        9…
+-Downloads-cyber_conquest-p_crypto          564       $23.64         183M        92.4%        8…
+-Documents-Projects-AstroScrapper        1,579       $19.03         157M        93.2%        84…
+-Documents-Projects-ctf-skills          869       $12.43         161M        93.4%        82.7%…
+4 of 16
+────────────────────────────────────────────────────────────────────────────────────────────────────
+24 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+requests  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Requests                                          Failed                                       …
+50                                                50                                           …
+                                                                                               …
+                                                                                               …
+Tokens                                            API-equivalent cost                          …
+15M                                               $0                                           …
+                                                                                               …
+                                                                                               …
+
+📊 Request log
+Model              When      Project        Input   Cache read       Output         Cost     Du…
+space-bunny-free       2h ago -Documents-Projects-omp-stats-tui          216         434K      …
+space-bunny-free       2h ago -Documents-Projects-omp-stats-tui          703         434K      …
+space-bunny-free       2h ago -Documents-Projects-omp-stats-tui          860         433K      …
+space-bunny-free       2h ago -Documents-Projects-omp-stats-tui           3K         430K      …
+4 of 16
+────────────────────────────────────────────────────────────────────────────────────────────────────
+16 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+errors  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Failures                                          Signatures                                   …
+50                                                3                                            …
+                                                                                               …
+                                                                                               …
+Affected models                                   Last failure                                 …
+2                                                 2h ago                                       …
+                                                                                               …
+                                                                                               …
+
+📊 Error signatures
+Signature       Models    Last seen
+OpenAI completions stream stalled while waiting for the next event space-bunny-free      16h ago
+OpenAI completions stream closed before a finish_reason was received space-bunny-free       2h …
+OpenAI completions stream closed before a finish_reason was received space-bunny-free      16h …
+403 OpenCode's free tier can only be used from within OpenCode
+OpenCode's free tier can only be …
+4 of 16
+
+📊 Failures
+When           Model        Error      Project       Tokens         Cost
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's free tier can only be used from within O…
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's free tier can only be used from within O…
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's free tier can only be used from within O…
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's free tier can only be used from within O…
+4 of 16
+
+A failed request is still a request: it carries tokens and may carry an unknown price, so a fai…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+26 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+tools  width=100  range=30d  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Tool calls                                        Distinct tools                               …
+79,986                                            27                                           …
+                                                                                               …
+                                                                                               …
+Error rate                                        Attributed tokens                            …
+0.049                                             8.5B                                         …
+                                                                                               …
+                                                                                               …
+Attributed cost
+108.563
+
+Result text                                       Call arguments                               …
+196M                                              56M                                          …
+                                                                                               …
+                                                                                               …
+Avg result per call
+2.5K
+
+⏱ Calls over time calls per bucket
+  Calls
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░░░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+  Errors
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░██░░████████░░█░█░░░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░░░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+
+📊 By tool
+Tool                Trend        Calls       Errors         Args       Result Attr. tokens   At…
+bash         ▁▂▁▂▄█▇▄▃▁▃▃ ████████████        1,042          11M          41M         3.4B     …
+read         ▁▁▁▆█▆▅▃▂▁▂▂ ████████████          266         2.6M         107M         1.6B     …
+edit         ▁▁▁▂▅█▆▃▁▁▂▃ ███░░░░░░░░░        1,151         8.6M         7.1M         1.1B     …
+grep         ▁▁▁▃▃▆█▃▄▁▂▂ ██░░░░░░░░░░           56         915K          23M         257M     …
+4 of 16
+
+📊 By tool and model
+Tool                Model        Calls       Errors Attr. tokens   Attr. cost
+read         space-bunny-free       15,233          196           1B            0
+bash         space-bunny-free       14,420          640         1.6B            0
+bash         muse-spark-1.3-contributor        5,387          163         849M        5.152
+edit         space-bunny-free        4,532          844         618M            0
+4 of 16
+
+Attributed tokens and cost are per-call SHARES of the assistant turn that asked for them, never…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+53 rows
+
+════════════════════════════════════════════════════════════
+overview  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+API-equivalent cost
+$112.36
+50 unpriced
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▁▂█▁▇▂▁▂▁▂▁▁▁▁▇▁▁▁▁▁▁▁▁▁▁
+Requests
+65,784
+1,320
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▂▁▁▄▁▇▃▄▂▁▃▁▁▁▁▂▁▃▇█▇▄▃▁▃▃
+Conversation tokens
+9B
+42M
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▃▃▁▁▄▁█▃▃▃▁▄▁▁▁▁▂▁▂▇██▄▃▁▃▃
+Cache rate
+95.9%
+88.3%
+Error rate
+2.0%
+64,464
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▂▁▁▁▁▁▂▁▂▂▁▂▁▁▁▁▂▁▃█▄█▃▃▁▂▂
+
+Uncached input
+363M
+Cache read
+8.6B
+Cache write
+0
+Output
+42M
+Premium requests
+0
+Tokens/s
+66/s
+Avg latency
+8.8s
+Avg TTFT
+3.8s
+
+⏱ Activity requests per bucket
+  Succeeded
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+  Failed
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░█████████████████░█░░░█████████
+
+⏱ Token mix share of the total
+Uncached input █░░░░░░░░░░░░░░░░░░░░░░░ 4.1% 363,051,073
+Cache read     ████████████████████░ 95.5% 8,555,144,899
+Cache write    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.0% 0
+Output         ░░░░░░░░░░░░░░░░░░░░░░░░░ 0.5% 42,325,045
+█ Uncached input    4.1%
+█ Cache read       95.5%
+█ Cache write       0.0%
+█ Output            0.5%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model        Provider         When       Tokens        …
+space-bunny-free  opencode-go       2h ago         435K…
+space-bunny-free  opencode-go       2h ago         434K…
+space-bunny-free  opencode-go       2h ago         434K…
+3 of 12
+
+The web Activity card offers requests, tokens or cost; …
+────────────────────────────────────────────────────────────
+72 rows
+
+════════════════════════════════════════════════════════════
+activity  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Activity cost
+$2,582.33
+Activity requests
+186,976
+
+⏱ Activity per day, by billing component
+  Apr     May     Jun       Jul     Aug       Sep     
+M · · · · · · · · · · · · · · · █ ▓ ░ ░ ░ ░ ░ ░ ░ ░ · 
+  · · · · · · · · · · · · · · · ▓ ░ ▓ ░ · ░ ░ ░ · · · 
+W · · · · · · · · · · · · · · ░ ░ · ░ ░ ░ ░ ░ ░ ░ · · 
+  · · · · · · · · · · · · · · ░ ░ ▒ ░ ░ ░ ░ ░ ░ ░ · · 
+F · · · · · · · · · · · · · · ░ ▓ · · ░ ░ · ░ ░ ░ · · 
+  · · · · · · · · · · · · · · ▓ · ░ · ░ ░ · · ░ ░ · · 
+  · · · · · · · · · · · · · · █ ▓ ░ ░ ▒ ░ ░ ░ ░ · ·   
+
+Levels are square-root compressed against the busiest d…
+────────────────────────────────────────────────────────────
+16 rows
+
+════════════════════════════════════════════════════════════
+models  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Models used
+10
+Most used
+space-bunny-free
+Requests
+65,784
+1,320
+▂▁▁▃▂▁▁▁▁▂▁▁▁▁▁▁▃▁▁▁▁▁▁▁▁▁▁▁▁▁▃▁▁▁▇▁▁█▁▁▇▁▁▄▁▁▃▁▁▁▁▃▁▁▃
+API-equivalent cost
+$112.36
+50 unpriced
+
+⏱ Request share share of the total
+Requests per bucket ██████████████████████ 100.0% 65,784
+█ Share of requests  100.0%
+
+📊 All models
+Model          Provider     Requests         Cost      …
+space-bunny-free  opencode-go ████████████           $0…
+muse-spark-1.3-contributor  opencode-go ████░░░░░░░░   …
+muse-spark-1.3-contributor-free opencode-zen ██░░░░░░░░…
+3 of 10
+
+Per-model token and cost figures are shares of the assi…
+────────────────────────────────────────────────────────────
+24 rows
+
+════════════════════════════════════════════════════════════
+costs  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+API-equivalent estimate
+$112.36
+0
+Average per day
+$4.16
+Top model
+gemini-3.8-flash
+Per priced request
+$0.0017
+Unpriced requests
+0
+
+⏱ Daily estimate per day, by billing component
+  Input
+░░░░░░░░░░░░░░░░░░░░░░░░░██░████░░░██░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Output
+░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Cache read
+░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░█████░███░░█░█░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░██░██████████████░█░░░░░░░░░░░░
+  Cache write
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
+
+⏱ Where it went per day, by billing component
+gemini-3.8-flash             █████████████████ 1,088.803
+muse-spark-1.3-contributor   ███░░░░░░░░░░░░░░   210.582
+meta/muse-spark-1.3-contributor █░░░░░░░░░░░░░░░░    11…
+deepseek/deepseek-v4.1-flash █░░░░░░░░░░░░░░░░     6.943
+cline-free/muse-spark-1.3-contributor █░░░░░░░░░░░░░░░░…
+█ Input        100.0%
+█ Output       100.0%
+█ Cache read   100.0%
+█ Cache write    0.0%
+
+📊 By model
+Model           Requests     Estimate        Share     …
+gemini-3.8-flash        3,799       $90.73       $90.73…
+gemini-3.8-flash        3,799       $90.73       $90.73…
+gemini-3.8-flash        3,799       $90.73       $90.73…
+3 of 12
+
+Bars scale by cost, never by tokens: this data carries …
+────────────────────────────────────────────────────────────
+49 rows
+
+════════════════════════════════════════════════════════════
+projects  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Folders
+40
+Requests
+65,784
+1,320
+API-equivalent cost
+$112.36
+0
+Conversation tokens
+9B
+Cache rate
+0.959
+
+⏱ Top by cost share of the total
+Share of API-equivalent cost █████████████ 100.0% 33.267
+
+⏱ Top by requests share of the total
+Share of all requests ████████████████████ 100.0% 16,212
+
+📊 Folders
+Folder            Requests         Cost       Tokens   …
+-Documents-Projects-astryx-dracula       16,212       $…
+-Downloads-cyber_conquest-p_crypto          564       $…
+-Documents-Projects-AstroScrapper        1,579       $1…
+3 of 12
+────────────────────────────────────────────────────────────
+25 rows
+
+════════════════════════════════════════════════════════════
+requests  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Requests
+50
+Failed
+50
+Tokens
+15M
+API-equivalent cost
+$0
+
+📊 Request log
+Model              When      Project        Input   Cac…
+space-bunny-free       2h ago -Documents-Projects-omp-s…
+space-bunny-free       2h ago -Documents-Projects-omp-s…
+space-bunny-free       2h ago -Documents-Projects-omp-s…
+3 of 12
+────────────────────────────────────────────────────────────
+15 rows
+
+════════════════════════════════════════════════════════════
+errors  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Failures
+50
+Signatures
+3
+Affected models
+2
+Last failure
+2h ago
+
+📊 Error signatures
+Signature       Models    Last seen
+OpenAI completions stream stalled while waiting for the…
+OpenAI completions stream closed before a finish_reason…
+OpenAI completions stream closed before a finish_reason…
+3 of 12
+
+📊 Failures
+When           Model        Error      Project       To…
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's …
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's …
+2h ago  muse-spark-1.3-contributor-free 403 OpenCode's …
+3 of 12
+
+A failed request is still a request: it carries tokens …
+────────────────────────────────────────────────────────────
+24 rows
+
+════════════════════════════════════════════════════════════
+tools  width=60  range=30d  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+Tool calls
+79,986
+Distinct tools
+27
+Error rate
+0.049
+Attributed tokens
+8.5B
+Attributed cost
+108.563
+
+Result text
+196M
+Call arguments
+56M
+Avg result per call
+2.5K
+
+⏱ Calls over time calls per bucket
+  Calls
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░░░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+  Errors
+░░░░░░░░░░░░░░░░░░░░░░░░░███░████████░░█░█░░░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░██░█░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+░░░░░░░░░░░░░░░░░░░░░░░░░████████████░████░█░░░█████████
+
+📊 By tool
+Tool                Trend        Calls       Errors    …
+bash         ▁▂▁▂▄█▇▄▃▁▃▃ ████████████        1,042    …
+read         ▁▁▁▆█▆▅▃▂▁▂▂ ████████████          266    …
+edit         ▁▁▁▂▅█▆▃▁▁▂▃ ███░░░░░░░░░        1,151    …
+3 of 12
+
+📊 By tool and model
+Tool                Model        Calls       Errors Att…
+read         space-bunny-free       15,233          196…
+bash         space-bunny-free       14,420          640…
+bash         muse-spark-1.3-contributor        5,387   …
+3 of 12
+
+Attributed tokens and cost are per-call SHARES of the a…
+────────────────────────────────────────────────────────────
+47 rows
+
+fetched overview: 3 route(s) in 29ms, activity: 3 route(s) in 91ms, models: 2 route(s) in 29ms, costs: 2 route(s) in 1ms, projects: 2 route(s) in 1ms, requests: 3 route(s) in 0ms, errors: 2 route(s) in 0ms, tools: 2 route(s) in 5ms
