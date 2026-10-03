@@ -168,6 +168,9 @@ Both set, both matching the identity on the one project commit (`da17fb0`). The 
 | 8205 | 10-03 09:04 | `docs/research/tui-chart-glyphs/findings/F1.md` |
 | 6233 | 10-03 09:04 | `docs/research/tui-chart-glyphs/findings/F2.md` |
 
+> **Snapshot as of 10-03 09:00.** The two root RESEARCH rows above are historical: both files
+> were deleted later the same day. See §14.
+
 **Zero scratch files.** No `.log`, `.tmp`, `*.bak`, `probe-*`, `tmp*`, `.DS_Store`,
 or editor swap files. No `node_modules/`. No build output.
 
@@ -193,6 +196,8 @@ Uncommitted (`git status --porcelain`):
 ?? docs/research/
 ```
 
+> Historical `git status` output as of 10-03 09:00; the untracked state no longer applies.
+
 **Everything except the plan file and `.gitignore` is untracked.** 24 documentation files
 are outside version control. Nothing is *modified* — no tracked file has unstaged edits.
 
@@ -215,14 +220,13 @@ Adequate. Single line, exactly the right entry, added ahead of the first install
   stream (glyph/chart width probing) with its own findings dir. Not an orphan; it is
   parallel to F10-glyph-system.
 
-## 14. Duplicate / stale root RESEARCH files
+## 14. Duplicate / stale root RESEARCH files — **resolved**
 
-`RESEARCH-stats-impl.md` (86K) and `RESEARCH-tui-hooks.md` (18K) are early working notes.
-They are **superseded** — `docs/research/omp-stats-tui/findings/F2-data-layer.md` covers
-the stats implementation and F3/F6 cover the TUI hooks and built-in views. `AGENTS.md:68`
-says so explicitly ("Superseded by `docs/research/` where they disagree").
+`RESEARCH-stats-impl.md` (86K) and `RESEARCH-tui-hooks.md` (18K) were early working notes.
+They were **superseded** — `docs/research/omp-stats-tui/findings/F2-data-layer.md` covers
+the stats implementation and F3/F6 cover the TUI hooks and built-in views.
 
-However they are **not orphaned** — three live references:
+They were not orphaned: three live references existed.
 
 ```
 docs/research/omp-stats-tui/REPORT.md:457  RESEARCH-stats-impl.md — … [primary]
@@ -230,10 +234,16 @@ docs/research/omp-stats-tui/REPORT.md:458  RESEARCH-tui-hooks.md — … [primar
 AGENTS.md:68                                early working notes, superseded
 ```
 
-`REPORT.md` cites them as *primary* sources in its source register, which contradicts the
-"superseded" framing. So: redundant in content, still referenced. They should either be
-committed alongside the rest of the docs, or moved under `docs/research/omp-stats-tui/`
-and downgraded in the REPORT source register. Deleting them as-is would break two citations.
+`REPORT.md` cited them as *primary* sources in its source register, which contradicted the
+"superseded" framing, and deleting them as-is would have broken two citations.
+
+**Resolution (10-03):** the three references were repointed before deletion, then the files
+were removed. Register entries 18/19 now cite F2/F11/F4 and F3/F6 respectively, with the
+`omp://` primary sources on entry 19 retained. The `AGENTS.md:68` key-directory row was
+dropped. No content was lost: the only claim unique to the deleted files was the nine-item
+"Hard limits" list, whose substance is already carried in `REPORT.md` §1 (React client is a
+rewrite, not a port), §6(b) (`cost_unpriced`), §6(e) (mode guards, idempotent `dispose()`),
+and register entries 5/10/30 (rollup tables, `exports` map, `withStatsSyncLock`).
 
 ## 15. Empty directories
 
@@ -253,22 +263,17 @@ rm -rf /tmp/_audit_noop /tmp/_t.txt /tmp/_t2.txt
 rm -rf ~/.Trash/_probe_f11 ~/.Trash/_probe_f11b
 ```
 
-**3. Commit the untracked research corpus** (24 files, docs only — nothing else is
+**3. Commit the untracked research corpus** (docs only — nothing else is
 uncommitted, so this is a pure-doc commit):
 ```sh
 cd /Users/yuzu/Documents/Projects/omp-stats-tui
-git add AGENTS.md CONTEXT.md RESEARCH-stats-impl.md RESEARCH-tui-hooks.md docs/adr docs/research
+git add AGENTS.md CONTEXT.md docs/adr docs/research
 git commit -m "docs: add ADRs, research findings and agent context"
 ```
 
-**4. (Optional) Tidy the redundant root RESEARCH files** — *decide first*, since REPORT.md
-cites them. Either keep them where they are and commit (step 3), or relocate and downgrade:
-```sh
-cd /Users/yuzu/Documents/Projects/omp-stats-tui
-mkdir -p docs/research/omp-stats-tui/raw
-mv RESEARCH-stats-impl.md RESEARCH-tui-hooks.md docs/research/omp-stats-tui/raw/
-# then update docs/research/omp-stats-tui/REPORT.md lines 457-458 and AGENTS.md line 68
-```
+**4. ~~Tidy the redundant root RESEARCH files~~ — done (10-03).** Not relocated:
+the content was already superseded by `docs/research/`, so the references were repointed
+to the covering findings and the two root files were deleted rather than moved. See §14.
 
 **Not ours, leave alone:** all `/tmp/probe*`, `/tmp/cb-probe*`, `/tmp/dup3.py`,
 `/tmp/warnprobe.log` (Vorssaint Swift work), `/tmp/f5`, `/tmp/vis`, `/tmp/xmltest`,

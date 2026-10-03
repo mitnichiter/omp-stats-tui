@@ -65,7 +65,6 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
 | `docs/adr/0001…0005` | **exists** | Five settled decisions. See §Settled Decisions. |
 | `docs/plans/` | **PLANNED** | Implementation plan, being written concurrently. Not present on disk. |
 | `src/` | **PLANNED** | Does not exist. Intended shape, from `F10-glyph-system.md`: `src/index.ts` (extension entry), `src/tui/glyphs.ts` (the one preset switch). |
-| `RESEARCH-stats-impl.md`, `RESEARCH-tui-hooks.md` | **exists** (repo root) | Early working notes. Superseded by `docs/research/` where they disagree. |
 
 There is no `package.json`, no `bun.lock`, no `node_modules`, and no `.gitignore` yet. All four are **PLANNED**.
 
