@@ -1,6 +1,6 @@
 import { matchesKey, routeSgrMouseInput, TabBar, type Component, type TUI } from "@oh-my-pi/pi-tui";
 import { OverlayPanel, PanelDivider, PanelRows } from "@oh-my-pi/pi-tui/chrome";
-import { truncateToWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
 import {
 	matchesSelectCancel,
 	matchesSelectDown,
@@ -22,8 +22,19 @@ import { LABEL_WIDTH, planLayout, type LayoutPlan } from "./layout";
 import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
 import { SCREEN_SPECS } from "../layout/spec";
 import { renderScreenWith } from "./render/screen";
+import {
+	JUMP_TIMEOUT_MS,
+	chipFor,
+	progressLineFor,
+	screenForHotkey,
+	sidebar,
+	sidebarRail,
+	topbar,
+	type ChromeSync,
+} from "./chrome";
+import { framePolicy } from "./responsive";
 import { TAB_BAR_INDENT, buildTabs, tabBarTheme } from "./tabs";
-import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, TAB_ROWS, bodyRows } from "./frame";
+import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, bodyRows } from "./frame";
 import { footerHints, hintsFor, type HintMode } from "./footer";
 
 /**
@@ -81,11 +92,18 @@ const PANEL_CHROME_ROWS = 5;
 export const MIN_PANEL_ROWS = FRAME_MIN_PANEL_ROWS;
 
 /**
+ * Shortest terminal that still gets the full grouped sidebar: its eleven nav
+ * rows (three headings + eight screens) plus the topbar, the divider, the
+ * footer, one body row and the two borders. Below this the sidebar degrades to
+ * the one-row icon rail rather than overflowing the frame.
+ */
+const MIN_SIDEBAR_ROWS = 20;
+/**
  * Past this many dirty hours the host stops unioning dirty hours with the
- * facts and returns stale rows with holes in them, so the header stops calling
- * it merely pending. The number is the host's, quoted from the `RollupStatus`
- * doc in src/data/api.ts; it is a named constant here because a bare 96 in a
- * comparison reads as a typo the moment someone edits one side of it.
+ * facts and returns stale rows with holes in them, so the chrome escalates from
+ * "pending" to a warning. The number is the host's, quoted from the
+ * `RollupStatus` doc in src/data/api.ts; it is a named constant because a bare
+ * 96 in a comparison reads as a typo the moment someone edits one side of it.
  */
 export const EXACT_DIRTY_LIMIT = 96;
 
@@ -152,6 +170,9 @@ export type PanelAction =
 	| { type: "scrollTo"; edge: "top" | "bottom" }
 	| { type: "screen"; by: 1 | -1 }
 	| { type: "screenIndex"; index: number }
+	| { type: "screenId"; id: string }
+	| { type: "armJump" }
+	| { type: "noop" }
 	| { type: "range"; by: 1 | -1 }
 	| { type: "sync" };
 
@@ -221,7 +242,7 @@ const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", 
  */
 const TAB_SWITCHES_SCREENS = true;
 
-export function panelAction(data: string): PanelAction | null {
+export function panelAction(data: string, jumpArmed = false): PanelAction | null {
 	let wheel: number | null = null;
 	if (
 		routeSgrMouseInput(data, event => {
@@ -232,7 +253,15 @@ export function panelAction(data: string): PanelAction | null {
 	) {
 		return wheel === null || wheel === 0 ? null : { type: "scroll", rows: wheel * 2 };
 	}
+	// The `g` prefix (Shell.tsx parity): while armed, a single letter is
+	// CONSUMED — a jump on match, a no-op otherwise — so `g r` jumps and never
+	// cycles the range and `g s` never syncs. Resolution lives in chrome.ts.
+	if (jumpArmed && data.length === 1) {
+		const id = screenForHotkey(data);
+		return id === null ? { type: "noop" } : { type: "screenId", id };
+	}
 	if (matchesSelectCancel(data) || matchesKey(data, "q")) return { type: "close" };
+	if (data === "g" || data === "G") return { type: "armJump" };
 	if (matchesKey(data, "r")) return { type: "range", by: 1 };
 	if (matchesKey(data, "shift+r")) return { type: "range", by: -1 };
 	if (matchesKey(data, "s")) return { type: "sync" };
@@ -262,6 +291,8 @@ export function panelAction(data: string): PanelAction | null {
 interface PanelState {
 	range: Range;
 	screenId: ScreenId;
+	/** `Date.now()` when `g` armed the section jump, else 0 (Shell.tsx `pendingG` parity). */
+	jumpArmedAt: number;
 	scroll: number;
 	maxScroll: number;
 	data: PanelData | null;
@@ -271,6 +302,8 @@ interface PanelState {
 	closed: boolean;
 	done: boolean;
 	syncEvent: SyncEvent | null;
+	/** Wall clock of the last settled sync, for the Live chip's relative age (`s`/`done`). */
+	lastSyncedAt: number | null;
 	syncError: string | null;
 	ingest: IngestHandle | null;
 	/** `done()` calls so far. The mount promise must resolve exactly once. */
@@ -307,6 +340,7 @@ export class StatsPanel implements Component {
 		this.#state = {
 			range: options.range ?? DEFAULT_RANGE,
 			screenId: options.screenId ?? (SELECTABLE_SCREENS[0]?.id ?? "overview"),
+			jumpArmedAt: 0,
 			scroll: 0,
 			maxScroll: 0,
 			data: null,
@@ -316,6 +350,7 @@ export class StatsPanel implements Component {
 			closed: false,
 			done: false,
 			syncEvent: null,
+			lastSyncedAt: null,
 			syncError: null,
 			ingest: null,
 			doneCalls: 0,
@@ -448,6 +483,9 @@ export class StatsPanel implements Component {
 		if (event.type === "done") {
 			state.syncEvent = null;
 			state.syncError = null;
+			// The settled moment the web stamps `lastSyncedAt` (live.ts): the age
+			// the Live chip reads comes from here. Clock is injected for tests.
+			state.lastSyncedAt = this.#options.now?.() ?? Date.now();
 			// The rollup moved underneath us, so every number on screen is one
 			// sync out of date until the reload lands.
 			this.#load();
@@ -464,51 +502,84 @@ export class StatsPanel implements Component {
 
 	// --- render --------------------------------------------------------------
 
+	/**
+	 * What the topbar's live chip reads. DERIVED per frame from the same
+	 * `SyncEvent` the progress line reads, so the chip and the bar can never
+	 * disagree about whether a sync is running (LiveChip.tsx's `sync.phase`).
+	 */
+	#chromeSync(): ChromeSync {
+		const state = this.#state;
+		const event = state.syncEvent;
+		const progress = event?.type === "progress" ? event : null;
+		return {
+			syncing: progress !== null || state.ingest !== null,
+			current: progress?.current ?? 0,
+			total: progress?.total ?? 0,
+			// Only ingest reports a denominator; scan and rollup are indeterminate
+			// by phase, exactly as progressLineFor treats them.
+			determinate: progress?.phase === "ingest" && progress.total > 0,
+			error: state.syncError,
+			dirtyHours: state.data?.rollupStatus?.dirtyHours ?? 0,
+			lastSyncedAt: state.lastSyncedAt,
+			now: this.#options.now?.() ?? Date.now(),
+		};
+	}
+
 	render(width: number): readonly string[] {
 		const state = this.#state;
 		const rows = this.#options.rows ?? this.#tui.terminal.rows ?? 40;
 		// The one and only `getSymbolPreset()` read in this feature. Every path
 		// below receives the preset; none of them branch on it.
 		const preset = this.#theme.getSymbolPreset();
+		const policy = framePolicy(width);
+		const innerWidth = Math.max(1, width - 4);
 
-		// THE TAB ROW IS THE HEADER ROW (F23 §1.1). It replaces the header rather
-		// than joining it, which is why the chrome count is unchanged — and its
-		// height is MEASURED, because `TabBar` wraps below ~58 columns and a
-		// hardcoded count would spend a row the terminal does not have.
-		// `buildTabs` THROWS on an id the IR does not describe — deliberately, so a
-		// typo cannot paint an empty strip. A screenId can still arrive that the IR
-		// has no spec for (`gain`, whose payload provenance is unsettled), and a
-		// throw here would blank the WHOLE panel over a tab label. So the strip is
-		// built only when the active screen is one it can name, and the body says
-		// why when it is not.
-		const spec = specById(state.screenId);
-		const activeId = spec?.id;
-		const tabs = activeId ? buildTabs(preset, this.#theme, activeId) : [];
-		if (tabs.length > 0) this.#tabBar.setTabs(tabs, activeId);
-		const tabLines = tabs.length
-			? this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT))
-			: NO_ROWS;
+		const dirty = state.data?.rollupStatus?.dirtyHours ?? 0;
+		// Above the host's exact limit the union stops happening, so this is no
+		// longer "pending" — it is holes in the numbers below.
+		const freshness =
+			dirty > 0
+				? this.#theme.fg(
+						dirty > EXACT_DIRTY_LIMIT ? "warning" : "dim",
+						`${dirty} dirty ${dirty === 1 ? "hour" : "hours"}`,
+					)
+				: "";
+		state.header = freshness;
 
-		const body = bodyRows(rows, Math.max(1, tabLines.length));
+		// THE TOPBAR REPLACES THE TAB STRIP (web parity: Shell.tsx has a topbar
+		// and a sidebar, no strip). One row, plus the thin progress line while a
+		// sync streams — the bar the web paints under its topbar.
+		const chip = chipFor(this.#theme, this.#chromeSync());
+		const top = topbar(this.#theme, { range: state.range, chip, freshness, innerWidth });
+		const progress = progressLineFor(state.syncEvent, innerWidth);
+		const topLines = progress === "" ? [top] : [top, progress];
+
+		// The sidebar is a COLUMN beside the body and costs no body row, but a
+		// terminal too short for its eleven nav rows degrades full → rail rather
+		// than overflowing (framePolicy decides the width half).
+		const sidebarLines =
+			policy.sidebar === "hidden"
+				? []
+				: policy.sidebar === "full" && rows >= MIN_SIDEBAR_ROWS
+					? sidebar(this.#theme, preset, state.screenId).lines
+					: [sidebarRail(this.#theme, preset, state.screenId)];
+		const sidebarWidth = sidebarLines.length === 0 ? 0 : Math.max(...sidebarLines.map(line => visibleWidth(line)));
+
+		// Chrome is the topbar (+progress) replacing the one strip row the budget
+		// already charged, so `bodyRows` stays the single row arithmetic.
+		const body = bodyRows(rows, topLines.length);
 		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
 
-		state.source = this.#bodyLines(plan, preset);
+		state.source = this.#bodyLines(plan, preset, sidebarLines.length > 0 ? sidebarLines : null, sidebarWidth);
 		state.maxScroll = Math.max(0, state.source.length - plan.bodyRows);
 		// Clamped HERE, not in the key handler, so a terminal that shrank
 		// between two keypresses cannot leave the view scrolled past its end.
 		state.scroll = Math.max(0, Math.min(state.scroll, state.maxScroll));
 
-		// F23 §3.3: the range is the only always-changing part of the title, and
-		// the screen name is gone because the strip owns it.
 		state.title = `Stats · ${rangeLabel(state.range)}`;
 		this.#panel.title = state.title;
-		const freshness = this.#headerLine(plan, preset);
-		state.header = freshness;
-		// The freshness line rides under the tabs: the tab row is the header row,
-		// so there is nowhere else for a rollup caveat to go without costing the
-		// body a row every frame.
-		this.#header.setLines(freshness === "" ? tabLines : [tabLines[0] ?? "", freshness]);
-		this.#header.setHeight(Math.max(tabLines.length, freshness === "" ? 0 : 1));
+		this.#header.setLines(topLines);
+		this.#header.setHeight(topLines.length);
 		this.#body.setLines(state.source.slice(state.scroll, state.scroll + plan.bodyRows));
 		this.#body.setHeight(plan.bodyRows);
 		this.#footer.setLines([this.#footerLine(plan)]);
@@ -521,7 +592,12 @@ export class StatsPanel implements Component {
 		return state.data !== null ? "ready" : "loading";
 	}
 
-	#bodyLines(plan: LayoutPlan, preset: SymbolPreset): readonly string[] {
+	#bodyLines(
+		plan: LayoutPlan,
+		preset: SymbolPreset,
+		sidebarLines: readonly string[] | null,
+		sidebarWidth: number,
+	): readonly string[] {
 		const state = this.#state;
 		const phase = this.#phase();
 		state.chart = NO_ROWS;
@@ -551,7 +627,15 @@ export class StatsPanel implements Component {
 		// scaling against the REAL frame. The charts are the IR's now, so this
 		// captures what the screen drew rather than keeping a second local chart.
 		state.chart = rendered.chart;
-		return rendered.lines;
+		if (sidebarLines === null) return rendered.lines;
+		// The sidebar zips beside the body, not above it: sidebar row first,
+		// body row after, one column of gap. No rule inside (G5); the divider
+		// below the body (G6) is the panel's own PanelDivider.
+		const gap = " ";
+		return rendered.lines.map((line, index) => {
+			const side = index < sidebarLines.length ? sidebarLines[index]! : " ".repeat(sidebarWidth);
+			return `${side}${gap}${line}`;
+		});
 	}
 
 	/** Series hue by rank, matching the web's `buildColorLookup`. */
@@ -612,16 +696,6 @@ export class StatsPanel implements Component {
 		});
 	}
 
-	#headerLine(plan: LayoutPlan, preset: SymbolPreset): string {
-		const state = this.#state;
-		if (state.syncEvent) return describeSyncProgress(state.syncEvent, plan.innerWidth);
-		const dirty = state.data?.rollupStatus?.dirtyHours ?? 0;
-		if (dirty <= 0) return "";
-		// Above the host's exact limit the union stops happening, so this is no
-		// longer "pending" — it is holes in the numbers below.
-		return this.#theme.fg(dirty > EXACT_DIRTY_LIMIT ? "warning" : "dim", `${dirty} dirty ${dirty === 1 ? "hour" : "hours"}`);
-	}
-
 	#footerLine(plan: LayoutPlan): string {
 		const state = this.#state;
 		// DERIVED, never stored (F23 §3.2): an error shows a retry and a close
@@ -644,8 +718,13 @@ export class StatsPanel implements Component {
 	handleInput(data: string): void {
 		const state = this.#state;
 		if (state.closed) return;
-		const action = panelAction(data);
-		if (!action) return;
+		// The `g` prefix expires on TIME, not on a timer (Shell.tsx parity: the
+		// web compares timestamps on the next keypress and never clears).
+		const armed =
+			state.jumpArmedAt !== 0 && (this.#options.now?.() ?? Date.now()) - state.jumpArmedAt < JUMP_TIMEOUT_MS;
+		const action = panelAction(data, armed);
+		if (action === null) return;
+		state.jumpArmedAt = 0;
 		switch (action.type) {
 			case "close":
 				this.#finish();
@@ -662,6 +741,18 @@ export class StatsPanel implements Component {
 				return;
 			case "screenIndex":
 				this.#selectScreen(action.index);
+				return;
+			case "screenId": {
+				const index = SELECTABLE_SCREENS.findIndex(screen => screen.id === action.id);
+				// A jump only ever lands on a drawable screen: NAV_GROUPS filters
+				// deferred and excluded screens out, so an unknown id is inert.
+				if (index !== -1) this.#selectScreen(index);
+				return;
+			}
+			case "armJump":
+				state.jumpArmedAt = this.#options.now?.() ?? Date.now();
+				return;
+			case "noop":
 				return;
 			case "range":
 				state.range = nextRange(state.range, action.by);

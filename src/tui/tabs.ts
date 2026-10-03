@@ -40,11 +40,12 @@ import { STATS_ICONS, statsIcon, type IconRole } from "./icons";
 export type ScreenId = ScreenSpec["id"];
 
 /**
- * The icon each screen's tab carries. `overview` takes `trendUp` rather than
- * `cost` so it does not collide with the `costs` tab; only one is ever active,
- * and the labels disambiguate regardless.
+ * The icon each screen carries. `overview` takes `trendUp` rather than `cost`
+ * so it does not collide with the `costs` row; only one is ever active, and the
+ * labels disambiguate regardless. Exported because chrome.ts reuses this exact
+ * mapping for the sidebar rows — one icon table, not two.
  */
-const TAB_ICON: Record<ScreenId, IconRole> = {
+export const TAB_ICON: Record<ScreenId, IconRole> = {
 	overview: "trendUp",
 	activity: "calendar",
 	models: "models",
