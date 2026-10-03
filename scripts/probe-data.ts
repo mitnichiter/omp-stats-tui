@@ -21,6 +21,7 @@ import { getDashboardStats, getTimeRangeConfig } from "@oh-my-pi/omp-stats/aggre
 import { getRollupStatus } from "@oh-my-pi/omp-stats/rollup";
 import { getStatsDbPath } from "@oh-my-pi/pi-utils";
 import { KNOWN_INVALID_RANGES, VALID_RANGES, resolveRange } from "./lib/ranges";
+import { catalogPriceCard } from "../src/data/api";
 import { formatTimingTable, type RangeTiming } from "./lib/timing";
 
 /** Timed calls per range. Run 0 is the cold first call; runs 1+ are warm. */
@@ -181,11 +182,18 @@ function printModelMagnitudes(db: Database): void {
 			        SUM(cache_write_tokens)                   AS cache_write,
 			        SUM(output_tokens)                        AS output,
 			        SUM(cost_total)                           AS cost,
+			        -- UNPRICED, the way the panel decides it: zero cost WITH TOKENS
+			        -- and NO CATALOG PRICE CARD. This query used to say "cost_total
+			        -- = 0 AND any tokens > 0", which counted every genuinely free
+			        -- model — space-bunny-free alone is 36k requests — as unknown
+			        -- spend, and reported 34,870 unpriced where the truth is zero. A
+			        -- zero price card IS a real price; no card is not a price at all.
+			        -- The card lookup happens in JS below, because it lives in
+			        -- pi-catalog rather than in this database.
 			        SUM(CASE WHEN cost_total = 0
 			                  AND (input_tokens + output_tokens
 			                       + cache_read_tokens + cache_write_tokens) > 0
-
-			                 THEN 1 ELSE 0 END)             AS unpriced
+			                 THEN 1 ELSE 0 END)             AS zero_cost_requests
 			 FROM messages
 			 GROUP BY model, provider
 			 ORDER BY requests DESC
@@ -194,16 +202,23 @@ function printModelMagnitudes(db: Database): void {
 		.all(TOP_MODELS) as Record<string, number | string>[];
 
 	const headers = ["model", "provider", "requests", "fresh", "cache-read", "cache-write", "cost $", "unpriced"];
-	const body = rows.map((r) => [
-		String(r.model),
-		String(r.provider),
-		formatCount(Number(r.requests)),
-		compact(Number(r.fresh)),
-		compact(Number(r.cache_read)),
-		compact(Number(r.cache_write)),
-		Number(r.cost).toFixed(2),
-		formatCount(Number(r.unpriced)),
-	]);
+	const body = rows.map((r) => {
+		// A zero-cost model with tokens counts as UNPRICED only when the catalog
+		// has no price card for it. With a card — even an all-zero one — its zero
+		// was a real price and is not unknown spend.
+		const zeroCost = Number(r.zero_cost_requests);
+		const unpriced = catalogPriceCard(String(r.model)) ? 0 : zeroCost;
+		return [
+			String(r.model),
+			String(r.provider),
+			formatCount(Number(r.requests)),
+			compact(Number(r.fresh)),
+			compact(Number(r.cache_read)),
+			compact(Number(r.cache_write)),
+			Number(r.cost).toFixed(2),
+			formatCount(unpriced),
+		];
+	});
 	const widths = headers.map((h, i) => Math.max(h.length, ...body.map((r) => r[i].length)));
 
 	out(headers.map((h, i) => h.padEnd(widths[i])).join("  "));

@@ -267,16 +267,26 @@ function topModels(
 			display: costWithUnpriced(source.totalCost, source.unpricedRequests),
 		};
 	});
-
 	// Models `pivotSeries` dropped for having a zero total, restored — but BOUNDED,
 	// or restoring them defeats the very policy that dropped them. At 90d this
 	// database has 33 such models, and adding every one produced 36 rows and pushed
-	// the top of the ranking off the panel entirely. So: keep the heaviest few by
-	// request count (which is the only magnitude a $0 row has) and fold the rest
-	// into one trailing line naming how many were folded.
+	// the top of the ranking off the panel entirely.
+	//
+	// RANKED WITH UNPRICED FIRST, NOT BY REQUEST COUNT ALONE. Two populations land
+	// here and they are not the same kind of row: a genuinely free model, and a
+	// model whose spend was never determined. Ranking by requests alone let four
+	// free models (36,496 / 7,212 / 6,213 / 4,263 requests) push
+	// `gemini-3.7-flash-high` — 4,205 requests, spend UNKNOWN — out of a list
+	// capped at 3, so the one row the user most needs vanished from the panel.
+	// Unknown spend outranks free spend, which is the same rule `renderRankedBars`
+	// applies when it ranks a row by its unpriced count rather than by its zero cost.
 	const dropped = byModel
 		.filter(m => !series.some(s => s.key === `${m.model}::${m.provider}`) && m.totalRequests > 0)
-		.sort((a, b) => b.totalRequests - a.totalRequests);
+		.sort((a, b) => {
+			const aUnpriced = a.unpricedRequests > 0 ? 1 : 0;
+			const bUnpriced = b.unpricedRequests > 0 ? 1 : 0;
+			return bUnpriced - aUnpriced || b.totalRequests - a.totalRequests;
+		});
 	const RESTORED = 3;
 	for (const m of dropped.slice(0, RESTORED)) {
 		// Requests beside the money, because a `$0` row with a one-cell bar is
@@ -301,13 +311,21 @@ function topModels(
 		dim: dim(ctx),
 	});
 	if (dropped.length <= RESTORED) return bars;
-	// Said rather than implied: the reader is told models exist that they cannot see.
+	// The count of folded models that are NOT simply free. "none of them spend
+	// money" is a claim about every folded row, and it became false the moment a
+	// no-card model was folded: its spend is unknown, not zero. The note says
+	// which it is rather than smoothing over the difference.
+	const folded = dropped.slice(RESTORED);
+	const unpricedFolded = folded.filter(m => m.unpricedRequests > 0);
+	const tail =
+		unpricedFolded.length === 0
+			? `+ ${folded.length} more at $0, none of them spend money`
+			: `+ ${folded.length} more at $0, ${formatInteger(
+					unpricedFolded.reduce((sum, m) => sum + m.unpricedRequests, 0),
+				)} of them unpriced`;
 	return [
 		...bars,
-		clamp(
-			`  ${dim(ctx)(`+ ${dropped.length - RESTORED} more at $0, none of them spend money`)}`,
-			ctx.plan.innerWidth,
-		),
+		clamp(`  ${dim(ctx)(tail)}`, ctx.plan.innerWidth),
 	];
 }
 

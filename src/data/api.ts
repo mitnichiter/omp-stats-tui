@@ -12,6 +12,8 @@ import type {
 	ToolDashboardStats,
 } from "@oh-my-pi/omp-stats/shared-types";
 import type { Range } from "./ranges";
+import catalog from "@oh-my-pi/pi-catalog/models.json";
+import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 
 /**
  * THE DATA SEAM.
@@ -104,19 +106,178 @@ export function rollupStatusOrThrow(readiness: DbReadiness): RollupStatus {
 	return { dirtyHours: readiness.dirtyHours, dirtySessions: readiness.dirtySessions };
 }
 
-// --- Typed wrappers, one per route the panel reads ---------------------------
+// ─── WORKAROUND: no-catalog-card reads as unknown spend ──────────────────────
+//
+// ⚠ THIS BLOCK IS A WORKAROUND FOR AN UPSTREAM BUG AND MUST BE DELETED WHEN IT
+// IS FIXED. It is not a policy, and it must not become folklore.
+//
+// THE BUG. `omp-stats/src/db.ts:49-51` states:
+//
+//   "Nothing else sets the marker: an explicit recorded zero, a free flat card,
+//    and a model with no catalog card at all keep `cost_unpriced = 0` … because
+//    their zero is a real price."
+//
+// The first two clauses are right. THE THIRD IS WRONG. A model with no catalog
+// card does not have a price of zero; it has NO PRICE. Its zero is unmeasured,
+// which is precisely what CONTEXT.md calls an "Unpriced request" — "a request
+// whose recorded cost is zero because the price could not be determined — not
+// because nothing was spent".
+//
+// CONSEQUENCE TODAY (2026-10-03, measured against ~/.omp/stats.db): 4,359
+// requests across `gemini-3.7-flash-high` (4,197 requests / 571,773,459 tokens)
+// and `agnes-2.5-flash` (162 requests) carry NO price card. The package's
+// `unpricedRequests` reports 0 for them, so the panel renders `$0` beside spend
+// whose cost is genuinely unknown. That is the one lie this panel is built not
+// to tell.
+//
+// THE EXACT UPSTREAM CHANGE THAT REMOVES THIS BLOCK:
+//
+//   1. `db.ts` ingest: set `cost_unpriced = 1` when `getCatalogCost()` returns
+//      null and the request carries tokens.
+//   2. `db.ts:54` `unpricedRequestSql`: add the no-card case to the predicate so
+//      rows written before the backfill are counted too.
+//   3. A backfill for existing rows, alongside the existing
+//      `messages_cost_unpriced_v1` meta key.
+//
+// When those land, `unpricedRequests` reports 4,359 on its own and this whole
+// section goes. Report filed at
+// docs/research/omp-stats-tui/UPSTREAM-ISSUE-no-catalog-card-reads-as-zero.md.
+//
+// WHY IT LIVES HERE AND NOT IN A SCREEN: this is a statement about what the
+// DATA means, and CONTEXT.md's "unpriced request" is a data-layer distinction.
+// A screen that second-guessed the payload's unpriced count would have to know
+// about price cards, and every screen would have to know about price cards.
+// `getCatalogCost` is not exported by the package, which is why this reads
+// `@oh-my-pi/pi-catalog` directly — a second reason to fix it upstream instead.
 
-export function fetchOverview(range: Range, read: Reader = liveReader): Promise<OverviewPayload> {
-	return apiGet<OverviewPayload>("/api/stats/overview", { range }, read);
+/**
+ * Does the price catalog carry a card for this model — ANY card, including one
+ * whose rates are all zero?
+ *
+ * The distinction is the whole point. `space-bunny-free` has a card reading
+ * `{input: 0, output: 0, cacheRead: 0, cacheWrite: 0}`: the price was determined
+ * and it is zero, so its `$0` is a real price and must stay `$0`.
+ * `gemini-3.7-flash-high` has no card at all, so there is no price to determine
+ * and its zero is unknown. Both render as `$0` and mean opposite things.
+ */
+const PRICED = (() => {
+	const priced = new Set<string>();
+	for (const group of Object.values(catalog as Record<string, Record<string, { cost?: unknown }>>)) {
+		for (const [id, model] of Object.entries(group)) {
+			// A card exists iff it carries a `cost` key. Rates are NOT inspected:
+			// an all-zero card is still a real price.
+			if (model && typeof model === "object" && model.cost !== undefined) priced.add(id);
+		}
+	}
+	return priced;
+})();
+
+/** True when the catalog can price this model at all. */
+export function catalogPriceCard(model: string): boolean {
+	return PRICED.has(model);
 }
 
-export function fetchModelDashboard(
+/** One row per model: zero-cost requests that carried tokens. */
+export interface ZeroCostModelRow {
+	model: string;
+	requests: number;
+}
+
+/**
+ * Keep only the rows whose model has NO price card.
+ *
+ * Takes rows already narrowed to `cost_total = 0 AND total_tokens > 0` so this
+ * function is pure filtering and is testable without a database. Models that DO
+ * have a card are dropped: their zero was a real price.
+ */
+export function noCatalogCardCounts(rows: readonly ZeroCostModelRow[]): Map<string, number> {
+	const counts = new Map<string, number>();
+	for (const row of rows) {
+		if (catalogPriceCard(row.model)) continue;
+		counts.set(row.model, (counts.get(row.model) ?? 0) + row.requests);
+	}
+	return counts;
+}
+
+/**
+ * Read the no-card unpriced counts for a range, or an empty map when the
+ * database is not initialised.
+ *
+ * Reads the FACTS table rather than the rollup on purpose: the rollup's
+ * `unpriced` column carries the same defect as the payload, so asking it would
+ * return the number we are correcting. Excludes rows the package already counts
+ * (`cost_unpriced = 1` or `xai-oauth`) so the two populations do not double up.
+ */
+function readNoCardUnpriced(range: Range): Map<string, number> {
+	const db = currentDb();
+	if (!db) return new Map();
+	const { spanMs } = rangeMeta(range);
+	const since = spanMs === null ? 0 : Date.now() - spanMs;
+	const rows = db
+		.query<ZeroCostModelRow, [number]>(
+			`SELECT model, COUNT(*) AS requests FROM messages
+			 WHERE total_tokens > 0 AND cost_total = 0 AND timestamp >= ?
+			   AND cost_unpriced = 0 AND provider != 'xai-oauth'
+			 GROUP BY model`,
+		)
+		.all(since);
+	return noCatalogCardCounts(rows);
+}
+
+/**
+ * Add the no-card counts to a payload's `unpricedRequests`, overall and per
+ * model. The package's own count is ADDED TO, never replaced, so its
+ * xai-oauth and `cost_unpriced` populations survive. Pure: returns a new object.
+ */
+export function withHonestUnpriced<T extends object>(payload: T, counts: ReadonlyMap<string, number>): T {
+	if (counts.size === 0) return payload;
+	const patched = { ...payload } as Record<string, unknown>;
+
+	// The map is already scoped to the range by `readNoCardUnpriced`, and
+	// `overall` is the range TOTAL, so its delta is the sum of the whole map — not
+	// a re-derivation from `byModel`, which may be absent or hold a subset.
+	let total = 0;
+	for (const n of counts.values()) total += n;
+	const overall = patched.overall;
+	if (total > 0 && overall && typeof overall === "object") {
+		patched.overall = {
+			...(overall as Record<string, unknown>),
+			unpricedRequests: ((overall as { unpricedRequests?: number }).unpricedRequests ?? 0) + total,
+		};
+	}
+
+	if (Array.isArray(patched.byModel)) {
+		patched.byModel = patched.byModel.map(row => {
+			if (!row || typeof row !== "object") return row;
+			const named = counts.get((row as { model?: unknown }).model as string);
+			if (!named) return row;
+			return {
+				...(row as Record<string, unknown>),
+				unpricedRequests: ((row as { unpricedRequests?: number }).unpricedRequests ?? 0) + named,
+			};
+		});
+	}
+
+	return patched as T;
+}
+
+// `withHonestUnpriced` is applied here, not in a screen — see the WORKAROUND
+// block above for why this belongs at the data seam.
+export async function fetchOverview(
+	range: Range,
+	read: Reader = liveReader,
+): Promise<OverviewPayload> {
+	const payload = await apiGet<OverviewPayload>("/api/stats/overview", { range }, read);
+	return withHonestUnpriced(payload, readNoCardUnpriced(range));
+}
+
+export async function fetchModelDashboard(
 	range: Range,
 	read: Reader = liveReader,
 ): Promise<ModelDashboardPayload> {
-	return apiGet<ModelDashboardPayload>("/api/stats/model-dashboard", { range }, read);
+	const payload = await apiGet<ModelDashboardPayload>("/api/stats/model-dashboard", { range }, read);
+	return withHonestUnpriced(payload, readNoCardUnpriced(range));
 }
-
 export function fetchCosts(range: Range, read: Reader = liveReader): Promise<CostPayload> {
 	return apiGet<CostPayload>("/api/stats/costs", { range }, read);
 }
