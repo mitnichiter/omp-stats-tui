@@ -148,15 +148,86 @@ test("the summary reports cost, requests and the busiest day", () => {
 
 test("unpriced spend reads as unknown, never as $0.00", () => {
 	// A day with requests but no recorded cost is UNKNOWN SPEND, not free spend.
-	const days: DailyActivityPoint[] = [
+	//
+	// The previous version of this test asserted
+	//   expect(text).not.toMatch(/\$0\.00\b(?!.*unpriced)/)
+	// over a fixture whose total cost was $5.00. `$0.00` could never appear, so
+	// the assertion could not fail — the panel's one forbidden lie was guarded
+	// by a regex that was never in reach. These two cases put the screen on the
+	// boundary instead: all-unpriced (must be N/A) and partly-unpriced (must
+	// still carry the real figure AND the unpriced count).
+	const allUnpriced: DailyActivityPoint[] = [
+		{ day: "2026-06-15", cost: 0, requests: 12, totalTokens: 4000 },
+		{ day: "2026-06-16", cost: 0, requests: 3, totalTokens: 900 },
+	];
+	const unpricedCosts = (days: DailyActivityPoint[]) => ({
+		costSeries: days.map((point, i) => ({
+			timestamp: new Date(point.day).getTime() + i,
+			model: "test/model",
+			provider: "test",
+			cost: 0,
+			// Every request carried tokens but could not be priced — the exact
+			// population `api.ts` corrects for at the data seam.
+			unpricedRequests: point.requests,
+			costInput: 0,
+			costOutput: 0,
+			costCacheRead: 0,
+			costCacheWrite: 0,
+			requests: point.requests,
+		})),
+	});
+
+	const summary = activityScreen
+		.render(makeCtx({ dailyActivity: allUnpriced, costs: unpricedCosts(allUnpriced) as never }, 140))
+		.find(row => row.includes("requests"))!;
+	expect(summary, "no summary line rendered").toBeDefined();
+
+	// THE assertion: unknown spend, never a dollar figure.
+	expect(summary).toContain("N/A");
+	expect(summary, "unpriced spend rendered as a $0.00 free price").not.toContain("$0");
+	expect(summary).not.toMatch(/\$0\.00/);
+	expect(summary).toContain("15 unpriced");
+
+	// With no measurable cost there is no "busiest day" claim to make, so the
+	// summary must not invent one.
+	expect(summary.toLowerCase()).not.toContain("busiest");
+
+	// The other direction: a REAL cost is still shown, with the unknown portion
+	// beside it rather than folded into it.
+	const mixed: DailyActivityPoint[] = [
 		{ day: "2026-06-15", cost: 0, requests: 12, totalTokens: 4000 },
 		{ day: "2026-06-16", cost: 5, requests: 3, totalTokens: 900 },
 	];
-	const text = activityScreen
-		.render(makeCtx({ dailyActivity: days, costs: costsFor(days) }, 140))
-		.join("\n");
-	expect(text).not.toMatch(/\$0\.00\b(?!.*unpriced)/);
-	expect(text.toLowerCase()).toContain("unpriced");
+	const mixedSummary = activityScreen
+		.render(
+			makeCtx(
+				{
+					dailyActivity: mixed,
+					costs: {
+						costSeries: mixed.map((point, i) => ({
+							timestamp: new Date(point.day).getTime() + i,
+							model: "test/model",
+							provider: "test",
+							cost: point.cost,
+							unpricedRequests: point.cost === 0 ? point.requests : 0,
+							costInput: point.cost,
+							costOutput: 0,
+							costCacheRead: 0,
+							costCacheWrite: 0,
+							requests: point.requests,
+						})),
+					} as never,
+				},
+				140,
+			),
+		)
+		.find(row => row.includes("requests"))!;
+
+	// The measured $5.00 survives — an unknown portion never erases a known one…
+	expect(mixedSummary).toContain("$5.00");
+	// …and the unknown portion is stated, not silently dropped into the total.
+	expect(mixedSummary).toContain("12 unpriced");
+	expect(mixedSummary).not.toContain("N/A");
 });
 
 test("an absent payload renders a defined empty state, not a blank grid", () => {
