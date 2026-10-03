@@ -29,6 +29,14 @@ const point = (day: string, cost: number, requests = 1): DailyActivityPoint => (
 /** A fixed "today" keeps every test independent of the wall clock. */
 const TODAY = new Date(2026, 9, 5, 12, 0, 0);
 
+test("day rows label all seven days, Monday first", () => {
+	// usage-dashboard.ts:293 + :862 — HEATMAP_DAY_LABELS is all seven days;
+	// the M/W/F-only set is the native-chart rows (L368), not the ANSI grid.
+	const rows = renderHeatmap([], { ...opts(4), today: TODAY });
+	const heads = rows.slice(1).map(row => row.replace(/\x1b\[[0-9;]*m/g, "")[0]);
+	expect(heads).toEqual(["M", "T", "W", "T", "F", "S", "S"]);
+});
+
 test("a heatmap is a month-label row plus exactly seven day rows", () => {
 	expect(renderHeatmap([], { ...opts(53), today: TODAY })).toHaveLength(8);
 });

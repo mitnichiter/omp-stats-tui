@@ -50,8 +50,8 @@ import type { GlyphSet } from "../glyphs";
  *  the same thing for the same reason. */
 const FG_RESET = "\x1b[39m";
 
-/** Monday-first row labels. Blank on Tue/Thu/Sat so columns read as pairs. */
-const ROW_LABELS = ["M", "", "W", "", "F", "", ""];
+/** All seven Monday-first day labels, exactly as /usage's HEATMAP_DAY_LABELS. */
+const ROW_LABELS = ["M", "T", "W", "T", "F", "S", "S"];
 
 export interface HeatmapOptions {
 	/** Content width. No rendered row may exceed it. */
