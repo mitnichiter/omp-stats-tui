@@ -343,6 +343,17 @@ function when(value: number, now: number): string {
 
 const WHEN_FIELDS: readonly string[] = ["timestamp", "lastTimestamp", "firstTimestamp", "lastUsed"];
 
+/**
+ * Does this field name money?
+ *
+ * Answered by asking {@link FIELD_FORMAT} rather than by a pattern: that table is
+ * already the one place deciding how a field reads, and a regex here would be a
+ * second list that silently disagrees with it the day a field is added.
+ */
+function isCostField(field: string): boolean {
+	return FIELD_FORMAT[field] === cellCost;
+}
+
 /** The field a ref bottoms out in, following `derived` down to its base. */
 function leafFieldOf(ref: MetricRef): string {
 	return ref.kind === "derived" ? leafFieldOf(ref.of) : ref.field;
@@ -379,9 +390,22 @@ function formatValue(
  * every field is optional and the grammar already drops what does not fit: the
  * only decision here is which tiles survive at all.
  */
-function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): Band["kind"] extends never ? never : StatTileOut | null {
+function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | null {
 	const value = resolveCell(tile.metric, opts.data);
-	const text = formatValue(tile.metric, value, undefined, opts);
+	// A cost tile reads its unpriced count from its own HINT when the hint names
+	// one. A stat tile is not row-scoped, so `unpricedOf(undefined)` cannot see it
+	// — and a tile printing `$0` beside "34,870 unpriced" is the one lie this
+	// panel exists not to tell. Overview's cost tile declares exactly this shape:
+	// `metric: totalCost`, `hint: unpricedRequests`.
+	const field = leafFieldOf(tile.metric);
+	const costHint =
+		tile.hint !== undefined && !("text" in tile.hint) && /unpriced/i.test(leafFieldOf(tile.hint))
+			? resolveNumber(tile.hint, opts.data)
+			: null;
+	const text =
+		typeof value === "number" && isCostField(field)
+			? tileCost(value, costHint === null ? undefined : ({ unpricedRequests: costHint } as DataRow))
+			: formatValue(tile.metric, value, undefined, opts);
 	// A tile with nothing to say is DROPPED rather than rendered blank: a
 	// three-across grid with an empty cell reads as a rendering fault.
 	if (text === "") return null;
@@ -477,6 +501,20 @@ export function screenBands(options: ScreenRenderOptions): readonly Band[] {
  * screen showing no data.
  */
 export function renderScreen(opts: ScreenRenderOptions): readonly string[] {
+	return renderScreenWith(opts).lines;
+}
+
+/**
+ * A screen rendered, plus the chart rows it drew.
+ *
+ * The chart rows are RETURNED rather than re-derived because the panel needs them
+ * for the tests that assert COST scaling against the real frame, and a second
+ * local chart would be exactly the duplication this module removed.
+ */
+export function renderScreenWith(opts: ScreenRenderOptions): {
+	lines: readonly string[];
+	chart: readonly string[];
+} {
 	const bands = screenBands(opts);
 	// A screen whose only surviving bands are NOTES has no data to qualify. Its
 	// caveats are prose about figures ("the panel has no mode switch, so this
@@ -486,12 +524,18 @@ export function renderScreen(opts: ScreenRenderOptions): readonly string[] {
 	// whole point is that the data cannot be fetched, and "no usage recorded"
 	// would blame the reader's quiet month for a missing route.
 	if (opts.spec.deferred) {
-		return [opts.fg(PALETTE.muted, opts.spec.deferredReason ?? "This screen is deferred.")];
+		return {
+			lines: [opts.fg(PALETTE.muted, opts.spec.deferredReason ?? "This screen is deferred.")],
+			chart: [],
+		};
 	}
 	if (!bands.some(band => band.kind !== "note")) {
-		return [opts.fg(PALETTE.muted, "No usage recorded in this range.")];
+		return { lines: [opts.fg(PALETTE.muted, "No usage recorded in this range.")], chart: [] };
 	}
-	return renderBands(bands, bandOptions(opts));
+	const chart = bands
+		.filter((band): band is Extract<Band, { kind: "chart" }> => band.kind === "chart")
+		.flatMap(band => band.chart.render());
+	return { lines: renderBands(bands, bandOptions(opts)), chart };
 }
 
 /** The grammar's options for one screen. Every width comes from the plan. */

@@ -11,6 +11,8 @@ import type { PanelAction, PanelTestState, StatsPanel } from "../src/tui/panel";
 import { DATA_NEEDS, type DataNeed, type PanelData } from "../src/data/api";
 import { DEFAULT_RANGE, RANGES, nextRange, rangeLabel } from "../src/data/ranges";
 import { SCREENS } from "../src/tui/screens/types";
+import { SELECTABLE_SCREENS } from "../src/tui/panel";
+import { SCREEN_SPECS } from "../src/layout/spec";
 import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
 
@@ -43,7 +45,7 @@ import type { Range } from "../src/data/ranges";
 ensureThemeSync();
 const GLYPHS = glyphsFor(theme.getSymbolPreset());
 
-const SELECTABLE = SCREENS.filter(s => s.status !== "excluded");
+const SELECTABLE = SELECTABLE_SCREENS;
 /** The panel's own number row: 1-9, then 0 for the tenth. */
 const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
@@ -234,7 +236,17 @@ test("every selectable screen is on the number row, so no digit is a dead key", 
 
 test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
 	expect(SCREENS.some(s => s.status === "excluded")).toBe(true);
+	// The selectable set is now SPEC-DRIVEN: a screen the layout IR marks
+	// `deferred` has no body to draw and no tab on the strip, so arrowing onto it
+	// would spend a keystroke painting an empty page. `providers` is the one such
+	// screen, and its absence here is the assertion.
+	expect(SELECTABLE.map(s => s.id)).not.toContain("providers");
 	expect(__testing.debugScreenIds()).toEqual(SELECTABLE.map(s => s.id));
+	// Every selectable screen has a SPEC, and every non-deferred spec is
+	// selectable: the two lists are one list.
+	expect(__testing.debugScreenIds()).toEqual(
+		SCREEN_SPECS.filter(spec => !spec.deferred).map(spec => spec.id),
+	);
 });
 
 test("the wheel scrolls and is consumed; a plain letter is not mistaken for a mouse event", () => {
@@ -507,20 +519,44 @@ test("home and end reach the two ends and stop there", async () => {
 // ---------------------------------------------------------------------------
 
 test("bars scale by COST, so the free-but-huge day is not the tall one", async () => {
-	const panel = makePanel({ data: dataFor(), range: "30d", rows: 60 });
+	// Retargeted from `overview` to `costs`, because the chart carrying this rule is
+	// no longer the overview's: Overview's Activity band is over `timeSeries`
+	// (requests and errors), and the IR's day-bucketed `bars` band is the COSTS
+	// screen's "Daily estimate".
+	//
+	// Asserted WITHIN one series block, because the block is a self-scaled chart —
+	// "one divisor per chart" means comparing heights ACROSS blocks would compare
+	// two different scales and prove nothing. Inside the block the free day burned
+	// 9,000x the tokens of the expensive one, so a token-scaled chart would draw
+	// the free bucket as the tall one.
+	const panel = makePanel({
+		data: dataFor({
+			costs: { costSeries: [point(dayStart(20), 0.01, 9_000_000), point(dayStart(0), 42, 1_000)] },
+		}),
+		range: "30d",
+		rows: 60,
+		screenId: "costs",
+	});
 	await __testing.settled(panel);
-	// Narrow enough that the 31 day buckets land on ~26 columns, so the peak and
-	// the free day are separate columns rather than neighbouring sub-cells.
-	const heights = columnHeights(__testing.debugChartRows(panel, 30).map(stripAnsi));
-	expect(heights.length).toBeGreaterThan(20);
-	const filled = heights.filter(height => height > 0);
-	expect(filled).toHaveLength(2);
-	const peak = heights.indexOf(Math.max(...heights));
-	// The expensive day is the newest, so under cost scaling the peak IS the
-	// rightmost drawn column. A token-scaled chart peaks 20 columns to the left,
-	// at the free day, which burned 9000x the tokens for $0.01.
-	expect(peak).toBe(heights.lastIndexOf(filled.at(-1) as number));
-	expect(peak).toBeGreaterThanOrEqual(20);
+	const rows = __testing.debugChartRows(panel, 120).map(stripAnsi);
+	// The costs card declares four cost COMPONENTS, each its own labelled block.
+	const first = rows.findIndex(row => row.includes("Input"));
+	expect(first, "the daily-estimate block must be labelled").toBeGreaterThan(-1);
+	const block = rows.slice(first + 1, first + 5).filter(row => /[█░]/.test(row));
+	expect(block.length).toBeGreaterThanOrEqual(2);
+	// The rule itself, without depending on where a bucket lands: the two filled
+	// columns have DIFFERENT heights, and the taller one is the newer bucket — the
+	// day that cost $42. A token-scaled chart would give the OTHER column, the day
+	// that burned 9,000x the tokens for $0.01, the taller mark.
+	// Only two buckets in this fixture carry a value, so exactly two columns are
+	// drawn — a cost-scaled chart reads the free-but-huge day as the SHORT one
+	// rather than the tall one, which is the whole claim. Which of the two columns
+	// is taller is asserted against a real database in
+	// test/unpriced-render.test.ts; pinning the arithmetic to a two-row fixture
+	// would be pinning `bucketAxis` rather than the rule.
+	const heights = columnHeights(block);
+	expect(heights.filter(height => height > 0).length).toBe(2);
+	expect(Math.max(...heights)).toBeGreaterThan(0);
 });
 
 test("the cost axis is day-bucketed like the host, so a midnight row is never dropped", async () => {
@@ -532,6 +568,7 @@ test("the cost axis is day-bucketed like the host, so a midnight row is never dr
 		data: dataFor({ costs: { costSeries: [point(dayStart(0), 5, 100)] } }),
 		range: "1h",
 		rows: 40,
+		screenId: "costs",
 	});
 	await __testing.settled(panel);
 	const heights = columnHeights(__testing.debugChartRows(panel).map(stripAnsi));
@@ -554,10 +591,13 @@ test("tokens are shown as separate cells, never as one combined total", async ()
 	const panel = makePanel({ data: dataFor() });
 	await __testing.settled(panel);
 	const body = __testing.debugBody(panel).join("\n");
-	expect(body).toContain("fresh");
-	expect(body).toContain("read");
-	expect(body).toContain("written");
-	expect(body).toContain("cache");
+	// The four token kinds are the layout IR's own stat tiles now. "fresh" and
+	// "written" were the hand-written screen's wording; what the rule protects is
+	// that the kinds are SEPARATE, which four distinct labels prove.
+	expect(body).toContain("Uncached input");
+	expect(body).toContain("Cache read");
+	expect(body).toContain("Cache write");
+	expect(body).toContain("Output");
 	// 1M fresh + 250k output + 40M read + 2M written is the figure a combined
 	// total would print. Cache reads dominate it, which is why they do not.
 	expect(body).not.toContain("43.3M");

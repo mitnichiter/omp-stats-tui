@@ -1,4 +1,4 @@
-import { matchesKey, routeSgrMouseInput, type Component, type TUI } from "@oh-my-pi/pi-tui";
+import { matchesKey, routeSgrMouseInput, TabBar, type Component, type TUI } from "@oh-my-pi/pi-tui";
 import { OverlayPanel, PanelDivider, PanelRows } from "@oh-my-pi/pi-tui/chrome";
 import { truncateToWidth } from "@oh-my-pi/pi-tui/utils";
 import {
@@ -20,6 +20,11 @@ import { glyphsFor, type SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
 import { LABEL_WIDTH, planLayout, type LayoutPlan } from "./layout";
 import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
+import { SCREEN_SPECS } from "../layout/spec";
+import { renderScreenWith } from "./render/screen";
+import { TAB_BAR_INDENT, buildTabs, tabBarTheme } from "./tabs";
+import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, TAB_ROWS, bodyRows } from "./frame";
+import { footerHints, hintsFor, type HintMode } from "./footer";
 
 /**
  * THE MOUNT SEAM.
@@ -73,7 +78,7 @@ export const STATS_OVERLAY_OPTIONS = {
 const PANEL_CHROME_ROWS = 5;
 
 /** The shortest terminal the panel will paint: the chrome plus one body row. */
-export const MIN_PANEL_ROWS = PANEL_CHROME_ROWS + 1;
+export const MIN_PANEL_ROWS = FRAME_MIN_PANEL_ROWS;
 
 /**
  * Past this many dirty hours the host stops unioning dirty hours with the
@@ -151,12 +156,25 @@ export type PanelAction =
 	| { type: "sync" };
 
 
+/** The IR spec for a screen id, or `undefined` when the registry has no spec. */
+export function specById(id: ScreenId) {
+	return SCREEN_SPECS.find(spec => spec.id === id);
+}
+
 /**
  * The screens a key can land on. `excluded` is deliberately absent: a tab that
  * says "excluded from the port" is a real answer, but arrowing onto it wastes a
  * keystroke and no number may ever select it.
  */
-export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(s => s.status !== "excluded");
+export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
+	const spec = specById(screen.id);
+	// A screen is selectable only if the layout IR DESCRIBES it and can be FILLED.
+	// `deferred` means described but unfillable (`providers`, whose route does
+	// network I/O); a screen with no spec at all (`gain`, whose payload provenance
+	// is unsettled) has no body to draw. Either way, arrowing onto it would spend
+	// a keystroke painting a page the panel cannot honestly fill.
+	return spec !== undefined && !spec.deferred && screen.status !== "excluded";
+});
 
 /**
  * Translate one input into one action, or null for a key this panel does not
@@ -216,22 +234,6 @@ export function panelAction(data: string): PanelAction | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Needs and body for the screens the panel paints ITSELF.
- *
- * `overview` is here because the registry's `overviewScreen` still draws
- * labelled sample numbers, and Task 13 owns the real body. Opening `/stats-tui`
- * onto a page of fiction would defeat the only thing this file is for. When
- * Task 13 lands, delete both maps: the body then comes from `screenById` like
- * every other screen, and nothing else here changes.
- */
-const LOCAL_NEEDS: Partial<Record<ScreenId, readonly DataNeed[]>> = {
-	overview: ["overview", "costs", "rollupStatus"],
-};
-
-const LOCAL_BODIES: Partial<Record<ScreenId, (ctx: ScreenContext, chart: readonly string[]) => readonly string[]>> =
-	{ overview: overviewBody };
-
-/**
  * Panel state, held in a module-level WeakMap rather than in `#private` fields.
  *
  * This is the test seam, and it is deliberately not a set of public getters:
@@ -273,6 +275,7 @@ export class StatsPanel implements Component {
 	readonly #tui: TUI;
 	readonly #theme: Theme;
 	readonly #panel: OverlayPanel;
+	readonly #tabBar: TabBar;
 	readonly #header: PanelRows;
 	readonly #body: PanelRows;
 	readonly #footer: PanelRows;
@@ -306,6 +309,10 @@ export class StatsPanel implements Component {
 		STATE.set(this, this.#state);
 
 		this.#panel = new OverlayPanel("Stats", "omp.overlay.stats");
+		this.#tabBar = new TabBar("", [], tabBarTheme(this.#theme));
+		// The strip folds its own hints into the footer, so it must not spend a
+		// cell on `(tab to cycle)`.
+		this.#tabBar.showHint = false;
 		this.#header = new PanelRows();
 		this.#header.setHeight(1);
 		this.#body = new PanelRows();
@@ -332,7 +339,9 @@ export class StatsPanel implements Component {
 	 * to reach that state unannounced.
 	 */
 	#needs(): readonly DataNeed[] {
-		const declared = LOCAL_NEEDS[this.#state.screenId] ?? screenById(this.#state.screenId).needs;
+		// The SPEC's needs, or the registry's when no spec exists — never a
+		// hand-maintained map beside them, which is the shim this replaced.
+		const declared = specById(this.#state.screenId)?.needs ?? screenById(this.#state.screenId).needs;
 		return declared.includes("rollupStatus") ? declared : [...declared, "rollupStatus"];
 	}
 
@@ -440,11 +449,30 @@ export class StatsPanel implements Component {
 	render(width: number): readonly string[] {
 		const state = this.#state;
 		const rows = this.#options.rows ?? this.#tui.terminal.rows ?? 40;
-		const height = Math.max(MIN_PANEL_ROWS, Number.isFinite(rows) ? Math.trunc(rows) : MIN_PANEL_ROWS);
 		// The one and only `getSymbolPreset()` read in this feature. Every path
 		// below receives the preset; none of them branch on it.
 		const preset = this.#theme.getSymbolPreset();
-		const plan = planLayout(width, height, preset);
+
+		// THE TAB ROW IS THE HEADER ROW (F23 §1.1). It replaces the header rather
+		// than joining it, which is why the chrome count is unchanged — and its
+		// height is MEASURED, because `TabBar` wraps below ~58 columns and a
+		// hardcoded count would spend a row the terminal does not have.
+		// `buildTabs` THROWS on an id the IR does not describe — deliberately, so a
+		// typo cannot paint an empty strip. A screenId can still arrive that the IR
+		// has no spec for (`gain`, whose payload provenance is unsettled), and a
+		// throw here would blank the WHOLE panel over a tab label. So the strip is
+		// built only when the active screen is one it can name, and the body says
+		// why when it is not.
+		const spec = specById(state.screenId);
+		const activeId = spec?.id;
+		const tabs = activeId ? buildTabs(preset, this.#theme, activeId) : [];
+		if (tabs.length > 0) this.#tabBar.setTabs(tabs, activeId);
+		const tabLines = tabs.length
+			? this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT))
+			: NO_ROWS;
+
+		const body = bodyRows(rows, Math.max(1, tabLines.length));
+		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
 
 		state.source = this.#bodyLines(plan, preset);
 		state.maxScroll = Math.max(0, state.source.length - plan.bodyRows);
@@ -452,10 +480,17 @@ export class StatsPanel implements Component {
 		// between two keypresses cannot leave the view scrolled past its end.
 		state.scroll = Math.max(0, Math.min(state.scroll, state.maxScroll));
 
-		state.title = `Stats · ${rangeLabel(state.range)} · ${screenById(state.screenId).label}`;
+		// F23 §3.3: the range is the only always-changing part of the title, and
+		// the screen name is gone because the strip owns it.
+		state.title = `Stats · ${rangeLabel(state.range)}`;
 		this.#panel.title = state.title;
-		state.header = this.#headerLine(plan, preset);
-		this.#header.setLines([state.header]);
+		const freshness = this.#headerLine(plan, preset);
+		state.header = freshness;
+		// The freshness line rides under the tabs: the tab row is the header row,
+		// so there is nowhere else for a rollup caveat to go without costing the
+		// body a row every frame.
+		this.#header.setLines(freshness === "" ? tabLines : [tabLines[0] ?? "", freshness]);
+		this.#header.setHeight(Math.max(tabLines.length, freshness === "" ? 0 : 1));
 		this.#body.setLines(state.source.slice(state.scroll, state.scroll + plan.bodyRows));
 		this.#body.setHeight(plan.bodyRows);
 		this.#footer.setLines([this.#footerLine(plan)]);
@@ -476,19 +511,34 @@ export class StatsPanel implements Component {
 		if (phase === "error") return errorLines(this.#theme, preset, state.error ?? "", state.syncError);
 
 		const data = state.data as PanelData;
-		const context = this.#screenContext(plan, preset, data);
-		const chart = this.#chartRows(context);
-		state.chart = chart;
-		try {
-			const screen = screenById(state.screenId);
-			return LOCAL_BODIES[screen.id]?.(context, chart) ?? screen.render(context);
-		} catch (error) {
-			// A registry that throws must not blank the panel. The overview is
-			// composed here from bars and formatters and depends on no screen
-			// module at all, so this is a real answer rather than an error where
-			// an answer should be.
-			return overviewBody(context, chart, error instanceof Error ? error.message : String(error));
-		}
+		const spec = specById(state.screenId);
+		// ONE rendering path. There is no `?? screen.render()` fallback: a fallback
+		// is how the panel got two grammars in the first place, and a screen the
+		// IR does not describe is a screen this panel cannot draw honestly.
+		if (!spec) return [this.#theme.fg("muted", `No layout spec for "${state.screenId}".`)];
+		const rendered = renderScreenWith({
+			spec,
+			data,
+			plan,
+			preset,
+			range: state.range,
+			now: this.#options.now?.() ?? Date.now(),
+			fg: (color, text) => this.#theme.fg(color, text),
+			bold: text => this.#theme.bold(text),
+			palette: this.#theme,
+			seriesColorFor: index => this.#seriesColor(index),
+			glyphs: glyphsFor(preset),
+		});
+		// The chart rows the IR composed, kept for the tests that assert cost
+		// scaling against the REAL frame. The charts are the IR's now, so this
+		// captures what the screen drew rather than keeping a second local chart.
+		state.chart = rendered.chart;
+		return rendered.lines;
+	}
+
+	/** Series hue by rank, matching the web's `buildColorLookup`. */
+	#seriesColor(index: number): ThemeColor {
+		return SERIES_COLORS[((index % SERIES_COLORS.length) + SERIES_COLORS.length) % SERIES_COLORS.length];
 	}
 
 	#screenContext(plan: LayoutPlan, preset: SymbolPreset, data: PanelData): ScreenContext {
@@ -556,22 +606,19 @@ export class StatsPanel implements Component {
 
 	#footerLine(plan: LayoutPlan): string {
 		const state = this.#state;
-		const parts = ["←→ screen", `${rangeLabel(state.range)} · r range`, "esc close"];
-		if (state.maxScroll > 0) parts.unshift("↑↓ scroll");
-		if (state.syncEvent || state.ingest) parts.splice(2, 0, "syncing…");
-		else if (state.syncError) parts.splice(2, 0, "sync failed");
-		else parts.splice(2, 0, "s sync");
-		// The chrome already truncates every row it wraps, but a hint that ends
-		// mid-word is worse than a shorter one, so the parts are dropped from the
-		// RIGHT until the row fits. `truncateToWidth` rather than `slice` because
-		// the row is styled: slicing a styled string can cut an escape sequence in
-	// half and leak the remainder as literal text.
-		let hint = parts.join(" · ");
-		while (parts.length > 1 && Bun.stringWidth(hint) > plan.innerWidth) {
-			parts.pop();
-			hint = parts.join(" · ");
-		}
-		return this.#theme.fg("dim", truncateToWidth(hint, plan.innerWidth));
+		// DERIVED, never stored (F23 §3.2): an error shows a retry and a close
+		// rather than a range switch that would only discard the message the user
+		// has not read yet.
+		const mode: HintMode =
+			state.error !== null
+				? "error"
+				: state.syncEvent || state.ingest
+					? "syncing"
+					: state.maxScroll > 0
+						? "scrollable"
+						: "idle";
+		const [row] = footerHints(hintsFor(mode), this.#theme, plan.innerWidth);
+		return row ?? "";
 	}
 
 	// --- input ---------------------------------------------------------------
