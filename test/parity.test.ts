@@ -565,6 +565,10 @@ test("the sparkline values equal the web's pivotSeries, bucket for bucket", () =
 	// the route plots `values.map(v => v ?? 0)`. Our resolver returns the plotted
 	// form directly, so the comparison is against the nulls resolved — which is
 	// what makes "gap became 0" the claim under test rather than a type detail.
-	const web = (pivot.find(s => s.key === modelKey("a", "p"))?.values ?? []).map(v => v ?? 0);
+	const web = (pivot.find(entry => entry.key === modelKey("a", "p"))?.values ?? [])
+		// Annotated because `values` is `(number | null)[]`: without the return
+		// type the array stays `(number | null)[]` and the assertion below it, which
+		// compares against our `number[]`, does not type-check.
+		.map((value): number => value ?? 0);
 	expect([...resolveSeriesValues(trendColumn(), SPARSE_DATA, row, AXIS)]).toEqual(web);
 });

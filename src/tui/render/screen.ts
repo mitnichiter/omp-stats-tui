@@ -590,8 +590,16 @@ function chartRows(chart: ChartSpec, opts: ScreenRenderOptions): readonly string
 			return shareBarRows(chart, opts, width);
 		case "rankedBars":
 			return rankedBarRows(chart, opts, width);
-		case "sparkline":
-			return [renderSparkline(firstSeriesValues(chart, opts), { width, preset: opts.preset })];
+		case "sparkline": {
+			const series = chart.series[0];
+			if (!series) return [];
+			return [
+				renderSparkline(
+					resolveSeriesValues(series.metric, opts.data, undefined, axisFor(opts, series.metric)),
+					{ width, preset: opts.preset },
+				),
+			];
+		}
 		case "bars":
 			return barRows(chart, opts, width);
 	}
@@ -654,6 +662,39 @@ function barRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): re
  * instead would put hourly buckets under midnight-aligned rows for `24h`, and
  * the chart would be silently empty.
  */
+/**
+ * The bucket axis a chart plots on: EXACTLY `width` buckets, aligned the way the
+ * host aligns them.
+ *
+ * `bucketAxis(range, …)` returns the range's NATURAL bucket count — 31 for `30d`
+ * — and `renderDailyBars` then stretches those to the panel width by re-bucketing
+ * on ARRAY INDEX, which smears one day's value across three columns and draws a
+ * wall of identical full-height bars. A chart whose x-axis is an array index
+ * rather than a time is not a time chart. So the axis is WIDENED rather than
+ * stretched: same alignment rule, as many buckets as there are columns.
+ *
+ * The same axis is handed to `resolveSeriesValues` so a stat tile's sparkline and
+ * the chart beside it agree bucket for bucket.
+ */
+function bucketAxisFor(opts: ScreenRenderOptions, source: MetricSource): readonly number[] {
+	const rows = rowsFor(source, opts.data);
+	const newest = rows
+		.map(row => (row as Record<string, unknown>).timestamp)
+		.filter((value): value is number => typeof value === "number")
+		.reduce((max, value) => (value > max ? value : max), 0);
+	if (newest <= 0) return [];
+	const bucketMs = source === "costSeries" ? COST_BUCKET_MS : bucketMsFor(opts.range);
+	const width = Math.max(1, opts.plan.innerWidth);
+	const end = Math.floor(newest / bucketMs) * bucketMs;
+	return Array.from({ length: width }, (_, i) => end - (width - 1 - i) * bucketMs);
+}
+
+/** The axis a SPARKLINE is drawn against, or `undefined` when there is none. */
+function axisFor(opts: ScreenRenderOptions, ref: MetricRef) {
+	const axis = bucketAxisFor(opts, sourceOf(ref));
+	return axis.length === 0 ? undefined : { axis };
+}
+
 function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly number[] {
 	const base = ref.kind === "derived" ? ref.of : ref;
 	if (base.kind !== "series") return [];
@@ -664,24 +705,10 @@ function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly num
 	if (timestamps.length === 0) return [];
 
 	const bucketMs = base.source === "costSeries" ? COST_BUCKET_MS : bucketMsFor(opts.range);
-	const width = Math.max(1, opts.plan.innerWidth);
-
-	// EXACTLY `width` buckets, aligned the way the host aligns them.
-	//
-	// `bucketAxis(range, …)` returns the range's NATURAL bucket count — 31 for
-	// `30d` — and `renderDailyBars` then stretches that to the panel width by
-	// re-bucketing on ARRAY INDEX, which smears one day's value across three
-	// columns and draws a wall of identical full-height bars. A chart whose x-axis
-	// is an array index rather than a time is not a time chart.
-	//
-	// So the axis is WIDENED, not stretched: the same alignment rule, as many
-	// buckets as there are columns, reaching further back to fill them. A gap
-	// bucket is a real zero — that day simply had no rows — which is what makes
-	// the quiet days visible instead of interpolating them away.
-	const newest = timestamps.reduce((max, value) => (value > max ? value : max), 0);
-	const alignedEnd = Math.floor(newest / bucketMs) * bucketMs;
-	const axis = Array.from({ length: width }, (_, i) => alignedEnd - (width - 1 - i) * bucketMs);
-
+	const axis = bucketAxisFor(opts, base.source);
+	if (axis.length === 0) return [];
+	// A gap bucket is a real zero — that day simply had no rows — which is what
+	// makes the quiet days visible instead of interpolating them away.
 	return axis.map(timestamp => {
 		let sum = 0;
 		for (const row of rows) {
@@ -901,10 +928,6 @@ function foldTo(
 	];
 }
 
-function firstSeriesValues(chart: ChartSpec, opts: ScreenRenderOptions): readonly number[] {
-	return chart.series[0] ? resolveSeriesValues(chart.series[0].metric, opts.data) : [];
-}
-
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
 /**
@@ -981,10 +1004,13 @@ function renderCell(
 		case "meter":
 			return meterCell(resolveNumber(column.source, opts.data, row) ?? 0, columnMax, cellWidth, opts);
 		case "sparkline":
-			return renderSparkline(resolveSeriesValues(column.source, opts.data, row), {
-				width: cellWidth,
-				preset: opts.preset,
-			});
+			// The axis is threaded so a table sparkline is DENSE over it, matching
+			// the web's `pivotSeries` rather than skipping the buckets a model was
+			// idle for. A gap read as "no data" is a claim the payload does not make.
+			return renderSparkline(
+				resolveSeriesValues(column.source, opts.data, row, axisFor(opts, column.source)),
+				{ width: cellWidth, preset: opts.preset },
+			);
 		case "badge":
 			return badgeCell(column, row, opts);
 		default:
