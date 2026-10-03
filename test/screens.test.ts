@@ -32,13 +32,16 @@ function ctxWith(data: Partial<PanelData>, width = 120, override?: PanelData): S
 }
 
 /**
- * Every screen whose body is still a stub — the nine scaffolds PLUS the three
- * Tasks 13-15 screens, whose bodies land later and are placeholders today. The
- * plan's four PLACEHOLDER tests filter on `status === "scaffolded"`; widening to
- * "not excluded" means the three implemented entries are held to exactly the
- * same no-fetch and obvious-fake rules instead of quietly escaping them.
+ * The screens whose body is still sample data — the four PLACEHOLDER tests are
+ * about scaffolds, so they filter on `status === "scaffolded"`.
+ *
+ * They were widened to "not excluded" while Tasks 13-15 screens carried
+ * placeholder bodies under `implemented`. `overview` has a real body now, so the
+ * widening is reverted; a screen stops being held to the placeholder rules the
+ * day it stops being a placeholder, and pinning it to them past that point
+ * asserts a falsehood about real data.
  */
-const STUBS = SCREENS.filter(s => s.status !== "excluded");
+const STUBS = SCREENS.filter(s => s.status === "scaffolded");
 
 test("every dashboard screen is registered exactly once", () => {
 	const ids = SCREENS.map(s => s.id);
