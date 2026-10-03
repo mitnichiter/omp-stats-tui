@@ -1,0 +1,1153 @@
+/**
+ * THE LAYOUT IR — an intermediate representation of the web dashboard.
+ *
+ * WHY THIS FILE EXISTS
+ *
+ * The three hand-written screens each invented their own visual structure.
+ * Overview opens with a stat strip, a token list, a bar chart and a model
+ * ranking; Activity opens with a calendar; Models opens with a model ranking
+ * and then per-model blocks. Nothing connects them. The panel reads as three
+ * unrelated text blocks rather than as one ported dashboard, and every new
+ * screen has to invent a fourth grammar. That is not a styling bug — it is a
+ * missing level of abstraction.
+ *
+ * So the visual structure moves down into DATA. A screen is a `ScreenSpec`: a
+ * stack of bands, each naming the metrics it needs and how it is composed. A
+ * renderer (a later task) turns bands into `pi-tui` components. Three things
+ * follow, and they are the whole argument:
+ *
+ *   1. THE VISUAL GRAMMAR BECOMES A DATA DECISION. Adding a stat tile to a
+ *      screen is adding an object to an array, not editing a `render`.
+ *   2. THE THREE SCREENS ARE PROVABLY CONSISTENT, because there is one grammar
+ *      and all three draw from it. Consistency stops being something a reviewer
+ *      has to notice.
+ *   3. A NEW SCREEN IS A DATA CHANGE, NOT A REWRITE.
+ *
+ * WHAT THE IR DELIBERATELY DOES NOT KNOW
+ *
+ * No glyphs, no colours, no widths, no presets. Those are renderer concerns, and
+ * encoding them here would make the grammar a rendering policy a second screen
+ * could quietly violate. A band that needs to say "this matters" says
+ * `emphasis: "primary"`; how emphasis LOOKS is the renderer's problem, and
+ * changing it must not mean editing ten screens. For the same reason there is no
+ * `if (ascii)` here — and no width, because how a band behaves at 40 columns is
+ * not a fact about the dashboard's structure. `test/layout-ir.test.ts` asserts
+ * all of that against the serialised data rather than trusting this comment.
+ *
+ * METRIC REFERENCES
+ *
+ * A `MetricRef` names a VALUE and never says how that value reads:
+ * `"$1,039.27 · 34,870 unpriced"` and `"112.36"` come from the same field.
+ * Separating what is shown from how it is formatted is what lets one screen show
+ * a cost as a headline and another show the same cost as a table cell without
+ * either hard-coding the other's choice.
+ *
+ * Every import below is `import type`, which the test asserts. This module's
+ * only runtime content is its own data, because an IR that can compute is an
+ * IR that will eventually contain the rendering it was meant to describe.
+ *
+ * SOURCES
+ *
+ * Every spec cites the route file and line range it was ported from, so a later
+ * agent can diff the port against the original instead of trusting it.
+ */
+
+import type { DataNeed } from "../data/api";
+
+// ─── Metrics ─────────────────────────────────────────────────────────────────
+
+/**
+ * Which payload a metric is read from. Each source maps to at most one
+ * `DataNeed`, and `NEED_BY_SOURCE` is that map — it is the whole reason the IR
+ * can be checked against the data seam instead of against opinion.
+ *
+ * `providerStats` deliberately maps to nothing: the only route that answers it,
+ * `/api/stats/provider-windows`, does network I/O on every load, and the panel
+ * makes no network call at all. A source that cannot be fetched is still a real
+ * source; it just cannot sit on a screen that claims to be filled.
+ */
+export type MetricSource =
+	| "overall"
+	| "byAgentType"
+	| "timeSeries"
+	| "byModel"
+	| "modelSeries"
+	| "modelPerformanceSeries"
+	| "costSeries"
+	| "folders"
+	| "recentMessages"
+	| "errorMessages"
+	| "toolsByTool"
+	| "toolsByToolModel"
+	| "toolsSeries"
+	| "dailyActivity"
+	| "rollupStatus"
+	| "providerStats";
+
+/** A field read off one aggregated row — `overall`, or the first row of a grouped array. */
+export interface AggregateRef {
+	kind: "aggregate";
+	source: MetricSource;
+	/** Dotted path into the payload row. `"usage.totalTokens"` is legal. */
+	field: string;
+}
+
+/**
+ * A row's TEXT rather than a number — the "Most used" stat shows which model won,
+ * not how much of it there was. Same resolution rules as a number; a different
+ * kind of value, and the IR is the place that distinction belongs.
+ */
+export interface LabelRef {
+	kind: "label";
+	source: MetricSource;
+	field: string;
+}
+
+/** A field read per row of a grouped series. */
+export interface SeriesRef {
+	kind: "series";
+	source: MetricSource;
+	field: string;
+	/** What the rows are grouped by, when the grouping is itself part of the fact shown. */
+	groupBy?: "model" | "provider" | "tool" | "folder";
+}
+
+/**
+ * A value the host computes rather than stores: a sum across token kinds, a
+ * share of a total, a distinct count. Named, not implemented — the IR says the
+ * tile shows "models used", and the renderer resolves it against the payload.
+ */
+export interface DerivedRef {
+	kind: "derived";
+	name: string;
+	of: MetricRef;
+	op: "sum" | "share" | "count" | "max";
+	/** For `share`: what this is a share OF. For `max`: the rows to take the max over. */
+	against?: MetricRef;
+}
+
+export type MetricRef = AggregateRef | SeriesRef | DerivedRef | LabelRef;
+
+/**
+ * "Which fetch fills this source." Exported because the test that checks every
+ * band is fillable reads it, and a table nobody can check is a comment.
+ */
+export const NEED_BY_SOURCE: Readonly<Record<MetricSource, DataNeed | null>> = {
+	overall: "overview",
+	byAgentType: "overview",
+	timeSeries: "overview",
+	byModel: "modelDashboard",
+	modelSeries: "modelDashboard",
+	modelPerformanceSeries: "modelDashboard",
+	costSeries: "costs",
+	folders: "folders",
+	recentMessages: "recent",
+	errorMessages: "errors",
+	toolsByTool: "tools",
+	toolsByToolModel: "tools",
+	toolsSeries: "tools",
+	dailyActivity: "dailyActivity",
+	rollupStatus: "rollupStatus",
+	// Null rather than a lie: no need fills this source.
+	providerStats: null,
+};
+
+/** Every metric reachable from a reference, itself first. */
+export function metricRefsOf(ref: MetricRef): readonly MetricRef[] {
+	if (ref.kind !== "derived") return [ref];
+	return [ref, ...metricRefsOf(ref.of), ...(ref.against ? metricRefsOf(ref.against) : [])];
+}
+
+/** The payload a reference ultimately reads, following `derived` to its base. */
+export function sourceOf(ref: MetricRef): MetricSource {
+	return ref.kind === "derived" ? sourceOf(ref.of) : ref.source;
+}
+
+// ─── Bands ───────────────────────────────────────────────────────────────────
+
+/** One figure with a label. The IR says what it measures; a formatter says how it reads. */
+export interface StatTile {
+	label: string;
+	metric: MetricRef;
+	/** A secondary figure under the primary, where the web route shows a hint. */
+	hint?: MetricRef | { text: string };
+	/** Marks the tile a reader should land on. The renderer decides what that looks like. */
+	emphasis?: "normal" | "primary";
+	/** A trend line drawn inside the tile, as `Stat spark={…}` does in the web app. */
+	spark?: MetricRef;
+	/** The tile's size in the web grid, carried so a narrow renderer can drop the smalls first. */
+	size?: "sm" | "md";
+}
+
+/** One named series inside a chart band. */
+export interface ChartSeries {
+	key: string;
+	label: string;
+	metric: MetricRef;
+}
+
+/** How a chart is composed. Named, never drawn. */
+export interface ChartSpec {
+	type: "bars" | "sparkline" | "heatmap" | "rankedBars" | "shareBar";
+	series: readonly ChartSeries[];
+	/** The axis the chart measures. Stated so a renderer cannot quietly pick a friendlier one. */
+	axis: "cost" | "requests" | "tokens" | "count" | "share" | "time";
+	/** Groups folded into one trailing row, as `pivotSeries`'s `Other (n)` does. */
+	foldTo?: { limit: number; label: string };
+	/** The grid a calendar heatmap lays out into. */
+	calendar?: { orientation: "weeks-as-columns"; dayLabels: readonly string[] };
+	/** Rows a table-like chart shows before folding. */
+	limit?: number;
+}
+
+/** Where a table's rows come from, and the order it lands in. */
+export interface RowSource {
+	source: MetricSource;
+	initialSort?: { by: MetricRef; direction: "asc" | "desc" };
+	/** Rows dropped past this count, as `limit={25}` does in the web tables. */
+	limit?: number;
+}
+
+export interface Column {
+	header: string;
+	align: "left" | "right";
+	source: MetricRef;
+	/** What sits inside the cell, where the web table is not plain text. */
+	cell?: "text" | "meter" | "sparkline" | "badge";
+	/** The row carries a detail block, as the web models table expands. */
+	expandable?: boolean;
+}
+
+export interface LegendItem {
+	key: string;
+	label: string;
+	metric: MetricRef;
+}
+
+export type Band =
+	| { kind: "statRow"; stats: readonly StatTile[] }
+	| { kind: "chart"; title: string; chart: ChartSpec; source?: string }
+	| { kind: "table"; title: string; columns: readonly Column[]; rows: RowSource; source?: string }
+	| { kind: "legend"; items: readonly LegendItem[]; source?: string }
+	| { kind: "note"; text: string }
+	| { kind: "custom"; id: string };
+
+/** Metrics reachable from a band. `note` and `custom` carry none, which is why they have no fields. */
+function refsInBand(band: Band): readonly MetricRef[] {
+	switch (band.kind) {
+		case "statRow":
+			return band.stats.flatMap(t => metricRefsOf(t.metric));
+		case "chart":
+			return band.chart.series.flatMap(s => metricRefsOf(s.metric));
+		case "legend":
+			return band.items.flatMap(i => metricRefsOf(i.metric));
+		case "table":
+			return band.columns.flatMap(c => metricRefsOf(c.source));
+		case "note":
+		case "custom":
+			return [];
+	}
+}
+
+// ─── Screen ──────────────────────────────────────────────────────────────────
+
+/** Where a spec was ported from, so the port is auditable rather than trusted. */
+export interface SourceCitation {
+	/** Route or overlay file in the host package. */
+	file: string;
+	/** Line range of the region ported. */
+	lines: string;
+	/** Anything a reader would need in order to check the port. */
+	note?: string;
+}
+
+export interface ScreenSpec {
+	id: string;
+	label: string;
+	short: string;
+	/** Exactly the data this screen draws, in the data seam's vocabulary. */
+	needs: readonly DataNeed[];
+	bands: readonly Band[];
+	/** True when the screen is described faithfully but cannot be filled from the data seam. */
+	deferred?: boolean;
+	deferredReason?: string;
+	source: SourceCitation;
+}
+
+// ─── Shared metric shorthands ────────────────────────────────────────────────
+//
+// Named once, reused across specs. Not a registry and not a branch: these are
+// the payload fields the dashboard actually reads, spelled out so a typo is a
+// compile error rather than a blank cell.
+
+const overall = (field: string): AggregateRef => ({ kind: "aggregate", source: "overall", field });
+const byModel = (field: string): AggregateRef => ({ kind: "aggregate", source: "byModel", field });
+const modelSeries = (field: string, groupBy?: SeriesRef["groupBy"]): SeriesRef => ({
+	kind: "series",
+	source: "modelSeries",
+	field,
+	groupBy,
+});
+const costSeries = (field: string, groupBy?: SeriesRef["groupBy"]): SeriesRef => ({
+	kind: "series",
+	source: "costSeries",
+	field,
+	groupBy,
+});
+const timeSeries = (field: string): SeriesRef => ({ kind: "series", source: "timeSeries", field });
+
+/**
+ * `sumConversationTokens` in the web app: uncached input + cache reads + cache
+ * writes + output. The token kinds are deliberately NOT collapsed into one field
+ * anywhere, because a single total on ~95% cache-read data describes nothing.
+ */
+const conversationTokens = (source: "overall" | "byModel" | "folders"): DerivedRef => ({
+	kind: "derived",
+	name: "conversationTokens",
+	op: "sum",
+	of: { kind: "aggregate", source, field: "totalInputTokens" },
+	against: { kind: "aggregate", source, field: "totalCacheReadTokens" },
+});
+
+// ─── Specs ───────────────────────────────────────────────────────────────────
+
+const overview: ScreenSpec = {
+	id: "overview",
+	label: "Overview",
+	short: "Overview",
+	needs: ["overview", "recent", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/OverviewRoute.tsx",
+		lines: "63-276",
+		note:
+			"Two StatGrids (102-155), then a two-up grid of the Activity chart and the Token mix card (160-245), then the Latest requests table (247-273). The route's requests/tokens/cost Segmented control is NOT ported: a panel has no place to put a mode switch, so the default metric is declared and the alternatives are recorded in a note band.",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "API-equivalent cost",
+					metric: overall("totalCost"),
+					emphasis: "primary",
+					hint: overall("unpricedRequests"),
+					spark: timeSeries("cost"),
+				},
+				{
+					label: "Requests",
+					metric: overall("totalRequests"),
+					hint: overall("failedRequests"),
+					spark: timeSeries("requests"),
+				},
+				{
+					label: "Conversation tokens",
+					metric: conversationTokens("overall"),
+					hint: overall("totalOutputTokens"),
+					spark: timeSeries("tokens"),
+				},
+				{
+					label: "Cache rate",
+					metric: overall("cacheRate"),
+					hint: overall("cacheSavings"),
+				},
+				{
+					label: "Error rate",
+					metric: overall("errorRate"),
+					hint: overall("successfulRequests"),
+					spark: timeSeries("errors"),
+				},
+			],
+		},
+		{
+			kind: "statRow",
+			stats: [
+				{ label: "Uncached input", metric: overall("totalInputTokens"), size: "sm" },
+				{ label: "Cache read", metric: overall("totalCacheReadTokens"), size: "sm" },
+				{ label: "Cache write", metric: overall("totalCacheWriteTokens"), size: "sm" },
+				{ label: "Output", metric: overall("totalOutputTokens"), size: "sm" },
+				{ label: "Premium requests", metric: overall("totalPremiumRequests"), size: "sm" },
+				{ label: "Tokens/s", metric: overall("avgTokensPerSecond"), size: "sm" },
+				{ label: "Avg latency", metric: overall("avgDuration"), size: "sm" },
+				{ label: "Avg TTFT", metric: overall("avgTtft"), size: "sm" },
+			],
+		},
+		{
+			kind: "chart",
+			title: "Activity",
+			source: "OverviewRoute.tsx:161-179",
+			chart: {
+				type: "bars",
+				axis: "requests",
+				series: [
+					{ key: "ok", label: "Succeeded", metric: timeSeries("requests") },
+					{ key: "err", label: "Failed", metric: timeSeries("errors") },
+				],
+			},
+		},
+		{
+			kind: "chart",
+			title: "Token mix",
+			source: "OverviewRoute.tsx:181-244",
+			chart: {
+				type: "shareBar",
+				axis: "share",
+				series: [
+					{ key: "input", label: "Uncached input", metric: overall("totalInputTokens") },
+					{ key: "cacheRead", label: "Cache read", metric: overall("totalCacheReadTokens") },
+					{ key: "cacheWrite", label: "Cache write", metric: overall("totalCacheWriteTokens") },
+					{ key: "output", label: "Output", metric: overall("totalOutputTokens") },
+				],
+			},
+		},
+		{
+			kind: "legend",
+			source: "OverviewRoute.tsx:203-210, 224-238",
+			items: [
+				{ key: "input", label: "Uncached input", metric: overall("totalInputTokens") },
+				{ key: "cacheRead", label: "Cache read", metric: overall("totalCacheReadTokens") },
+				{ key: "cacheWrite", label: "Cache write", metric: overall("totalCacheWriteTokens") },
+				{ key: "output", label: "Output", metric: overall("totalOutputTokens") },
+				{ key: "main", label: "Main agent", metric: overall("totalRequests") },
+				{ key: "subagent", label: "Subagents", metric: overall("totalRequests") },
+				{ key: "advisor", label: "Advisor", metric: overall("totalRequests") },
+			],
+		},
+		{
+			kind: "table",
+			title: "Latest requests",
+			source: "OverviewRoute.tsx:247-273, columns 278-314",
+			rows: { source: "recentMessages", initialSort: { by: { kind: "aggregate", source: "recentMessages", field: "timestamp" }, direction: "desc" }, limit: 12 },
+			columns: [
+				{ header: "Model", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "model" } },
+				{ header: "Provider", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "provider" } },
+				{ header: "When", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "timestamp" } },
+				{ header: "Tokens", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.totalTokens" } },
+				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.cost.total" } },
+				{ header: "Duration", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "duration" } },
+				{
+					header: "Status",
+					align: "right",
+					cell: "badge",
+					source: { kind: "aggregate", source: "recentMessages", field: "errorMessage" },
+				},
+			],
+		},
+		{
+			kind: "note",
+			text: "The web Activity card offers requests, tokens or cost; a panel has no mode switch, so this screen draws requests and the series are named so a renderer can swap them.",
+		},
+	],
+};
+
+const activity: ScreenSpec = {
+	id: "activity",
+	label: "Activity",
+	short: "Activity",
+	needs: ["dailyActivity", "costs", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/pi-tui/src/overlays/usage-dashboard.ts",
+		lines: "305-345 (buildHeatmapLayout), 467-476 (totals), 824-875 (#renderHeatmap)",
+		note:
+			"THE WEB DASHBOARD HAS NO ACTIVITY ROUTE. The calendar lives in omp's own /usage overlay, fed by the same local calendar-day points, so this spec is ported from there and not from routes/. Totals come from formatActivityTotals; the day labels are HEATMAP_DAY_LABELS (M T W T F S S, Monday first).",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Activity cost",
+					metric: { kind: "derived", name: "totalCost", op: "sum", of: { kind: "series", source: "dailyActivity", field: "cost" } },
+					emphasis: "primary",
+				},
+				{
+					label: "Activity requests",
+					metric: { kind: "derived", name: "totalRequests", op: "sum", of: { kind: "series", source: "dailyActivity", field: "requests" } },
+				},
+			],
+		},
+		{
+			kind: "chart",
+			title: "Activity",
+			source: "usage-dashboard.ts:313-345",
+			chart: {
+				type: "heatmap",
+				axis: "cost",
+				calendar: { orientation: "weeks-as-columns", dayLabels: ["M", "T", "W", "T", "F", "S", "S"] },
+				series: [
+					{
+						key: "cost",
+						label: "Cost per day",
+						metric: { kind: "series", source: "dailyActivity", field: "cost" },
+					},
+				],
+			},
+		},
+		{
+			kind: "note",
+			text: "Levels are square-root compressed against the busiest day, over per-day cost, falling back to request counts when nothing in range has priced usage — never rank quartiles, because intensity tracks how much work a day carried.",
+		},
+	],
+};
+
+const models: ScreenSpec = {
+	id: "models",
+	label: "Models",
+	short: "Models",
+	needs: ["modelDashboard", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/ModelsRoute.tsx",
+		lines: "61-214 (page), 88-118 (StatGrid), 124-172 (Request share card), 174-211 (All models card), 311-433 (buildModelColumns)",
+		note:
+			"Column set and order are buildModelColumns verbatim, including the per-row Trend sparkline. The route's share/requests Segmented control is recorded as a fold, not ported as a switch.",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Models used",
+					metric: { kind: "derived", name: "modelCount", op: "count", of: byModel("totalRequests") },
+				},
+				{
+					label: "Most used",
+					metric: { kind: "label", source: "byModel", field: "model" },
+				},
+				{
+					label: "Requests",
+					metric: { kind: "derived", name: "totalRequests", op: "sum", of: byModel("totalRequests") },
+					hint: { kind: "derived", name: "failedRequests", op: "sum", of: byModel("failedRequests") },
+					spark: modelSeries("requests", "model"),
+				},
+				{
+					label: "API-equivalent cost",
+					metric: { kind: "derived", name: "totalCost", op: "sum", of: byModel("totalCost") },
+					hint: { kind: "derived", name: "unpricedRequests", op: "sum", of: byModel("unpricedRequests") },
+					emphasis: "primary",
+				},
+			],
+		},
+		{
+			kind: "chart",
+			title: "Request share",
+			source: "ModelsRoute.tsx:124-172",
+			chart: {
+				type: "shareBar",
+				axis: "share",
+				foldTo: { limit: 6, label: "Other" },
+				series: [
+					{
+						key: "requests",
+						label: "Requests per bucket",
+						metric: modelSeries("requests", "model"),
+					},
+				],
+			},
+		},
+		{
+			kind: "legend",
+			source: "ModelsRoute.tsx:158-167",
+			items: [
+				{
+					key: "requests",
+					label: "Share of requests",
+					metric: { kind: "derived", name: "share", op: "share", of: byModel("totalRequests"), against: { kind: "derived", name: "totalRequests", op: "sum", of: byModel("totalRequests") } },
+				},
+			],
+		},
+		{
+			kind: "table",
+			title: "All models",
+			source: "ModelsRoute.tsx:174-211, 311-433",
+			rows: {
+				source: "byModel",
+				initialSort: { by: byModel("totalRequests"), direction: "desc" },
+				limit: 25,
+			},
+			columns: [
+				{
+					header: "Model",
+					align: "left",
+					source: { kind: "label", source: "byModel", field: "model" },
+					expandable: true,
+				},
+				{ header: "Provider", align: "left", source: { kind: "label", source: "byModel", field: "provider" } },
+				{ header: "Requests", align: "right", cell: "meter", source: byModel("totalRequests") },
+				{ header: "Cost", align: "right", source: byModel("totalCost") },
+				{ header: "Tokens", align: "right", source: conversationTokens("byModel") },
+				{ header: "Cache rate", align: "right", source: byModel("cacheRate") },
+				{ header: "Errors", align: "right", cell: "badge", source: byModel("errorRate") },
+				{ header: "Tokens/s", align: "right", source: byModel("avgTokensPerSecond") },
+				{ header: "TTFT", align: "right", source: byModel("avgTtft") },
+				{
+					header: "Trend",
+					align: "right",
+					cell: "sparkline",
+					source: modelSeries("requests", "model"),
+				},
+			],
+		},
+		{
+			kind: "note",
+			text: "Per-model token and cost figures are shares of the assistant turn that asked for them, not measurements of each call; a table row must not present them as per-call cost.",
+		},
+	],
+};
+
+const costs: ScreenSpec = {
+	id: "costs",
+	label: "Costs",
+	short: "Costs",
+	needs: ["costs", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/CostsRoute.tsx",
+		lines: "90-149 (Daily estimate card), 150-156 (Where it went card), 157-171 (By model card), 246-280 (StatGrid), 323-405 (columns)",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "API-equivalent estimate",
+					metric: { kind: "derived", name: "totalCost", op: "sum", of: costSeries("cost", "model") },
+					emphasis: "primary",
+					hint: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
+				},
+				{
+					label: "Average per day",
+					metric: { kind: "derived", name: "avgDailyCost", op: "max", of: costSeries("cost", "model"), against: { kind: "aggregate", source: "rollupStatus", field: "dirtyHours" } },
+				},
+				{
+					label: "Top model",
+					metric: { kind: "label", source: "costSeries", field: "model" },
+				},
+				{ label: "Per priced request", metric: { kind: "derived", name: "perPricedRequest", op: "share", of: { kind: "derived", name: "totalCost", op: "sum", of: costSeries("cost", "model") }, against: { kind: "derived", name: "requests", op: "sum", of: costSeries("requests", "model") } } },
+				{
+					label: "Unpriced requests",
+					metric: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
+				},
+			],
+		},
+		{
+			kind: "chart",
+			title: "Daily estimate",
+			source: "CostsRoute.tsx:90-149",
+			chart: {
+				type: "bars",
+				axis: "cost",
+				series: [
+					{ key: "costInput", label: "Input", metric: costSeries("costInput", "model") },
+					{ key: "costOutput", label: "Output", metric: costSeries("costOutput", "model") },
+					{ key: "costCacheRead", label: "Cache read", metric: costSeries("costCacheRead", "model") },
+					{ key: "costCacheWrite", label: "Cache write", metric: costSeries("costCacheWrite", "model") },
+				],
+			},
+		},
+		{
+			kind: "chart",
+			title: "Where it went",
+			source: "CostsRoute.tsx:150-156",
+			chart: {
+				type: "rankedBars",
+				axis: "cost",
+				series: [{ key: "component", label: "Estimate by billing component", metric: costSeries("cost", "model") }],
+			},
+		},
+		{
+			kind: "legend",
+			source: "CostsRoute.tsx:134-149",
+			items: [
+				{ key: "costInput", label: "Input", metric: costSeries("costInput", "model") },
+				{ key: "costOutput", label: "Output", metric: costSeries("costOutput", "model") },
+				{ key: "costCacheRead", label: "Cache read", metric: costSeries("costCacheRead", "model") },
+				{ key: "costCacheWrite", label: "Cache write", metric: costSeries("costCacheWrite", "model") },
+			],
+		},
+		{
+			kind: "table",
+			title: "By model",
+			source: "CostsRoute.tsx:157-171, 323-405",
+			rows: {
+				source: "costSeries",
+				initialSort: { by: costSeries("cost", "model"), direction: "desc" },
+			},
+			columns: [
+				{ header: "Model", align: "left", source: { kind: "label", source: "costSeries", field: "model" } },
+				{ header: "Requests", align: "right", source: costSeries("requests", "model") },
+				{ header: "Estimate", align: "right", source: costSeries("cost", "model") },
+				{ header: "Share", align: "right", source: costSeries("cost", "model") },
+				{ header: "Split", align: "right", source: costSeries("costInput", "model") },
+				{ header: "Per request", align: "right", source: costSeries("cost", "model") },
+				{ header: "Unpriced", align: "right", source: costSeries("unpricedRequests", "model") },
+			],
+		},
+		{
+			kind: "note",
+			text: "Bars scale by cost, never by tokens: this data carries a 41x price spread at comparable token volume, and a token-scaled chart inverts the ranking.",
+		},
+	],
+};
+
+const projects: ScreenSpec = {
+	id: "projects",
+	label: "Projects",
+	short: "Projects",
+	needs: ["folders", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/ProjectsRoute.tsx",
+		lines: "78-117 (StatGrid), 118-138 (Top by cost), 139-160 (Top by requests), 161-219 (Folders card), 221-320 (columns)",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Folders",
+					metric: { kind: "derived", name: "folderCount", op: "count", of: { kind: "aggregate", source: "folders", field: "totalRequests" } },
+				},
+				{
+					label: "Requests",
+					metric: { kind: "derived", name: "totalRequests", op: "sum", of: { kind: "aggregate", source: "folders", field: "totalRequests" } },
+					hint: { kind: "derived", name: "failedRequests", op: "sum", of: { kind: "aggregate", source: "folders", field: "failedRequests" } },
+				},
+				{
+					label: "API-equivalent cost",
+					metric: { kind: "derived", name: "totalCost", op: "sum", of: { kind: "aggregate", source: "folders", field: "totalCost" } },
+					emphasis: "primary",
+					hint: { kind: "derived", name: "unpricedRequests", op: "sum", of: { kind: "aggregate", source: "folders", field: "unpricedRequests" } },
+				},
+				{
+					label: "Conversation tokens",
+					metric: conversationTokens("folders"),
+				},
+				{ label: "Cache rate", metric: { kind: "aggregate", source: "folders", field: "cacheRate" } },
+			],
+		},
+		{
+			kind: "chart",
+			title: "Top by cost",
+			source: "ProjectsRoute.tsx:118-138",
+			chart: {
+				type: "shareBar",
+				axis: "share",
+				series: [
+					{
+						key: "cost",
+						label: "Share of API-equivalent cost",
+						metric: { kind: "aggregate", source: "folders", field: "totalCost" },
+					},
+				],
+			},
+		},
+		{
+			kind: "chart",
+			title: "Top by requests",
+			source: "ProjectsRoute.tsx:139-160",
+			chart: {
+				type: "shareBar",
+				axis: "share",
+				series: [
+					{
+						key: "requests",
+						label: "Share of all requests",
+						metric: { kind: "aggregate", source: "folders", field: "totalRequests" },
+					},
+				],
+			},
+		},
+		{
+			kind: "table",
+			title: "Folders",
+			source: "ProjectsRoute.tsx:161-219, 221-320",
+			rows: {
+				source: "folders",
+				initialSort: {
+					by: { kind: "aggregate", source: "folders", field: "totalCost" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{ header: "Folder", align: "left", source: { kind: "label", source: "folders", field: "folder" } },
+				{ header: "Requests", align: "right", source: { kind: "aggregate", source: "folders", field: "totalRequests" } },
+				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "folders", field: "totalCost" } },
+				{ header: "Tokens", align: "right", source: conversationTokens("folders") },
+				{ header: "Cache rate", align: "right", source: { kind: "aggregate", source: "folders", field: "cacheRate" } },
+				{ header: "Cache savings", align: "right", source: { kind: "aggregate", source: "folders", field: "cacheSavings" } },
+				{ header: "Errors", align: "right", cell: "badge", source: { kind: "aggregate", source: "folders", field: "errorRate" } },
+				{ header: "Avg duration", align: "right", source: { kind: "aggregate", source: "folders", field: "avgDuration" } },
+				{ header: "Last active", align: "right", source: { kind: "aggregate", source: "folders", field: "lastTimestamp" } },
+			],
+		},
+	],
+};
+
+const requests: ScreenSpec = {
+	id: "requests",
+	label: "Requests",
+	short: "Requests",
+	needs: ["recent", "errors", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/RequestsRoute.tsx",
+		lines: "107-114 (header), 115-154 (StatGrid), 156-205 (Request log card), 219-299 (columns)",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Requests",
+					metric: { kind: "derived", name: "loaded", op: "count", of: { kind: "aggregate", source: "recentMessages", field: "id" } },
+					emphasis: "primary",
+				},
+				{
+					label: "Failed",
+					metric: { kind: "derived", name: "failed", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "id" } },
+				},
+				{
+					label: "Tokens",
+					metric: { kind: "derived", name: "tokens", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "usage.totalTokens" } },
+				},
+				{
+					label: "API-equivalent cost",
+					metric: { kind: "derived", name: "cost", op: "sum", of: { kind: "aggregate", source: "recentMessages", field: "usage.cost.total" } },
+				},
+			],
+		},
+		{
+			kind: "table",
+			title: "Request log",
+			source: "RequestsRoute.tsx:156-205, 219-299",
+			rows: {
+				source: "recentMessages",
+				initialSort: {
+					by: { kind: "aggregate", source: "recentMessages", field: "timestamp" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{ header: "Model", align: "left", source: { kind: "label", source: "recentMessages", field: "model" } },
+				{ header: "When", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "timestamp" } },
+				{ header: "Project", align: "left", source: { kind: "label", source: "recentMessages", field: "folder" } },
+				{ header: "Input", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.input" } },
+				{ header: "Cache read", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.cacheRead" } },
+				{ header: "Output", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.output" } },
+				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.cost.total" } },
+				{ header: "Duration", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "duration" } },
+				{ header: "TTFT", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "ttft" } },
+				{
+					header: "Status",
+					align: "right",
+					cell: "badge",
+					source: { kind: "aggregate", source: "recentMessages", field: "errorMessage" },
+				},
+			],
+		},
+	],
+};
+
+const errors: ScreenSpec = {
+	id: "errors",
+	label: "Errors",
+	short: "Errors",
+	needs: ["errors", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/ErrorsRoute.tsx",
+		lines: "123-129 (header), 131-158 (StatGrid), 159-196 (Error signatures), 197-228 (By model), 229-295 (Failures), 296-340 (signature columns), 368-421 (failure columns)",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Failures",
+					metric: { kind: "derived", name: "loaded", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "id" } },
+					emphasis: "primary",
+				},
+				{
+					label: "Signatures",
+					metric: { kind: "derived", name: "signatures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } },
+				},
+				{
+					label: "Affected models",
+					metric: { kind: "derived", name: "affectedModels", op: "count", of: { kind: "label", source: "errorMessages", field: "model" } },
+				},
+				{
+					label: "Last failure",
+					metric: { kind: "aggregate", source: "errorMessages", field: "timestamp" },
+				},
+			],
+		},
+		{
+			kind: "table",
+			title: "Error signatures",
+			source: "ErrorsRoute.tsx:159-196, 296-340",
+			rows: {
+				source: "errorMessages",
+				initialSort: {
+					by: { kind: "aggregate", source: "errorMessages", field: "errorMessage" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{
+					header: "Signature",
+					align: "left",
+					source: { kind: "label", source: "errorMessages", field: "errorMessage" },
+				},
+				{ header: "Models", align: "left", source: { kind: "label", source: "errorMessages", field: "model" } },
+				{ header: "Last seen", align: "right", source: { kind: "aggregate", source: "errorMessages", field: "timestamp" } },
+			],
+		},
+		{
+			kind: "table",
+			title: "Failures",
+			source: "ErrorsRoute.tsx:229-295, 368-421",
+			rows: {
+				source: "errorMessages",
+				initialSort: {
+					by: { kind: "aggregate", source: "errorMessages", field: "timestamp" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{ header: "When", align: "left", source: { kind: "aggregate", source: "errorMessages", field: "timestamp" } },
+				{ header: "Model", align: "left", source: { kind: "label", source: "errorMessages", field: "model" } },
+				{
+					header: "Error",
+					align: "left",
+					source: { kind: "label", source: "errorMessages", field: "errorMessage" },
+				},
+				{ header: "Project", align: "left", source: { kind: "label", source: "errorMessages", field: "folder" } },
+				{ header: "Tokens", align: "right", source: { kind: "aggregate", source: "errorMessages", field: "usage.totalTokens" } },
+				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "errorMessages", field: "usage.cost.total" } },
+			],
+		},
+		{
+			kind: "note",
+			text: "A failed request is still a request: it carries tokens and may carry an unknown price, so a failure row must never print $0.00 for an unpriced one.",
+		},
+	],
+};
+
+const tools: ScreenSpec = {
+	id: "tools",
+	label: "Tools",
+	short: "Tools",
+	needs: ["tools", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/ToolsRoute.tsx",
+		lines: "74-78 (header), 84-119 (StatGrid), 121-140 (second StatGrid), 150-183 (calls-over-time card), 184-206 (By tool), 207-233 (By tool and model), 339-458 (columns), 486-560 (tool×model columns)",
+		note: "The route's calls/errors Segmented control is recorded as the chart's two series rather than as a switch.",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Tool calls",
+					metric: { kind: "derived", name: "calls", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "calls" } },
+					emphasis: "primary",
+				},
+				{
+					label: "Distinct tools",
+					metric: { kind: "derived", name: "toolCount", op: "count", of: { kind: "label", source: "toolsByTool", field: "tool" } },
+				},
+				{
+					label: "Error rate",
+					metric: { kind: "derived", name: "errorRate", op: "share", of: { kind: "derived", name: "errors", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "errors" } }, against: { kind: "derived", name: "calls", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "calls" } } },
+				},
+				{
+					label: "Attributed tokens",
+					metric: { kind: "derived", name: "attributedTokens", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "totalTokensShare" } },
+				},
+				{
+					label: "Attributed cost",
+					metric: { kind: "derived", name: "attributedCost", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "costShare" } },
+				},
+			],
+		},
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Result text",
+					metric: { kind: "derived", name: "resultChars", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "resultChars" } },
+					size: "sm",
+				},
+				{
+					label: "Call arguments",
+					metric: { kind: "derived", name: "argsChars", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "argsChars" } },
+					size: "sm",
+				},
+				{
+					label: "Avg result per call",
+					metric: { kind: "derived", name: "avgResult", op: "share", of: { kind: "derived", name: "resultChars", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "resultChars" } }, against: { kind: "derived", name: "calls", op: "sum", of: { kind: "aggregate", source: "toolsByTool", field: "calls" } } },
+					size: "sm",
+				},
+			],
+		},
+		{
+			kind: "chart",
+			title: "Calls over time",
+			source: "ToolsRoute.tsx:150-183",
+			chart: {
+				type: "bars",
+				axis: "count",
+				foldTo: { limit: 8, label: "Other" },
+				series: [
+					{
+						key: "calls",
+						label: "Calls",
+						metric: { kind: "series", source: "toolsSeries", field: "calls", groupBy: "tool" },
+					},
+					{
+						key: "errors",
+						label: "Errors",
+						metric: { kind: "series", source: "toolsSeries", field: "errors", groupBy: "tool" },
+					},
+				],
+			},
+		},
+		{
+			kind: "table",
+			title: "By tool",
+			source: "ToolsRoute.tsx:184-206, 339-458",
+			rows: {
+				source: "toolsByTool",
+				initialSort: {
+					by: { kind: "aggregate", source: "toolsByTool", field: "calls" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{ header: "Tool", align: "left", source: { kind: "label", source: "toolsByTool", field: "tool" } },
+				{
+					header: "Trend",
+					align: "right",
+					cell: "sparkline",
+					source: { kind: "series", source: "toolsSeries", field: "calls", groupBy: "tool" },
+				},
+				{ header: "Calls", align: "right", cell: "meter", source: { kind: "aggregate", source: "toolsByTool", field: "calls" } },
+				{ header: "Errors", align: "right", cell: "badge", source: { kind: "aggregate", source: "toolsByTool", field: "errors" } },
+				{ header: "Args", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "argsChars" } },
+				{ header: "Result", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "resultChars" } },
+				{ header: "Attr. tokens", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "totalTokensShare" } },
+				{ header: "Attr. cost", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "costShare" } },
+				{ header: "Last used", align: "right", source: { kind: "aggregate", source: "toolsByTool", field: "lastUsed" } },
+			],
+		},
+		{
+			kind: "table",
+			title: "By tool and model",
+			source: "ToolsRoute.tsx:207-233, 486-560",
+			rows: {
+				source: "toolsByToolModel",
+				initialSort: {
+					by: { kind: "aggregate", source: "toolsByToolModel", field: "calls" },
+					direction: "desc",
+				},
+			},
+			columns: [
+				{ header: "Tool", align: "left", source: { kind: "label", source: "toolsByToolModel", field: "tool" } },
+				{ header: "Model", align: "left", source: { kind: "label", source: "toolsByToolModel", field: "model" } },
+				{ header: "Calls", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "calls" } },
+				{ header: "Errors", align: "right", cell: "badge", source: { kind: "aggregate", source: "toolsByToolModel", field: "errors" } },
+				{ header: "Attr. tokens", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "totalTokensShare" } },
+				{ header: "Attr. cost", align: "right", source: { kind: "aggregate", source: "toolsByToolModel", field: "costShare" } },
+			],
+		},
+		{
+			kind: "note",
+			text: "Attributed tokens and cost are per-call SHARES of the assistant turn that asked for them, never per-call measurements.",
+		},
+	],
+};
+
+const providers: ScreenSpec = {
+	id: "providers",
+	label: "Providers",
+	short: "Provider",
+	needs: [],
+	deferred: true,
+	deferredReason:
+		"/api/stats/provider-windows does network I/O to every provider on every load, and this panel makes no network call at all; the route's own aggregates route is not behind a need the registry exposes, so nothing here can be filled.",
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/ProvidersRoute.tsx",
+		lines: "146-188 (StatGrid), 189-205 (Provider totals), 206-249 (Burn by provider), 250-310 (Subscription windows), 311-422 (columns)",
+		note: "Structure is ported faithfully so a renderer can be built against it; every band is unfillable until the data seam exposes a non-network provider source.",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Providers",
+					metric: { kind: "derived", name: "providerCount", op: "count", of: { kind: "aggregate", source: "providerStats", field: "provider" } },
+					emphasis: "primary",
+				},
+				{ label: "Requests", metric: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
+				{ label: "Tokens", metric: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+				{ label: "API-equivalent cost", metric: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
+				{ label: "Error rate", metric: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
+			],
+		},
+		{
+			kind: "chart",
+			title: "Burn by provider",
+			source: "ProvidersRoute.tsx:206-249",
+			chart: {
+				type: "rankedBars",
+				axis: "tokens",
+				series: [
+					{
+						key: "tokens",
+						label: "Token burn per provider",
+						metric: { kind: "series", source: "providerStats", field: "totalTokens", groupBy: "provider" },
+					},
+				],
+			},
+		},
+		{
+			kind: "table",
+			title: "Provider totals",
+			source: "ProvidersRoute.tsx:189-205, 311-422",
+			rows: { source: "providerStats" },
+			columns: [
+				{ header: "Provider", align: "left", source: { kind: "label", source: "providerStats", field: "provider" } },
+				{ header: "Requests", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
+				{ header: "Error rate", align: "right", cell: "badge", source: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
+				{ header: "Models", align: "right", source: { kind: "aggregate", source: "providerStats", field: "models" } },
+				{ header: "Tokens", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+				{ header: "Share", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
+				{ header: "Tokens/s", align: "right", source: { kind: "aggregate", source: "providerStats", field: "avgTokensPerSecond" } },
+			],
+		},
+		{
+			kind: "custom",
+			id: "subscription-windows",
+		},
+	],
+};
+
+// ─── Registry ────────────────────────────────────────────────────────────────
+
+/**
+ * The whole grammar, in tab order. Frozen because a screen spec that can be
+ * mutated at runtime is a screen spec that will be.
+ */
+export const SCREEN_SPECS: readonly ScreenSpec[] = Object.freeze([
+	overview,
+	activity,
+	models,
+	costs,
+	projects,
+	requests,
+	errors,
+	tools,
+	providers,
+]);
+
+/** Every distinct metric reference anywhere in the spec data. */
+export const ALL_METRIC_REFS: readonly MetricRef[] = SCREEN_SPECS.flatMap(spec =>
+	spec.bands.flatMap(band => refsInBand(band)),
+);
