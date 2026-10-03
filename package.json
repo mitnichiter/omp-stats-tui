@@ -1,0 +1,24 @@
+{
+  "name": "omp-stats-tui",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Fullscreen local usage-stats panel for omp",
+  "scripts": {
+    "test": "bun test",
+    "probe:data": "bun run scripts/probe-data.ts",
+    "probe:glyphs": "bun run scripts/probe-glyphs.ts",
+    "probe:render": "bun run scripts/probe-render.ts"
+  },
+  "omp": {
+    "name": "omp-stats-tui",
+    "description": "Fullscreen local usage-stats panel for omp",
+    "extensions": ["./src/index.ts"]
+  },
+  "dependencies": {
+    "@oh-my-pi/omp-stats": "18.4.10"
+  },
+  "devDependencies": {
+    "@oh-my-pi/pi-coding-agent": "18.4.10",
+    "@oh-my-pi/pi-tui": "18.4.10"
+  }
+}
