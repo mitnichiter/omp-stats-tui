@@ -241,10 +241,11 @@ const duration: Formatter = value => formatDurationMs(value);
 const elapsed: Formatter = value => formatElapsed(value);
 
 /**
- * A rate of throughput keeps its unit. A bare `61` next to "Tokens/s" in a
- * separate cell would be a quantity; `61/s` is a rate.
+ * A rate of throughput keeps its unit. The host's `formatTokensPerSecond`
+ * prints one decimal (`61.2`), so this does too — a rounded `61/s` beside the
+ * web's `61.2` would read as a different measurement.
  */
-const speed: Formatter = value => `${formatInteger(Math.round(value))}/s`;
+const speed: Formatter = value => `${value.toFixed(1)}/s`;
 
 /**
  * An unpriced COUNT only carries information when it is non-zero, so it says
@@ -285,10 +286,11 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	totalOutputTokens: compact,
 	totalCacheReadTokens: compact,
 	totalCacheWriteTokens: compact,
+	totalTokens: formatInteger,
 	totalTokensShare: compact,
 	outputTokensShare: compact,
-	tokens: compact,
-	"usage.totalTokens": compact,
+	tokens: formatInteger,
+	"usage.totalTokens": formatInteger,
 	"usage.input": compact,
 	"usage.output": compact,
 	"usage.cacheRead": compact,
@@ -390,6 +392,15 @@ function formatValue(
 	if (typeof value === "string") return value;
 	const field = leafFieldOf(ref);
 	if (WHEN_FIELDS.includes(field)) return when(value, opts.now);
+	// Named derived figures read through their NAME, not their field: a Share
+	// column bottoms out in `cost` (money) but prints a percent, and a
+	// per-request figure bottoms out in `requests` (a count) but prints money
+	// with the web's sub-cent bound. Keyed on names the IR declares, so a new
+	// derived name falls through to its field rather than to a wrong format.
+	if (ref.kind === "derived") {
+		if (ref.name === "modelCostShare") return formatPercent(value);
+		if (ref.name === "modelUnitCost") return value > 0 && value < 0.0001 ? "<$0.0001" : formatCost(value);
+	}
 	return (FIELD_FORMAT[field] ?? formatInteger)(value, row);
 }
 
@@ -753,27 +764,14 @@ function axisFor(opts: ScreenRenderOptions, ref: MetricRef) {
 function bucketedValues(ref: MetricRef, opts: ScreenRenderOptions): readonly number[] {
 	const base = ref.kind === "derived" ? ref.of : ref;
 	if (base.kind !== "series") return [];
-	const rows = rowsFor(base.source, opts.data);
-	const timestamps = rows
-		.map(row => (row as Record<string, unknown>).timestamp)
-		.filter((value): value is number => typeof value === "number");
-	if (timestamps.length === 0) return [];
-
-	const bucketMs = base.source === "costSeries" ? COST_BUCKET_MS : bucketMsFor(opts.range);
+	// The resolver owns dense bucketing (`denseSeriesValues`, the web's
+	// `pivotSeries` minus folding): one value per bucket, gaps zero, several
+	// rows in one bucket summed. This used to re-bucket by hand here and
+	// disagree with the sparklines; now the chart and the sparkline share one
+	// code path and cannot diverge.
 	const axis = bucketAxisFor(opts, base.source);
 	if (axis.length === 0) return [];
-	// A gap bucket is a real zero — that day simply had no rows — which is what
-	// makes the quiet days visible instead of interpolating them away.
-	return axis.map(timestamp => {
-		let sum = 0;
-		for (const row of rows) {
-			const at = (row as Record<string, unknown>).timestamp;
-			if (typeof at !== "number" || Math.floor(at / bucketMs) * bucketMs !== timestamp) continue;
-			const value = resolveNumber(base, opts.data, row);
-			if (value !== null) sum += value;
-		}
-		return sum;
-	});
+	return [...resolveSeriesValues(base, opts.data, undefined, { axis })];
 }
 
 /** One item's value and its share of the group it belongs to. */
@@ -865,12 +863,19 @@ function chartShares(chart: ChartSpec, data: PanelData): ReadonlyMap<string, num
  * they overlap.
  */
 function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
+	// A SINGLE-series chart over a GROUPED source (models Request share plots
+	// one entry per model) folds to `foldTo` like the web's `pivotSeries`
+	// Other-fold. A multi-series chart (costs Where-it-went plots four
+	// component totals; overview Token mix plots four token kinds) keeps the
+	// per-series path: each series already resolves to its own grand total.
+	const single = chart.series.length === 1 && chart.series[0] !== undefined;
+	const grouped = single && GROUP_KEY[seriesSource(chart.series[0].metric)] !== undefined;
+	if (grouped) return groupedShareBarRows(chart, opts, width);
 	const published = chartShares(chart, opts.data);
 	const entries = chart.series.flatMap(series => {
 		const value = resolveNumber(series.metric, opts.data);
 		return value === null ? [] : [{ label: series.label, value }];
 	});
-	if (entries.length === 0) return [];
 	const fallback = sharesOf(
 		entries.map(entry => ({ label: entry.label, metric: chart.series[entries.indexOf(entry)].metric, value: entry.value })),
 	);
@@ -890,6 +895,27 @@ function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number
 	});
 }
 
+/**
+ * One share bar per GROUP (folded to `foldTo`), each against the folded
+ * total — the web's `pivotSeries` Other-fold as a composition. Shares come
+ * from the same entries the bars draw, so bar and readout cannot disagree.
+ */
+function groupedShareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
+	const entries = foldTo(chart.foldTo, groupedEntries(chart, opts));
+	if (entries.length === 0) return [];
+	const total = entries.reduce((sum, entry) => sum + entry.value, 0);
+	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
+	return entries.map(entry => {
+		const share = total === 0 ? 0 : entry.value / total;
+		const readout = `${formatPercent(share)} ${formatInteger(entry.value)}`;
+		const label = padEndTo(entry.label, labelWidth);
+		const bar = renderShareBar(share, {
+			width: Math.max(0, width - labelWidth - visibleWidth(readout) - 2),
+			preset: opts.preset,
+		});
+		return clampLine(`${label} ${bar} ${readout}`, width);
+	});
+}
 /** A ranked bar list: label, bar, figure. One divisor across every row. */
 function rankedBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
 	const rows: RankedRow[] = foldTo(chart.foldTo, groupedEntries(chart, opts)).map(entry => ({
@@ -936,6 +962,11 @@ function groupedEntries(chart: ChartSpec, opts: ScreenRenderOptions): readonly C
 		const byGroup = new Map<string, ChartEntry>();
 		for (const row of rowsFor(seriesSource(series.metric), opts.data)) {
 			const group = (row as Record<string, unknown>)[key];
+			// ACCUMULATE across rows: the payload carries one row per (bucket,
+			// group), so a group's total is the sum over its buckets — the
+			// web's `pivotSeries` sums each series' values the same way. The
+			// time-bucketed plots go through `bucketedValues`, not here, so no
+			// double counting with the bar charts.
 			if (typeof group !== "string") continue;
 			const value = resolveNumber(base, opts.data, row);
 			if (value === null) continue;
@@ -983,6 +1014,37 @@ function foldTo(
 	];
 }
 
+/**
+ * One row per MODEL over (bucket, model) cost rows: numeric cost fields sum,
+ * the model/provider identity carries over, and the row keeps the earliest
+ * bucket's timestamp. The web's `buildCostSummary` folds the same way (per
+ * model::provider map); a table over unfolded rows would print one row per
+ * day a model was active.
+ */
+function foldByModel(rows: readonly DataRow[]): readonly DataRow[] {
+	const byModel = new Map<string, Record<string, unknown>>();
+	for (const row of rows) {
+		const record = row as Record<string, unknown>;
+		const model = typeof record.model === "string" ? record.model : "";
+		const provider = typeof record.provider === "string" ? record.provider : "";
+		const key = `${model}::${provider}`;
+		const entry = byModel.get(key);
+		if (!entry) {
+			byModel.set(key, { ...record });
+			continue;
+		}
+		for (const field of ["cost", "requests", "unpricedRequests", "costInput", "costOutput", "costCacheRead", "costCacheWrite"]) {
+			const base = typeof entry[field] === "number" ? (entry[field] as number) : 0;
+			const add = typeof record[field] === "number" ? (record[field] as number) : 0;
+			entry[field] = base + add;
+		}
+		if (typeof record.timestamp === "number" && typeof entry.timestamp === "number" && record.timestamp < entry.timestamp) {
+			entry.timestamp = record.timestamp;
+		}
+	}
+	return [...byModel.values()];
+}
+
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
 /**
@@ -1000,7 +1062,11 @@ function tableBand(
 	rowSource: RowSource,
 	opts: ScreenRenderOptions,
 ): Band | null {
-	const all = sortRows(rowsFor(rowSource.source, opts.data), rowSource, opts);
+	// The By-model table folds (bucket, model) rows to one row per MODEL: the
+	// cost payload carries one row per day per model, and a table that listed
+	// bucket rows would print the same model once per day it was active.
+	const folded = rowSource.source === "costSeries" ? foldByModel(rowsFor(rowSource.source, opts.data)) : rowsFor(rowSource.source, opts.data);
+	const all = sortRows(folded, rowSource, opts);
 	if (all.length === 0) return null;
 
 	const shown = all.slice(0, rowSource.limit ?? Math.max(4, opts.plan.tableColumns * 4));

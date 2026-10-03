@@ -124,6 +124,12 @@ export interface DerivedRef {
 	op: "sum" | "share" | "count" | "max";
 	/** For `share`: what this is a share OF. For `max`: the rows to take the max over. */
 	against?: MetricRef;
+	/**
+	 * For `share`: `"total"` divides by the GRAND total (a table Share column
+	 * divides the row by the screen total). Absent means the row's own scope,
+	 * which is what per-row rates divide by.
+	 */
+	againstScope?: "total";
 }
 
 export type MetricRef = AggregateRef | SeriesRef | DerivedRef | LabelRef;
@@ -379,7 +385,7 @@ const overview: ScreenSpec = {
 				type: "bars",
 				axis: "requests",
 				series: [
-					{ key: "ok", label: "Succeeded", metric: timeSeries("requests") },
+					{ key: "ok", label: "Succeeded", metric: { kind: "series", source: "timeSeries", field: "succeededRequests" } },
 					{ key: "err", label: "Failed", metric: timeSeries("errors") },
 				],
 			},
@@ -510,7 +516,7 @@ const models: ScreenSpec = {
 				},
 				{
 					label: "Most used",
-					metric: { kind: "label", source: "byModel", field: "model" },
+					metric: { kind: "derived", name: "mostUsedModel", op: "sum", of: byModel("totalRequests") },
 				},
 				{
 					label: "Requests",
@@ -542,17 +548,6 @@ const models: ScreenSpec = {
 					},
 				],
 			},
-		},
-		{
-			kind: "legend",
-			source: "ModelsRoute.tsx:158-167",
-			items: [
-				{
-					key: "requests",
-					label: "Share of requests",
-					metric: { kind: "derived", name: "share", op: "share", of: byModel("totalRequests"), against: { kind: "derived", name: "totalRequests", op: "sum", of: byModel("totalRequests") } },
-				},
-			],
 		},
 		{
 			kind: "table",
@@ -653,11 +648,16 @@ const costs: ScreenSpec = {
 		{
 			kind: "chart",
 			title: "Where it went",
-			source: "CostsRoute.tsx:150-156",
+			source: "CostsRoute.tsx:150-156, 284-318 (ComponentBreakdown)",
 			chart: {
-				type: "rankedBars",
-				axis: "cost",
-				series: [{ key: "component", label: "Estimate by billing component", metric: costSeries("cost", "model") }],
+				type: "shareBar",
+				axis: "share",
+				series: [
+					{ key: "costInput", label: "Input", metric: costSeries("costInput", "model") },
+					{ key: "costOutput", label: "Output", metric: costSeries("costOutput", "model") },
+					{ key: "costCacheRead", label: "Cache read", metric: costSeries("costCacheRead", "model") },
+					{ key: "costCacheWrite", label: "Cache write", metric: costSeries("costCacheWrite", "model") },
+				],
 			},
 		},
 		{
@@ -673,18 +673,22 @@ const costs: ScreenSpec = {
 		{
 			kind: "table",
 			title: "By model",
-			source: "CostsRoute.tsx:157-171, 323-405",
+			source: "CostsRoute.tsx:157-171, 320-413 (buildCostColumns)",
 			rows: {
 				source: "costSeries",
 				initialSort: { by: costSeries("cost", "model"), direction: "desc" },
+				limit: 20,
 			},
 			columns: [
 				{ header: "Model", align: "left", source: { kind: "label", source: "costSeries", field: "model" } },
 				{ header: "Requests", align: "right", source: costSeries("requests", "model") },
 				{ header: "Estimate", align: "right", source: costSeries("cost", "model") },
-				{ header: "Share", align: "right", source: costSeries("cost", "model") },
-				{ header: "Split", align: "right", source: costSeries("costInput", "model") },
-				{ header: "Per request", align: "right", source: costSeries("cost", "model") },
+				{ header: "Share", align: "right", source: { kind: "derived", name: "modelCostShare", op: "share", of: costSeries("cost", "model"), againstScope: "total", against: { kind: "derived", name: "totalCost", op: "sum", of: costSeries("cost", "model") } } },
+				{ header: "Input", align: "right", source: costSeries("costInput", "model") },
+				{ header: "Output", align: "right", source: costSeries("costOutput", "model") },
+				{ header: "Cache read", align: "right", source: costSeries("costCacheRead", "model") },
+				{ header: "Cache write", align: "right", source: costSeries("costCacheWrite", "model") },
+				{ header: "Per request", align: "right", source: { kind: "derived", name: "modelUnitCost", op: "share", of: costSeries("cost", "model"), against: costSeries("requests", "model") } },
 				{ header: "Unpriced", align: "right", source: costSeries("unpricedRequests", "model") },
 			],
 		},

@@ -298,7 +298,14 @@ function seriesRows(ref: SeriesRef, data: PanelData, row?: DataRow): readonly Da
  */
 function seriesValues(ref: SeriesRef, data: PanelData, row?: DataRow): readonly number[] {
 	const values: number[] = [];
+	const isSucceeded = ref.field === "succeededRequests" && ref.source === "timeSeries";
 	for (const candidate of seriesRows(ref, data, row)) {
+		if (isSucceeded) {
+			const requests = asNumber(readPath(candidate, "requests"));
+			const errors = asNumber(readPath(candidate, "errors"));
+			if (requests !== null && errors !== null) values.push(requests - errors);
+			continue;
+		}
 		const value = asNumber(readPath(candidate, ref.field));
 		if (value !== null) values.push(value);
 	}
@@ -333,6 +340,7 @@ function denseSeriesValues(
 ): readonly number[] {
 	const index = new Map<number, number>();
 	for (const [position, timestamp] of axis.entries()) index.set(timestamp, position);
+	const isSucceeded = ref.field === "succeededRequests" && ref.source === "timeSeries";
 	const out = Array.from({ length: axis.length }, () => 0);
 	for (const candidate of seriesRows(ref, data, row)) {
 		const timestamp = asNumber(readPath(candidate, "timestamp"));
@@ -341,6 +349,12 @@ function denseSeriesValues(
 		// A row outside the axis is DROPPED, not appended: the axis is the window,
 		// and a value past its edge has no column to occupy.
 		if (position === undefined) continue;
+		if (isSucceeded) {
+			const requests = asNumber(readPath(candidate, "requests"));
+			const errors = asNumber(readPath(candidate, "errors"));
+			if (requests !== null && errors !== null) out[position] += requests - errors;
+			continue;
+		}
 		const value = asNumber(readPath(candidate, ref.field));
 		if (value !== null) out[position] += value;
 	}
@@ -372,6 +386,25 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): Resolv
 	// cache reads + cache writes + output. A single "total tokens" figure is
 	// 95.5% cache reads in this database and describes nothing.
 	if (ref.name === "conversationTokens") return sumTokenKinds(base, data, row);
+
+	// `succeededRequests` is the one derived that SUBTRACTS rather than sums:
+	// the web's Succeeded bar is `densify(p => p.requests - p.errors)` per
+	// bucket (OverviewRoute.tsx:77), so the total is requests minus errors over
+	// the same rows. Summing `requests` alone would double-count the failures.
+	if (ref.name === "succeededRequests" && base.source === "timeSeries") {
+		const rows = row !== undefined ? [row] : rowsFor(base.source, data);
+		if (rows.length === 0 && !isFetched(base.source, data)) return null;
+		let total = 0;
+		let seen = false;
+		for (const candidate of rows) {
+			const requests = asNumber(readPath(candidate, "requests"));
+			const errors = asNumber(readPath(candidate, "errors"));
+			if (requests === null || errors === null) continue;
+			total += requests - errors;
+			seen = true;
+		}
+		return seen ? total : null;
+	}
 
 	// A HOST-DERIVED figure is not one of these four ops pointed at the wrong
 	// question — it is a DIFFERENT question, answered by the function the
@@ -405,7 +438,16 @@ function resolveDerived(ref: DerivedRef, data: PanelData, row?: DataRow): Resolv
 		case "share": {
 			if (!ref.against) return null;
 			const numerator = resolveNumber(ref.of, data, row);
-			const denominator = resolveNumber(ref.against, data, row);
+			// `againstScope: "total"` divides by the GRAND total: a table Share
+			// column divides the row by the screen total. The default is the
+			// row's own scope, which is what per-row rates (a tool's Result /
+			// call, a provider's Error rate) divide by — resolving those
+			// against the grand total would make every row a fraction of
+			// everything instead of its own rate.
+			const denominator =
+				ref.againstScope === "total"
+					? resolveNumber(ref.against, data)
+					: resolveNumber(ref.against, data, row);
 			if (numerator === null || denominator === null) return null;
 			// A measured zero denominator is 0, never Infinity. Every call failing
 			// at once is "no calls happened", which is 0% and not a crash.
