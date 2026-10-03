@@ -86,21 +86,21 @@ export const STATS_ICONS: Record<SymbolPreset, Record<IconRole, string>> = {
 		warning: "⚠",
 	},
 	nerd: {
-		cost: "",
-		tokens: "",
-		requests: "",
-		time: "",
-		models: "",
-		providers: "\u{F048B}",
-		tools: "",
-		projects: "",
-		errors: "",
-		calendar: "",
-		gains: "",
-		trendUp: "",
-		trendDown: "",
-		unknown: "",
-		cache: "",
+		cost: "", // nf-fa-dollar U+F155 (cheat sheet)
+		tokens: "", // nf-fae-coins U+E26B (cheat sheet) — not "material hex"
+		requests: "", // nf-fa-line_chart U+F201 (cheat sheet)
+		time: "", // nf-fa-clock_o U+F017 (cheat sheet)
+		models: "", // nf-cod-chip U+EC19 (cheat sheet)
+		providers: "\u{F048B}", // nf-md-server (cheat sheet)
+		tools: "", // nf-fa-wrench U+F0AD (cheat sheet)
+		projects: "", // nf-fa-folder_open U+F07C (cheat sheet)
+		errors: "", // nf-fa-times_circle U+F057 (cheat sheet)
+		calendar: "", // nf-fa-calendar U+F073 (cheat sheet)
+		gains: "\u{F0535}", // nf-md-trending_up (cheat sheet)
+		trendUp: "", // nf-fa-arrow_up U+F062 (cheat sheet)
+		trendDown: "", // nf-fa-arrow_down U+F063 (cheat sheet)
+		unknown: "", // nf-fa-circle_question U+F059 (cheat sheet)
+		cache: "", // nf-fa-database U+F1C0 (cheat sheet)
 		// nf-fa-warning U+F071 — never the VS16 form.
 		warning: "",
 	},
