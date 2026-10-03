@@ -242,7 +242,8 @@ test("frame composes topbar, sidebar, body and footer with exactly one divider a
 		expect(plain.slice(0, 3).join("\n"), `width=${width}`).toContain("omp/stats");
 		expect(plain[plain.length - 2]).toContain("close");
 	}
-	// Wide gets the full grouped sidebar; medium gets the icon rail instead.
+	// Wide gets the grouped sidebar COLUMN; below that width the nav is the
+	// strip row, which TabBar collapses to one-cell shorts on its own.
 	const wide = __testing.makePanel({ data: liveData(), rows: 40 });
 	await __testing.settled(wide);
 	const widePlain = wide.render(100).map(strip);
@@ -252,7 +253,9 @@ test("frame composes topbar, sidebar, body and footer with exactly one divider a
 	const medium = __testing.makePanel({ data: liveData(), rows: 40 });
 	await __testing.settled(medium);
 	const mediumPlain = medium.render(60).map(strip);
-	expect(mediumPlain.some(r => /Overview/.test(r))).toBe(false);
+	// The active tab keeps its full label; its neighbours collapse to shorts.
+	expect(mediumPlain.some(r => /Overview/.test(r))).toBe(true);
+	expect(mediumPlain.some(r => /Models/.test(r))).toBe(false);
 });
 
 // ─── g-prefix keymap ──────────────────────────────────────────────────────────

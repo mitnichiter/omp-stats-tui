@@ -210,21 +210,6 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string): S
 	return { width, lines: lines.map(line => (visibleWidth(line) < width ? line + " ".repeat(width - visibleWidth(line)) : line)) };
 }
 
-/**
- * The icon rail for medium widths: the one-cell `TAB_SHORT` glyphs in nav
- * order (all pinned 1 cell by test/tabs.test.ts), active pill highlighted.
- * One row, no labels, no headings.
- */
-export function sidebarRail(theme: Theme, preset: SymbolPreset, activeId: string): string {
-	const bar = tabBarTheme(theme);
-	return NAV_GROUPS.flatMap(group => group.items)
-		.map(item => {
-			const text = ` ${TAB_SHORT[preset][item.id]} `;
-			return item.id === activeId ? bar.activeTab(text) : bar.inactiveTab(text);
-		})
-		.join(" ");
-}
-
 export interface TopbarOptions {
 	range: Range;
 	chip: string;

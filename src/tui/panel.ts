@@ -28,7 +28,6 @@ import {
 	progressLineFor,
 	screenForHotkey,
 	sidebar,
-	sidebarRail,
 	topbar,
 	type ChromeSync,
 } from "./chrome";
@@ -190,10 +189,10 @@ export function specById(id: ScreenId) {
 export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
 	const spec = specById(screen.id);
 	// A screen is selectable only if the layout IR DESCRIBES it and can be FILLED.
-	// `deferred` means described but unfillable (`providers`, whose route does
-	// network I/O); a screen with no spec at all (`gain`, whose payload provenance
-	// is unsettled) has no body to draw. Either way, arrowing onto it would spend
-	// a keystroke painting a page the panel cannot honestly fill.
+	// `deferred` means described but unfillable; a screen with no spec at all
+	// (`gain`, whose payload provenance is unsettled) has no body to draw either.
+	// Either way, arrowing onto it would spend a keystroke painting a page the
+	// panel cannot honestly fill.
 	return spec !== undefined && !spec.deferred && screen.status !== "excluded";
 });
 
@@ -546,42 +545,43 @@ export class StatsPanel implements Component {
 				: "";
 		state.header = freshness;
 
-		// THE TOPBAR REPLACES THE TAB STRIP (web parity: Shell.tsx has a topbar
-		// and a sidebar, no strip). One row, plus the thin progress line while a
-		// sync streams — the bar the web paints under its topbar.
+		// THE TOPBAR is the chrome's first row (web parity: Shell.tsx's fixed
+		// topbar), plus the thin progress line while a sync streams — the bar the
+		// web paints under that topbar. The tab strip is NOT gone: below the
+		// sidebar's width it becomes the nav row (see below).
 		const chip = chipFor(this.#theme, this.#chromeSync());
 		const top = topbar(this.#theme, { range: state.range, chip, freshness, innerWidth });
 		const progress = progressLineFor(state.syncEvent, innerWidth);
 		const topLines = progress === "" ? [top] : [top, progress];
 
-		// The sidebar is a COLUMN beside the body and costs no body row, but a
-		// terminal too short for its eleven nav rows degrades full → rail rather
-		// than overflowing (framePolicy decides the width half). Below both, the
-		// web hides the sidebar behind a hamburger drawer; a terminal drawer is
-		// one keystroke of state, so the strip stands in as the drawer — the
-		// reader still sees every screen, one row, without a body row lost.
-		let drawerLines: readonly string[] = NO_ROWS;
+		// WIDE GETS THE SIDEBAR COLUMN; EVERYTHING NARROWER GETS THE STRIP.
+		// The web's medium band keeps a 64px icon rail beside the panel, but in a
+		// terminal that rail is a whole column of width spent on one row of
+		// glyphs, and the strip ALREADY collapses itself to those same one-cell
+		// `TAB_SHORT` forms when the width runs out (`TabBar`'s collapse order,
+		// measured by `TAB_ROWS`). One rule, no second nav grammar.
+		//
+		// A terminal shorter than the chrome keeps NO nav row at all: a row the
+		// frame cannot afford pushes the bottom border off the screen, which is
+		// the one failure a `render(width)`-only assertion never catches.
 		const spec = specById(state.screenId);
-		const railLines =
-			policy.sidebar === "full" && rows >= MIN_SIDEBAR_ROWS
-				? sidebar(this.#theme, preset, state.screenId).lines
-				: [sidebarRail(this.#theme, preset, state.screenId)];
-		const drawer = policy.sidebar === "hidden" && spec !== undefined;
-		if (drawer) {
+		const column = policy.sidebar === "full" && rows >= MIN_SIDEBAR_ROWS;
+		let strip: readonly string[] = NO_ROWS;
+		if (!column && spec !== undefined && rows > MIN_PANEL_ROWS) {
 			const tabs = buildTabs(preset, this.#theme, spec.id);
 			this.#tabBar.setTabs(tabs, spec.id);
-			drawerLines = this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT));
+			strip = this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT));
 		}
-		const sidebarLines = drawer ? [] : railLines;
-		const sidebarWidth = sidebarLines.length === 0 ? 0 : Math.max(...sidebarLines.map(line => visibleWidth(line)));
+		const nav = column ? sidebar(this.#theme, preset, state.screenId) : null;
+		const sidebarWidth = nav?.width ?? 0;
 
-		// Chrome is the topbar (+progress) plus the drawer strip when the sidebar
-		// is gone; `bodyRows` is the same one row arithmetic `/settings` uses.
-		const headerLines = drawer ? [...topLines, ...drawerLines] : topLines;
+		// `bodyRows` is the same one row arithmetic `/settings` uses: one for the
+		// chrome row that replaced the header, one more per wrap.
+		const headerLines = [...topLines, ...strip];
 		const body = bodyRows(rows, headerLines.length);
 		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
 
-		state.source = this.#bodyLines(plan, preset, sidebarLines.length > 0 ? sidebarLines : null, sidebarWidth);
+		state.source = this.#bodyLines(plan, preset, nav?.lines ?? null, sidebarWidth);
 		state.maxScroll = Math.max(0, state.source.length - plan.bodyRows);
 		// Clamped HERE, not in the key handler, so a terminal that shrank
 		// between two keypresses cannot leave the view scrolled past its end.

@@ -16,6 +16,7 @@ import { SCREEN_SPECS } from "../src/layout/spec";
 import type { ScreenId } from "../src/tui/screens/types";
 import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
+import { TAB_SHORT } from "../src/tui/tabs";
 
 /**
  * WHAT A HUMAN STILL HAS TO VERIFY
@@ -278,17 +279,19 @@ test("the composed frame at width 100: topbar + sidebar, body, divider, footer, 
 	expect(plain[0]).not.toContain("Overview");
 });
 
-test("the composed frame at width 60: the sidebar degrades to the icon rail and everything still fits", async () => {
+test("the composed frame at width 60: the nav becomes the strip row and everything still fits", async () => {
 	const width = 60;
 	const panel = __testing.makePanel({ data: dataFor(), range: "30d", rows: 40, screenId: "costs", now: () => FIXTURE_NOW });
 	await __testing.settled(panel);
 	const plain = panel.render(width).map(stripAnsi);
 
 	expect(plain.length).toBe(40);
-	// Medium width drops the labels (framePolicy: sidebar `icons`), so the
-	// nav costs one column of one-cell glyphs and the body keeps its width.
+	// Below the sidebar's width the nav is the strip row, and `TabBar` collapses
+	// it to the one-cell `TAB_SHORT` forms — the icon rail the web keeps beside
+	// its panel at the same breakpoint, without costing a column of width.
 	expect(plain[1]).toContain("omp/stats");
-	expect(plain.some(row => row.includes("Costs"))).toBe(false);
+	expect(plain[2]).toContain("Costs");
+	expect(plain[2]).toContain(TAB_SHORT.unicode.models);
 	for (const row of plain) {
 		expect(Bun.stringWidth(row), `width=${width} row=${JSON.stringify(row.slice(0, 60))}`).toBeLessThanOrEqual(width);
 	}
@@ -305,11 +308,13 @@ test("every selectable screen is on the number row, so no digit is a dead key", 
 
 test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
 	expect(SCREENS.some(s => s.status === "excluded")).toBe(true);
-	// The selectable set is now SPEC-DRIVEN: a screen the layout IR marks
+	// The selectable set is SPEC-DRIVEN: a screen the layout IR marks
 	// `deferred` has no body to draw and no tab on the strip, so arrowing onto it
-	// would spend a keystroke painting an empty page. `providers` is the one such
-	// screen, and its absence here is the assertion.
-	expect(SELECTABLE.map(s => s.id)).not.toContain("providers");
+	// would spend a keystroke painting an empty page. No shipped screen is
+	// deferred now (`providers` reads the DB-backed aggregates); `gain` has no
+	// spec at all, and its absence here is the assertion.
+	expect(SELECTABLE.map(s => s.id)).not.toContain("gain");
+	expect(SELECTABLE.map(s => s.id)).toContain("providers");
 	expect(__testing.debugScreenIds()).toEqual(SELECTABLE.map(s => s.id));
 	// Every selectable screen has a SPEC, and every non-deferred spec is
 	// selectable: the two lists are one list.
