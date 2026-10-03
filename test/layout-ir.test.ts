@@ -96,11 +96,9 @@ const FIXTURES: Record<string, unknown> = {
 	toolsSeries: [{ timestamp: now - day, tool: "read", calls: 900, errors: 4 }],
 	dailyActivity: [{ day: "2026-09-28", cost: 4.2, requests: 120, totalTokens: 90_000 }],
 	rollupStatus: { dirtyHours: 0, staleRows: 0 },
-	// Providers deliberately has NO fixture. `/api/stats/provider-windows` does
-	// network I/O and the panel refuses to call it, so the IR can name this
-	// source but can never be resolved — which is exactly why `providers` is
-	// deferred rather than merely unimplemented.
-	providerStats: undefined,
+	// The DB-backed aggregates. The NETWORK windows payload has no source:
+	// the panel never fetches it, so the IR cannot name it either.
+	providerStats: [{ provider: "openrouter", totalRequests: 1_280, failedRequests: 4, models: 1, totalInputTokens: 2_100_000, totalOutputTokens: 400_000, totalCacheReadTokens: 51_000_000, totalCacheWriteTokens: 500_000, totalTokens: 54_000_000, totalCost: 935.72, unpricedRequests: 0, totalPremiumRequests: 0, avgTokensPerSecond: 61.2 }],
 };
 
 function readPath(source: string, path: string): unknown {
@@ -193,17 +191,15 @@ test("every band references a metric its screen's needs actually fetch", () => {
 	}
 });
 
-test("every fetchable source maps to a real DataNeed, and the unfetchable one is the only null", () => {
-	const nulls: string[] = [];
+test("every fetchable source maps to a real DataNeed", () => {
 	for (const [source, need] of Object.entries(NEED_BY_SOURCE)) {
-		if (need === null) {
-			nulls.push(source);
-			continue;
-		}
+		// Every source the IR names is fetchable: `providerStats` reads the
+		// DB-backed `/api/stats/providers` aggregates, and the network-only
+		// windows payload has no source because the panel never fetches it.
+		expect(need, `${source} has no declared need`).toBeTruthy();
+		if (need === null) continue;
 		expect(DATA_NEEDS as readonly string[], `${source} -> ${need}`).toContain(need);
 	}
-	// Exactly one source is unfetchable, and it is the network one.
-	expect(nulls).toEqual(["providerStats"]);
 });
 
 test("a deferred screen says why it cannot be filled yet", () => {
@@ -217,6 +213,11 @@ test("a deferred screen says why it cannot be filled yet", () => {
 // ─── the other valuable test: a metric naming a field that does not exist ───
 
 test("every MetricRef resolves to a real field on a real payload", () => {
+	// Computed pseudo-fields never appear on the payload: the resolver derives
+	// them from sibling fields (OverviewRoute.tsx:77 — Succeeded is
+	// requests-minus-errors per bucket). They resolve through dedicated
+	// branches, not through the field path, so the fixture cannot carry them.
+	const COMPUTED = new Set(["timeSeries.succeededRequests"]);
 	for (const spec of SCREEN_SPECS) {
 		for (const ref of refsInSpec(spec)) {
 			const source = sourceOf(ref);
@@ -224,6 +225,7 @@ test("every MetricRef resolves to a real field on a real payload", () => {
 				expect(spec.deferred, `${spec.id} reads unfetchable "${source}" but is not deferred`).toBe(true);
 				continue;
 			}
+			if (COMPUTED.has(`${source}.${baseOf(ref).field}`)) continue;
 			expect(readPath(sourceOf(ref), baseOf(ref).field), `${spec.id}: ${source}.${baseOf(ref).field} does not exist`).toBeDefined();
 			if (ref.kind === "derived") {
 				// A derivation is a NAMED computation, so it must carry a name
@@ -358,8 +360,10 @@ test("the ported screens mirror the route's band order", () => {
 
 	const models = SCREEN_SPECS.find(s => s.id === "models")!;
 	// ModelsRoute.tsx renders: StatGrid, "Request share" Card, "All models"
-	// Table. The legend belongs to the share card.
-	expect(models.bands.map(b => b.kind)).toEqual(["statRow", "chart", "legend", "table", "note"]);
+	// Table. The card's per-series Legend is togglable UI chrome the terminal
+	// cannot host (no pointer, no per-row toggle); the shares live on the
+	// chart readouts instead, so the IR carries no legend band here.
+	expect(models.bands.map(b => b.kind)).toEqual(["statRow", "chart", "table", "note"]);
 });
 
 test("the activity screen derives from the usage dashboard, not a route", () => {
@@ -378,11 +382,17 @@ test("every screen that fetches nothing is deferred, and vice versa", () => {
 	}
 });
 
-test("providers is deferred because provider-windows does network I/O", () => {
+test("providers is fillable from the local aggregates; only the windows sections stay out", () => {
+	// `/api/stats/providers` is DB-backed rollup; `/api/stats/provider-windows`
+	// does broker network I/O per load and the panel never calls it. So the
+	// spec carries needs and the windows boundary lives in a note band, not a
+	// deferred flag.
 	const providers = SCREEN_SPECS.find(s => s.id === "providers")!;
-	expect(providers.deferred).toBe(true);
-	expect([...providers.needs]).toEqual([]);
-	expect(providers.deferredReason).toMatch(/network/i);
+	expect(providers.deferred).toBeUndefined();
+	expect([...providers.needs]).toEqual(["providers", "rollupStatus"]);
+	const kinds = providers.bands.map(b => b.kind);
+	expect(kinds).toContain("note");
+	expect(providers.bands.some(b => b.kind === "custom")).toBe(false);
 });
 
 test("every screen declares its needs as real DataNeeds", () => {
