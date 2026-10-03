@@ -1,0 +1,478 @@
+/**
+ * ONE fixture, shaped like the real route responses.
+ *
+ * WHY THIS FILE IS ITS OWN MODULE. Every renderer test needs the same thing: a
+ * `PanelData` whose every payload has the shape `src/data/api.ts` promises, with
+ * figures in the ranges the live database actually produces. When each test file
+ * grows its own copy they drift, and a drift between the fixture and
+ * `rowToMessageStats` is INVISIBLE: the tests pass against a payload the real
+ * route would never produce, which is exactly the class of bug this panel has
+ * already paid for once (a zero-cost model with no price card).
+ *
+ * The numbers are lifted from the measured captures in
+ * `docs/research/omp-stats-tui/RENDER-OUTPUT.txt` rather than invented, so a
+ * formatted figure in a test can be checked by hand against the probe output.
+ *
+ * Pure data. No database, no theme, no I/O.
+ */
+
+import type { PanelData } from "../../src/data/api";
+import type {
+	AgentTypeStats,
+	AggregatedStats,
+	CostTimeSeriesPoint,
+	DailyActivityPoint,
+	FolderStats,
+	ModelStats,
+	ModelTimeSeriesPoint,
+	TimeSeriesPoint,
+	ToolDashboardStats,
+} from "@oh-my-pi/omp-stats/shared-types";
+
+/** Day boundary, so every cost bucket lands on the axis the costs route uses. */
+export const FIXTURE_NOW = Date.UTC(2026, 6, 15, 12, 0, 0);
+const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+
+export const dayStart = (daysAgo: number): number =>
+	Math.floor((FIXTURE_NOW - daysAgo * DAY) / DAY) * DAY;
+export const hourStart = (hoursAgo: number): number =>
+	Math.floor((FIXTURE_NOW - hoursAgo * HOUR) / HOUR) * HOUR;
+
+// ─── Aggregates ──────────────────────────────────────────────────────────────
+
+/**
+ * The overall aggregate. `cacheRate` is cacheRead / (input + cacheRead) to four
+ * decimals, so a test that recomputes it from the counts gets the number the
+ * panel prints.
+ */
+export const AGGREGATE: AggregatedStats = {
+	totalRequests: 65_460,
+	successfulRequests: 64_145,
+	failedRequests: 1_315,
+	errorRate: 0.0201,
+	totalInputTokens: 47_100_000,
+	totalOutputTokens: 9_400_000,
+	totalCacheReadTokens: 1_204_000_000,
+	totalCacheWriteTokens: 12_800_000,
+	cacheRate: 0.9624,
+	cacheSavings: 0.8142,
+	totalCost: 112.36,
+	unpricedRequests: 4_359,
+	totalPremiumRequests: 1.5,
+	avgDuration: 12_300,
+	avgTtft: 430,
+	avgTokensPerSecond: 61.2,
+	firstTimestamp: FIXTURE_NOW - 30 * DAY,
+	lastTimestamp: FIXTURE_NOW,
+};
+
+function modelRow(over: Partial<AggregatedStats> & { model: string; provider: string }): ModelStats {
+	return { ...AGGREGATE, ...over };
+}
+
+/**
+ * Three models, each standing for a distinct real situation:
+ *
+ *  - `gpt-5.6-terra` — priced, the top spender.
+ *  - `gemini-3.7-flash-high` — NO catalog card. Its $0.00 is UNMEASURED and the
+ *    panel must print `N/A`, never `$0.00`. This is the single most important row
+ *    in the fixture (see `src/data/api.ts`'s workaround block).
+ *  - `space-bunny-free` — an EXPLICIT all-zero card. Its $0 is a real price and
+ *    must stay `$0`. Without this row the N/A rule would pass by marking every
+ *    free model unknown.
+ */
+export const BY_MODEL: readonly ModelStats[] = [
+	modelRow({
+		model: "gpt-5.6-terra",
+		provider: "openrouter",
+		totalRequests: 1_280,
+		failedRequests: 4,
+		errorRate: 0.0031,
+		totalCost: 935.72,
+		unpricedRequests: 0,
+		cacheRate: 0.961,
+	}),
+	modelRow({
+		model: "gemini-3.7-flash-high",
+		provider: "google-antigravity",
+		totalRequests: 4_197,
+		failedRequests: 0,
+		errorRate: 0,
+		totalCost: 0,
+		unpricedRequests: 4_197,
+		cacheRate: 0.955,
+	}),
+	modelRow({
+		model: "space-bunny-free",
+		provider: "opencode-go",
+		totalRequests: 36_616,
+		failedRequests: 88,
+		errorRate: 0.0024,
+		totalCost: 0,
+		unpricedRequests: 0,
+		cacheRate: 0.981,
+	}),
+];
+
+export const MODEL_SERIES: readonly ModelTimeSeriesPoint[] = BY_MODEL.flatMap((m, index) =>
+	[0, 1, 2, 3].map(daysAgo => ({
+		timestamp: dayStart(daysAgo),
+		model: m.model,
+		provider: m.provider,
+		requests: Math.max(1, Math.round(m.totalRequests / 40) - index - daysAgo),
+	})),
+);
+
+export const MODEL_PERFORMANCE_SERIES = MODEL_SERIES.map(p => ({
+	...p,
+	avgTtft: 430 + (p.model.length % 7) * 10,
+	avgTokensPerSecond: 61.2,
+}));
+
+/**
+ * Two days. The older one burned 9M tokens for one cent and the newer spent $42
+ * on a thousand — the 41x price spread at comparable volume, which is why
+ * charts scale by cost. Token scaling would put the peak at the free day.
+ */
+function costPoint(
+	timestamp: number,
+	model: string,
+	cost: number,
+	tokens: number,
+): CostTimeSeriesPoint {
+	return {
+		timestamp,
+		model,
+		provider: "openrouter",
+		cost,
+		unpricedRequests: 0,
+		costInput: cost * 0.1,
+		costOutput: cost * 0.05,
+		costCacheRead: cost * 0.8,
+		costCacheWrite: cost * 0.05,
+		requests: Math.max(1, Math.round(tokens / 1_000)),
+	};
+}
+
+export const COST_SERIES: readonly CostTimeSeriesPoint[] = [
+	costPoint(dayStart(20), "space-bunny-free", 0.01, 9_000_000),
+	costPoint(dayStart(0), "gpt-5.6-terra", 42, 1_000),
+	costPoint(dayStart(0), "space-bunny-free", 0.02, 4_000_000),
+];
+
+export const TIME_SERIES: readonly TimeSeriesPoint[] = [23, 12, 5, 1].map((hoursAgo, index) => ({
+	timestamp: hourStart(hoursAgo),
+	requests: [420, 310, 180, 95][index],
+	errors: [4, 2, 9, 1][index],
+	tokens: [2_400_000, 1_900_000, 900_000, 400_000][index],
+	cost: [3.2, 1.1, 4.75, 0.4][index],
+}));
+
+export const BY_AGENT_TYPE: readonly AgentTypeStats[] = [
+	{
+		agentType: "main",
+		totalRequests: 40_000,
+		totalInputTokens: 30e6,
+		totalOutputTokens: 6e6,
+		totalCacheReadTokens: 900e6,
+		totalCacheWriteTokens: 9e6,
+		totalCost: 62.4,
+	},
+	{
+		agentType: "subagent",
+		totalRequests: 22_000,
+		totalInputTokens: 12e6,
+		totalOutputTokens: 3e6,
+		totalCacheReadTokens: 280e6,
+		totalCacheWriteTokens: 3e6,
+		totalCost: 44.1,
+	},
+	{
+		agentType: "advisor",
+		totalRequests: 3_460,
+		totalInputTokens: 5.1e6,
+		totalOutputTokens: 0.4e6,
+		totalCacheReadTokens: 24e6,
+		totalCacheWriteTokens: 0.8e6,
+		totalCost: 5.86,
+	},
+];
+
+export const FOLDERS: readonly FolderStats[] = [
+	{
+		...AGGREGATE,
+		folder: "/Users/yuzu/Documents/Projects/omp-stats-tui",
+		totalRequests: 31_002,
+		totalCost: 74.1,
+		unpricedRequests: 0,
+		lastTimestamp: FIXTURE_NOW - HOUR,
+	},
+	{
+		...AGGREGATE,
+		folder: "/Users/yuzu/Documents/Projects/other",
+		totalRequests: 18_458,
+		totalCost: 31.26,
+		unpricedRequests: 0,
+		lastTimestamp: FIXTURE_NOW - 9 * HOUR,
+	},
+	{
+		...AGGREGATE,
+		folder: "scratch",
+		totalRequests: 16_000,
+		totalCost: 7,
+		unpricedRequests: 4_359,
+		lastTimestamp: FIXTURE_NOW - 30 * HOUR,
+	},
+];
+
+/**
+ * One request row, in exactly the shape `rowToMessageStats` builds.
+ *
+ * `MessageStats` is not re-exported from `@oh-my-pi/omp-stats`'s public barrel,
+ * so the literal is declared here — which is the point: if the host renames
+ * `usage.cacheRead`, the panel's own reads stop type-checking here rather than
+ * quietly rendering blanks.
+ */
+export interface MessageRow {
+	id: number;
+	sessionFile: string;
+	entryId: string;
+	folder: string;
+	model: string;
+	provider: string;
+	api: string;
+	timestamp: number;
+	duration: number | null;
+	ttft: number | null;
+	stopReason: string;
+	errorMessage: string | null;
+	usage: {
+		input: number;
+		output: number;
+		cacheRead: number;
+		cacheWrite: number;
+		totalTokens: number;
+		premiumRequests: number;
+		cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+	};
+	agentType: string;
+	costUnpriced: boolean;
+}
+
+/** What a test may override: `usage` and `usage.cost` merge one level deep. */
+export type MessageRowOverride = Partial<Omit<MessageRow, "usage">> & {
+	usage?: Partial<Omit<MessageRow["usage"], "cost">> & {
+		cost?: Partial<MessageRow["usage"]["cost"]>;
+	};
+};
+
+export function messageRow(over: MessageRowOverride = {}): MessageRow {
+	const { usage, ...rest } = over;
+	const cost = usage?.cost ?? {};
+	return {
+		id: 1,
+		sessionFile: "/Users/yuzu/.omp/sessions/a.jsonl",
+		entryId: "e1",
+		folder: "/Users/yuzu/Documents/Projects/omp-stats-tui",
+		model: "gpt-5.6-terra",
+		provider: "openrouter",
+		api: "openai-completions",
+		timestamp: FIXTURE_NOW - 4 * 60_000,
+		duration: 12_300,
+		ttft: 430,
+		stopReason: "stop",
+		errorMessage: null,
+		agentType: "main",
+		costUnpriced: false,
+		...rest,
+		usage: {
+			input: 47_100,
+			output: 9_400,
+			cacheRead: 1_204_000,
+			cacheWrite: 12_800,
+			totalTokens: 1_273_300,
+			premiumRequests: 0,
+			...usage,
+			cost: {
+				input: 0.04,
+				output: 0.02,
+				cacheRead: 0.34,
+				cacheWrite: 0.02,
+				total: cost.total ?? 0.42,
+				...cost,
+			},
+		},
+	};
+}
+
+export const RECENT: readonly MessageRow[] = [
+	messageRow({ id: 1 }),
+	messageRow({
+		id: 2,
+		timestamp: FIXTURE_NOW - 40 * 60_000,
+		model: "space-bunny-free",
+		provider: "opencode-go",
+		folder: "scratch",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 1_000,
+			cacheWrite: 0,
+			totalTokens: 1_000,
+			cost: { total: 0 },
+		},
+		costUnpriced: true,
+	}),
+	messageRow({
+		id: 3,
+		timestamp: FIXTURE_NOW - 3 * HOUR,
+		provider: "google-antigravity",
+		stopReason: "error",
+		errorMessage: "429 Too Many Requests",
+		costUnpriced: true,
+		usage: { cost: { total: 0 } },
+	}),
+];
+
+export const ERRORS: readonly MessageRow[] = RECENT.filter(r => r.errorMessage !== null);
+
+export const TOOLS: ToolDashboardStats = {
+	byTool: [
+		{
+			tool: "read",
+			calls: 4_021,
+			errors: 3,
+			argsChars: 88_120,
+			resultChars: 412_880,
+			totalTokensShare: 90_100_000,
+			outputTokensShare: 12_400_000,
+			costShare: 18.4,
+			unpricedRequestsShare: 0,
+			lastUsed: FIXTURE_NOW - 5 * 60_000,
+		},
+		{
+			tool: "bash",
+			calls: 1_884,
+			errors: 41,
+			argsChars: 21_400,
+			resultChars: 96_220,
+			totalTokensShare: 30_400_000,
+			outputTokensShare: 4_100_000,
+			costShare: 6.9,
+			unpricedRequestsShare: 0,
+			lastUsed: FIXTURE_NOW - 2 * 60_000,
+		},
+		{
+			tool: "grep",
+			calls: 610,
+			errors: 0,
+			argsChars: 9_100,
+			resultChars: 51_800,
+			totalTokensShare: 8_900_000,
+			outputTokensShare: 1_200_000,
+			costShare: 1.1,
+			unpricedRequestsShare: 0,
+			lastUsed: FIXTURE_NOW - HOUR,
+		},
+	],
+	byToolModel: [
+		{
+			tool: "read",
+			model: "gpt-5.6-terra",
+			provider: "openrouter",
+			calls: 2_400,
+			errors: 1,
+			argsChars: 50_000,
+			resultChars: 240_000,
+			totalTokensShare: 55_000_000,
+			outputTokensShare: 7_500_000,
+			costShare: 12.2,
+			unpricedRequestsShare: 0,
+			lastUsed: FIXTURE_NOW - 5 * 60_000,
+		},
+		{
+			tool: "read",
+			model: "space-bunny-free",
+			provider: "opencode-go",
+			calls: 1_621,
+			errors: 2,
+			argsChars: 38_120,
+			resultChars: 172_880,
+			totalTokensShare: 35_100_000,
+			outputTokensShare: 4_900_000,
+			costShare: 6.2,
+			unpricedRequestsShare: 0,
+			lastUsed: FIXTURE_NOW - 5 * 60_000,
+		},
+	],
+	series: [
+		{ timestamp: hourStart(23), tool: "read", calls: 120, errors: 0 },
+		{ timestamp: hourStart(12), tool: "read", calls: 96, errors: 1 },
+		{ timestamp: hourStart(23), tool: "bash", calls: 41, errors: 2 },
+		{ timestamp: hourStart(12), tool: "bash", calls: 33, errors: 1 },
+		{ timestamp: hourStart(23), tool: "grep", calls: 12, errors: 0 },
+		{ timestamp: hourStart(12), tool: "grep", calls: 9, errors: 0 },
+	],
+};
+
+/** 40 days of activity, with one conspicuously busy day for the heatmap peak. */
+export const DAILY_ACTIVITY: readonly DailyActivityPoint[] = Array.from({ length: 40 }, (_, i) => {
+	const daysAgo = 39 - i;
+	const busy = daysAgo === 12;
+	return {
+		day: new Date(FIXTURE_NOW - daysAgo * DAY).toISOString().slice(0, 10),
+		cost: busy ? 611.4 : Math.round((i % 7) * 3.11 * 100) / 100,
+		requests: busy ? 2_004 : (i % 7) + 1,
+		totalTokens: (i % 7) * 1_200_000,
+	};
+});
+
+// `PanelData.recent`/`errors` are typed as `RecentRequest`, which upstream
+// declares as `TimeSeriesPoint & Record<string, unknown>` — a shape the recent
+// route does not actually return. The cast is at the SEAM and nowhere else:
+// inside this file the rows are `MessageRow`, exactly what `rowToMessageStats`
+// builds, and every reader goes through the resolver's string-keyed path.
+export function liveData(over: Partial<PanelData> = {}): PanelData {
+	const recent = [...RECENT] as unknown as PanelData["recent"];
+	const errors = [...ERRORS] as unknown as PanelData["errors"];
+	return {
+		overview: {
+			overall: AGGREGATE,
+			byAgentType: [...BY_AGENT_TYPE],
+			timeSeries: [...TIME_SERIES],
+		},
+		modelDashboard: {
+			byModel: [...BY_MODEL],
+			modelSeries: [...MODEL_SERIES],
+			modelPerformanceSeries: [...MODEL_PERFORMANCE_SERIES],
+		},
+		costs: { costSeries: [...COST_SERIES] },
+		folders: [...FOLDERS],
+		recent,
+		errors,
+		tools: TOOLS,
+		dailyActivity: [...DAILY_ACTIVITY],
+		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
+		...over,
+	};
+}
+
+/**
+ * An EMPTY payload — every need answered, every array empty, every aggregate
+ * absent. This is the silent-empty trap (CONTEXT.md): a database that was never
+ * initialised answers every read this way. A screen must render a DEFINED empty
+ * state here, never a crash and never a `$0.00` that reads as "free".
+ */
+export function emptyData(): PanelData {
+	return {
+		modelDashboard: { byModel: [], modelSeries: [], modelPerformanceSeries: [] },
+		costs: { costSeries: [] },
+		folders: [],
+		recent: [],
+		errors: [],
+		tools: { byTool: [], byToolModel: [], series: [] },
+		dailyActivity: [],
+		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
+	};
+}
