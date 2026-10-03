@@ -72,7 +72,13 @@ function clamp(text: string, width: number): string {
  * measure 2. `ICON_GUTTER` is what keeps every heading starting in one column.
  */
 function heading(ctx: ScreenContext, role: IconRole, label: string): string {
-	const icon = statsIcon(ctx.preset, role, ctx.theme).padEnd(ICON_GUTTER[ctx.preset] ?? 0);
+	// Deliberately NO theme argument, though the signature accepts one. Passing
+	// `ctx.theme` makes `statsIcon` ignore its own preset argument and return the
+	// LIVE singleton's glyph — which is how an ascii screen came to draw emoji
+	// headings while its bars correctly degraded to `#` and `.`. `ctx.preset` is
+	// the same value `ctx.glyphs` and `ctx.plan` were built from, so all three
+	// now agree by construction rather than by the singleton happening to match.
+	const icon = statsIcon(ctx.preset, role).padEnd(ICON_GUTTER[ctx.preset] ?? 0);
 	return `${icon} ${label}`;
 }
 
@@ -237,7 +243,11 @@ export const overviewScreen: Screen = {
 	label: "Overview",
 	short: "Overview",
 	status: "implemented",
-	needs: ["overview", "modelDashboard"],
+	// `rollupStatus` is here for ADR-0006: above 96 dirty hours the host stops
+	// unioning dirty hours with the facts and returns rows with holes in them, so
+	// a panel that cannot report its own staleness presents not-yet-built hours as
+	// $0.00. Declaring it is the first half; the footer below is the second.
+	needs: ["overview", "modelDashboard", "rollupStatus"],
 	render: (ctx): readonly string[] => {
 		const width = ctx.plan.innerWidth;
 		const overall = ctx.data.overview?.overall;
@@ -352,6 +362,32 @@ export const overviewScreen: Screen = {
 			out.push(
 				...models,
 				clamp(`  ${dim(ctx)("ranked by cost · N/A means the spend could not be measured")}`, width),
+			);
+		}
+		// --- 5. staleness (ADR-0006) ---------------------------------------
+		// Printed only when it is non-zero. A "0 dirty hours" footnote on every
+		// screen is noise that trains the reader to skip the one time it matters,
+		// and a MISSING status is unknown rather than clean, so it says nothing at
+		// all rather than claiming zero.
+		const rollup = ctx.data.rollupStatus;
+		if (rollup && rollup.dirtyHours > 0) {
+			out.push(
+				"",
+				clamp(
+					`  ${heading(ctx, "warning", "")} ${ctx.theme.fg(
+						"error",
+						`${formatInteger(rollup.dirtyHours)} dirty hours not yet built`,
+					)}`,
+					width,
+				),
+				clamp(
+					`  ${dim(ctx)(
+						rollup.dirtyHours > 96
+							? "figures above may have gaps in them"
+							: "figures above are being rebuilt and will settle",
+					)}`,
+					width,
+				),
 			);
 		}
 

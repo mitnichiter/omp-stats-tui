@@ -16,6 +16,8 @@
  * dropping things.
  */
 
+import { initDb } from "@oh-my-pi/omp-stats/db";
+
 import { fetchFor, type PanelData } from "../src/data/api";
 import { RANGES, DEFAULT_RANGE, isRange, type Range } from "../src/data/ranges";
 import { SCREENS, screenById, type ScreenContext, type ScreenId } from "../src/tui/screens/types";
@@ -70,6 +72,14 @@ if (!known.includes(screenId as ScreenId)) {
 
 const screen = screenById(screenId as ScreenId);
 const ROWS = 40;
+
+// The extension inits the database at LOAD (src/index.ts, F16), before any
+// screen is selectable. A standalone script has to do that itself: `rollupStatus`
+// reads `currentDb()` directly rather than through a route, so without a warm it
+// throws "database is not initialised" while the route-backed fetches would have
+// succeeded — the throw is correct behaviour, and standing in for the load-time
+// warm here is what makes this probe match what the panel actually sees.
+await initDb();
 
 // The same seam the panel uses: fetch exactly what the screen declared.
 const started = performance.now();

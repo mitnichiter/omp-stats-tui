@@ -127,6 +127,12 @@ function busyOverview() {
 	};
 }
 
+/** The realistic pair every body test starts from. */
+const busy = (): PanelData => ({
+	overview: busyOverview(),
+	modelDashboard: modelDashboard(),
+});
+
 test("overview renders a realistic fixture without throwing and without an undefined in any cell", () => {
 	const rows = overviewScreen.render(
 		ctxWith({ overview: busyOverview(), modelDashboard: modelDashboard() }),
@@ -280,5 +286,51 @@ test("an all-zero cost series says so instead of drawing a wall of empty columns
 	// Scoped to whole-line tracks: `░` is also `barEmpty`, so the ranked model's
 	// own bar track legitimately contains it. What must not appear is a full-width
 	// row made of nothing but empty track — that is the failed chart.
-	expect(rows.split("\n").some(line => /^[\s░]{20,}$/.test(line.replace(/\u001b\[[0-9;]*m/g, "")))).toBe(false);
+	expect(
+		rows.split("\n").some(line => /^[\s░]{20,}$/.test(line.replace(/\u001b\[[0-9;]*m/g, ""))),
+	).toBe(false);
+});
+
+test("overview declares rollupStatus, so a stale panel can say so", () => {
+	// ADR-0006: the dirty-hour count must always be visible, or not-yet-built
+	// hours read as $0.00. Restored after Task 13's body change dropped it.
+	expect(overviewScreen.needs).toContain("rollupStatus");
+});
+
+test("a dirty rollup is stated, not hidden", () => {
+	const text = overviewScreen
+		.render(ctxWith({ ...busy(), rollupStatus: { dirtyHours: 120, dirtySessions: 4 } }))
+		.join("\n");
+	// Above 96 dirty hours the host stops unioning with facts and returns rows
+	// with holes in them, so the reader MUST be told the figures are partial.
+	expect(text).toMatch(/120 dirty hour/i);
+	expect(text).toMatch(/not yet built|stale/i);
+});
+
+test("a clean rollup says nothing rather than printing a zero-count footnote", () => {
+	const text = overviewScreen
+		.render(ctxWith({ ...busy(), rollupStatus: { dirtyHours: 0, dirtySessions: 0 } }))
+		.join("\n");
+	expect(text).not.toMatch(/dirty hour/i);
+});
+
+test("a missing rollupStatus is not reported as a clean rollup", () => {
+	// Absent data is unknown, not zero — the same distinction the payload's own
+	// DbReadiness union exists to force.
+	const text = overviewScreen.render(ctxWith(busy())).join("\n");
+	expect(text).not.toMatch(/dirty hour/i);
+	expect(text).not.toMatch(/rollup/i);
+});
+
+test("the ascii preset draws ascii headings, whatever the theme singleton holds", () => {
+	// Found by running the probe: `statsIcon(preset, role, theme)` ignores its
+	// preset argument whenever a theme is supplied and returns the LIVE
+	// singleton's glyph, so an ascii screen drew emoji headings. The screen
+	// resolves icons against ctx.preset — which is what it also renders glyphs
+	// and the layout plan from — rather than a singleton that may disagree.
+	const ctx = { ...ctxWith(busy(), 100), preset: "ascii" as const, glyphs: glyphsFor("ascii") };
+	const rows = overviewScreen.render(ctx).join("\n");
+	expect(rows).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
+	expect(rows).toContain("$");
+	expect(rows).toContain("[M]");
 });
