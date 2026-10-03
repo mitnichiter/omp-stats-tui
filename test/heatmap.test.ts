@@ -23,6 +23,7 @@ const point = (day: string, cost: number, requests = 1): DailyActivityPoint => (
 	day,
 	cost,
 	requests,
+	totalTokens: requests * 1000,
 });
 
 /** A fixed "today" keeps every test independent of the wall clock. */
@@ -179,14 +180,14 @@ test("narrow terminals reduce the WINDOW, never the cell size", () => {
 
 test("the summary reports both totals and surfaces unpriced spend", () => {
 	const summary = heatmapSummary([
-		{ day: "2026-10-01", cost: 1.5, requests: 3 },
-		{ day: "2026-10-02", cost: 2.5, requests: 4 },
+		{ day: "2026-10-01", cost: 1.5, requests: 3, totalTokens: 3000 },
+		{ day: "2026-10-02", cost: 2.5, requests: 4, totalTokens: 4000 },
 	]);
 	expect(summary).toContain("7 requests");
 	expect(summary).toContain("$4.00");
 	// A day with requests but no priced cost is unknown spend, not free spend, so
 	// the count must ride along with the total rather than reading as $0.
-	expect(heatmapSummary([{ day: "2026-10-02", cost: 0, requests: 9 }])).toContain("unpriced");
+	expect(heatmapSummary([{ day: "2026-10-02", cost: 0, requests: 9, totalTokens: 9000 }])).toContain("unpriced");
 });
 
 test("no row ends in a newline and no row is empty", () => {
