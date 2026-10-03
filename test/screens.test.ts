@@ -10,6 +10,7 @@ import { PLACEHOLDER_MARKER } from "../src/tui/screens/placeholders";
 import { RANGES, DEFAULT_RANGE } from "../src/data/ranges";
 import { DATA_NEEDS, type PanelData } from "../src/data/api";
 import { planLayout } from "../src/tui/layout";
+import { SCREEN_SPECS } from "../src/layout/spec";
 import { glyphsFor } from "../src/tui/glyphs";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 
@@ -32,16 +33,19 @@ function ctxWith(data: Partial<PanelData>, width = 120, override?: PanelData): S
 }
 
 /**
- * The screens whose body is still sample data — the four PLACEHOLDER tests are
- * about scaffolds, so they filter on `status === "scaffolded"`.
+ * The two lists agree by construction: `specd` names every registry screen that
+ * has a `ScreenSpec` and therefore defers `render` to the pipeline, and
+ * `STUBS` names every registry screen that still renders a placeholder body.
+ * A screen on NEITHER list is the bug — it would render through a path nobody
+ * tests — and a screen on BOTH is the contradiction: a placeholder plus a spec,
+ * which is exactly the second grammar the migration rule forbids.
  *
- * They were widened to "not excluded" while Tasks 13-15 screens carried
- * placeholder bodies under `implemented`. `overview` has a real body now, so the
- * widening is reverted; a screen stops being held to the placeholder rules the
- * day it stops being a placeholder, and pinning it to them past that point
- * asserts a falsehood about real data.
+ * (`STUBS` used to filter on `status === "scaffolded"`. It stopped meaning
+ * that the day the first scaffold migrated: status now agrees with the path,
+ * so the filter names the four remaining scaffolds by exclusion instead.)
  */
-const STUBS = SCREENS.filter(s => s.status === "scaffolded");
+const specd = ["costs", "projects", "tools", "requests"] as const;
+const STUBS = SCREENS.filter(s => specd.every(id => id !== s.id) && s.status === "scaffolded");
 
 test("every dashboard screen is registered exactly once", () => {
 	const ids = SCREENS.map(s => s.id);
@@ -77,15 +81,20 @@ test("traces and frustration are excluded, not ported — ADR 0004", () => {
 	}
 });
 
-test("a scaffolded screen declares its real data contract and renders labelled PLACEHOLDER rows", () => {
-	const costs = screenById("costs");
-	expect(costs.status).toBe("scaffolded");
-	expect(costs.needs).toEqual(["costs"]);
-	const rows = costs.render(ctxWith({}));
-	// Not one "not built yet" line: a reviewable layout with obviously fake values.
-	expect(rows.length).toBeGreaterThan(3);
-	expect(rows[0]).toContain(PLACEHOLDER_MARKER); // snapshot-style: marker present
-	expect(rows.some(r => r.includes("placeholder"))).toBe(true);
+test("a spec'd screen defers render to the pipeline, never to a placeholder", () => {
+	// The migration rule that falls out of the IR's contract: once a screen has
+	// a ScreenSpec, its registry entry carries identity and contract and its
+	// `render` is the shared renderer. A `render` body beside a spec would be a
+	// second grammar for the same screen. The CONTRACT here is that the entry
+	// agrees with the spec — same needs — whatever the registry's own fetching
+	// adds around them.
+	for (const id of specd) {
+		const screen = screenById(id);
+		const spec = SCREEN_SPECS.find(spec => spec.id === id);
+		expect(screen.status, id).toBe("implemented");
+		expect(spec, `${id} has no ScreenSpec to defer to`).toBeTruthy();
+		expect([...screen.needs].sort(), id).toEqual([...spec!.needs].sort());
+	}
 });
 
 test("PLACEHOLDER: every scaffolded screen's first row carries the marker", () => {
