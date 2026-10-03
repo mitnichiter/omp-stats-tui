@@ -101,3 +101,15 @@ test("costs: Top model follows the COST axis, not the request count", () => {
 	expect(label.value).toBe(summary.topModel?.model ?? "–");
 	expect(text(rows)).toContain(label.value);
 });
+test("costs: 'By model' carries the web's component columns beside Estimate", () => {
+	// CostsRoute.tsx:320-412 — Model, Requests, Estimate, Share, Split,
+	// Input, Output, Cache read, Cache write, Per request, Unpriced.
+	const bands = screenBands(opts(liveData()));
+	const table = bands.find(b => b.kind === "table" && b.title === "By model");
+	expect(table, "By model table band missing").toBeTruthy();
+	if (table === undefined || table.kind !== "table") throw new Error("By model is not a table band");
+	const headers = table.columns.map(c => c.header);
+	for (const header of ["Model", "Requests", "Estimate", "Share", "Input", "Output", "Cache read", "Cache write", "Per request", "Unpriced"]) {
+		expect(headers, header).toContain(header);
+	}
+});

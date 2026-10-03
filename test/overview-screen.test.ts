@@ -17,6 +17,7 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
+import { resolveNumber } from "../src/layout/resolve";
 import { renderScreen, screenBands, renderScreenWith, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
@@ -102,6 +103,17 @@ test("overview: Latest requests is newest-first even when the payload arrives ol
 	expect(rows.length).toBe(2);
 	expect(rows[0]!["Model"]).toBe("probe-new");
 	expect(rows[1]!["Model"]).toBe("probe-old");
+});
+test("overview: the Succeeded series is requests-minus-errors per bucket, as the web plots it", () => {
+	// OverviewRoute.tsx:69-83 — `requests: densify(points, buckets, p => p.requests - p.errors)`.
+	// Succeeded plus Failed must re-add to the Requests spark; a Succeeded
+	// series reading raw requests would double-count the failures.
+	const data = liveData();
+	const ok = resolveNumber({ kind: "series", source: "timeSeries", field: "succeededRequests" }, data);
+	const failed = resolveNumber({ kind: "series", source: "timeSeries", field: "errors" }, data);
+	const all = resolveNumber({ kind: "series", source: "timeSeries", field: "requests" }, data);
+	expect(ok).not.toBeNull();
+	expect(ok! + failed!).toBe(all!);
 });
 
 test("overview: an unfetched overview payload renders a defined state", () => {

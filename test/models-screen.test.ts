@@ -19,6 +19,7 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
+import { resolveLabel } from "../src/layout/resolve";
 import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
@@ -98,6 +99,17 @@ test("models: the Trend column draws one sparkline per row", () => {
 	for (const row of rows) {
 		expect(row["Trend"] ?? "", `no trend for ${row["Model"]}`).not.toBe("");
 	}
+});
+test("models: 'Most used' names the busiest model, not the first payload row", () => {
+	// ModelsRoute.tsx:266-273 — top is the max-totalRequests row; the tile
+	// value is its name and the hint carries its request share.
+	const data = liveData();
+	const busiest = [...data.modelDashboard!.byModel].sort((a, b) => b.totalRequests - a.totalRequests)[0]!;
+	expect(resolveLabel({ kind: "label", source: "byModel", field: "model" }, data)).toBeDefined();
+	const mostUsed = spec.bands
+		.flatMap(b => (b.kind === "statRow" ? b.stats : []))
+		.find(t => t.label === "Most used")!;
+	expect(resolveLabel(mostUsed.metric, data)).toBe(busiest.model);
 });
 
 test("models: an unfetched modelDashboard renders a defined state", () => {

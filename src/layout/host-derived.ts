@@ -230,6 +230,28 @@ export const HOST_DERIVED: Readonly<
 	},
 
 	/**
+	 * `ModelsRoute.tsx:266-273` — the max-`totalRequests` row's name, never the
+	 * first payload row: the byModel payload arrives in request-desc order from
+	 * the server, but the route re-derives the top by comparison, and a server
+	 * that stopped sorting would otherwise move the tile.
+	 *
+	 * `null` when no row carries requests: the web renders "–", and a name
+	 * from an empty list would be invented.
+	 */
+	mostUsedModel: {
+		source: "byModel",
+		compute: rows => {
+			let top: { model?: unknown; totalRequests?: unknown } | undefined;
+			for (const row of rows) {
+				const record = row as { model?: unknown; totalRequests?: unknown };
+				if (typeof record.totalRequests !== "number") continue;
+				if (!top || (top.totalRequests as number) < record.totalRequests) top = record;
+			}
+			return top && typeof top.model === "string" && (top.totalRequests as number) > 0 ? top.model : null;
+		},
+	},
+
+	/**
 	 * `RequestsRoute.tsx:64` — `summarizeRequests(inRange)` over the LOADED rows,
 	 * not over the `errors` endpoint. The endpoint is range+limit capped and
 	 * excludes the ok/aborted context the status needs, so counting it as
