@@ -133,6 +133,18 @@ const busy = (): PanelData => ({
 	modelDashboard: modelDashboard(),
 });
 
+/** A dashboard whose top model is entirely unpriced — the `N/A` path. */
+const unpricedDashboard = (): ModelDashboardPayload => {
+	const base = modelDashboard();
+	return {
+		...base,
+		byModel: [
+			{ ...base.byModel[0]!, model: "some-unpriced-model", totalCost: 0, unpricedRequests: 34_870 },
+			...base.byModel.slice(1),
+		],
+	};
+};
+
 test("overview renders a realistic fixture without throwing and without an undefined in any cell", () => {
 	const rows = overviewScreen.render(
 		ctxWith({ overview: busyOverview(), modelDashboard: modelDashboard() }),
@@ -333,4 +345,77 @@ test("the ascii preset draws ascii headings, whatever the theme singleton holds"
 	expect(rows).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
 	expect(rows).toContain("$");
 	expect(rows).toContain("[M]");
+});
+
+test("A: stat-strip figures sit at evenly spaced columns", () => {
+	// The strip is a grid of equal-width columns, so consecutive figures are
+	// separated by exactly one column plus one gutter. That regularity is the
+	// property the eye uses; before the fix the four figures landed at 11, 27,
+	// 51 and 73 — no two comparable.
+	//
+	// What is deliberately NOT asserted: that the figures share one absolute
+	// column. They cannot. Cell i begins at i x (column + gutter), so only the
+	// row's last cell reaches the right edge. Right-aligning every figure to one
+	// absolute column is only possible for a row holding a single cell, which is
+	// the model list's shape, not a strip's.
+	const figures = ["73,870", "$1,039.27", "2.40%", "97.5%"];
+	// Cell offset, NOT `indexOf`: the heading icons are emoji, so one UTF-16 unit
+	// occupies two cells and a character index is not a column. Measuring in
+	// characters made a correct grid look misaligned.
+	const startCell = (row: string, figure: string) =>
+		Bun.stringWidth(row.slice(0, row.indexOf(figure)));
+	for (const width of [40, 44, 50, 60, 80, 100, 140]) {
+		const rows = overviewScreen.render(ctxWith(busy(), width));
+		const strips = rows.filter(r => figures.some(f => r.includes(f)));
+		expect(strips.length, `no strip row at w=${width}`).toBeGreaterThan(0);
+		for (const strip of strips) {
+			const starts = figures
+				.filter(f => strip.includes(f))
+				.map(f => startCell(strip, f))
+				.sort((a, b) => a - b);
+			const gaps = starts.slice(1).map((s, i) => s - starts[i]!);
+			expect(
+				new Set(gaps).size,
+				`w=${width} figure columns are unevenly spaced (${starts.join(",")}) in ${JSON.stringify(strip)}`,
+			).toBeLessThanOrEqual(1);
+		}
+	}
+});
+
+test("A: a figure is never split across two lines", () => {
+	// A number wrapping mid-figure can be misread as two numbers.
+	for (const width of [40, 44, 50, 60]) {
+		const rows = overviewScreen.render(ctxWith(busy(), width));
+		expect(rows.join("\n"), `w=${width}`).toContain("$1,039.27");
+	}
+});
+
+test("B: the unpriced count is printed once, not twice", () => {
+	// "N/A · 34,870 unpriced · 34,870 req" prints the same number twice under two
+	// labels, which reads as a rendering bug even though it is not.
+	const rows = overviewScreen
+		.render(
+			ctxWith({
+				...busy(),
+				modelDashboard: unpricedDashboard(),
+			}),
+		)
+		.join("\n");
+	const line = rows.split("\n").find(l => l.includes("some-unpriced-model"))!;
+	expect(line).toContain("N/A");
+	expect(line.match(/34,870/g)?.length, line).toBe(1);
+});
+
+test("C: caveats are dropped whole at narrow widths, never cut mid-sentence", () => {
+	const caveats = /cache share excludes cache writes|ranked by cost/;
+	for (const width of [40, 44, 50, 56, 60]) {
+		const rows = overviewScreen.render(ctxWith(busy(), width)).join("\n");
+		if (caveats.test(rows)) expect(rows, `w=${width} kept a partial caveat`).not.toMatch(/billed se$|could not be meas$/m);
+	}
+});
+
+test("C: caveats are kept whole when there is room for them", () => {
+	const rows = overviewScreen.render(ctxWith(busy(), 120)).join("\n");
+	expect(rows).toMatch(/cache share excludes cache writes, which are billed separately/);
+	expect(rows).toMatch(/ranked by cost · N\/A means the spend could not be measured/);
 });

@@ -71,6 +71,21 @@ function clamp(text: string, width: number): string {
  * no emoji and the nerd preset's PUA characters measure 1 cell where emoji
  * measure 2. `ICON_GUTTER` is what keeps every heading starting in one column.
  */
+/**
+ * Pad to a measured cell width.
+ *
+ * NOT `String.padEnd`, which pads by CHARACTER COUNT. The unicode icon table
+ * mixes 2-cell glyphs stored as one UTF-16 unit with 2-cell glyphs stored as
+ * two, so a one-character emoji already measuring two cells was handed a
+ * spurious extra space while its two-character neighbour was left alone. That
+ * one-cell drift is what broke the stat-strip grid. Measured padding is the
+ * only version that agrees with the terminal.
+ */
+function padToWidth(text: string, target: number): string {
+	const gap = target - Bun.stringWidth(text);
+	return gap > 0 ? text + " ".repeat(gap) : text;
+}
+
 function heading(ctx: ScreenContext, role: IconRole, label: string): string {
 	// Deliberately NO theme argument, though the signature accepts one. Passing
 	// `ctx.theme` makes `statsIcon` ignore its own preset argument and return the
@@ -78,7 +93,7 @@ function heading(ctx: ScreenContext, role: IconRole, label: string): string {
 	// headings while its bars correctly degraded to `#` and `.`. `ctx.preset` is
 	// the same value `ctx.glyphs` and `ctx.plan` were built from, so all three
 	// now agree by construction rather than by the singleton happening to match.
-	const icon = statsIcon(ctx.preset, role).padEnd(ICON_GUTTER[ctx.preset] ?? 0);
+	const icon = padToWidth(statsIcon(ctx.preset, role), ICON_GUTTER[ctx.preset] ?? 0);
 	return `${icon} ${label}`;
 }
 
@@ -90,40 +105,101 @@ const rule = (ctx: ScreenContext): string =>
 const dim = (ctx: ScreenContext): ((t: string) => string) =>
 	ctx.theme.fg.bind(ctx.theme, "dim") as (t: string) => string;
 
-/**
- * One stat cell on a single line: heading glyph, label, figure.
- *
- * The figure arrives already formatted and already unpriced-aware — this module
- * decides what a number MEANS, `format.ts` decides how it is spelled.
- */
-const statCell = (ctx: ScreenContext, role: IconRole, label: string, figure: string): string =>
-	`${heading(ctx, role, label)} ${figure}`;
+/** One stat cell as [heading, figure]. */
+const statCell = (ctx: ScreenContext, role: IconRole, label: string, figure: string): readonly [string, string] => [
+	heading(ctx, role, label),
+	figure,
+];
+
+/** Cells in one row, in cells. A grid needs a gutter between columns. */
+const CELL_GAP = 3;
+
+/** Cells between a heading and its own figure inside one cell. */
+const FIGURE_GAP = 1;
 
 /**
- * Pack stat cells into as many rows as the width allows, greedily.
+ * The stat strip, as a GRID with a right-aligned figure column.
  *
- * Packed by the widest CELL rather than by a heading column: a heading is short
- * and its figure is not, so packing on headings alone truncates exactly the
- * figure that carries the caveat — `$1,039.27 · 34,870 unpriced` cut to
- * `$1,039.27 · 34,870 u`, which is worse than showing no cell at all. A strip
- * whose columns shift with the digit count of each figure is also unreadable at
- * a glance, which is the only thing a stat strip is for — so every cell in a row
- * is padded to the same measured width.
+ * Each row pads its cells to a common width and its figures to end at that same
+ * column — the same convention `renderRankedBars` uses for the model list, so
+ * the two ranked blocks on one screen agree. The previous version joined whole
+ * cells with three spaces and let them fall where they fell, which put the four
+ * figures at columns 11, 27, 51 and 73: no two comparable, and the strip wrapped
+ * raggedly at width 60.
+ *
+ * A cell is never split across rows. When the width cannot hold them side by
+ * side the strip drops to fewer per row, so a figure is always whole on one
+ * line: a number wrapped mid-digits reads as two numbers, and the cost cell
+ * carries the unpriced caveat, so a truncated one would read as the whole bill.
  */
-function statStrip(ctx: ScreenContext, cells: readonly string[]): readonly string[] {
-	const rows: string[] = [];
-	let row = "";
-	for (const cell of cells) {
-		const withGap = row === "" ? cell : `${row}   ${cell}`;
-		if (row !== "" && Bun.stringWidth(withGap) > ctx.plan.innerWidth) {
-			rows.push(row);
-			row = cell;
-			continue;
+function statStrip(ctx: ScreenContext, cells: readonly (readonly [string, string])[]): readonly string[] {
+	const width = (s: string) => Bun.stringWidth(s);
+
+	// Chunk cells into rows by SIMULATING each row, not by summing each cell's
+	// own width. A row's column is the max over the cells it holds, so adding a
+	// wide cell re-widens every cell already in the row. Summing per-cell widths
+	// under-counted that, packed cost beside requests at width 60, and the row
+	// came out 79 cells wide in a 56-cell panel — clamping `$1,039.27 · 34,870
+	// unpriced` down to `$1`.
+	const columnFor = (chunk: readonly number[]) => {
+		const heading = Math.max(...chunk.map(i => width(cells[i]![0])));
+		return heading + FIGURE_GAP + Math.max(...chunk.map(i => width(cells[i]![1])));
+	};
+	const rowWidth = (chunk: readonly number[]) =>
+		chunk.length * columnFor(chunk) + (chunk.length - 1) * CELL_GAP;
+
+	const chunks: number[][] = [];
+	let current: number[] = [];
+	cells.forEach((_, i) => {
+		if (current.length > 0 && rowWidth([...current, i]) > ctx.plan.innerWidth) {
+			chunks.push(current);
+			current = [i];
+			return;
 		}
-		row = withGap;
-	}
-	if (row !== "") rows.push(row);
-	return rows.map(r => clamp(r, ctx.plan.innerWidth));
+		current.push(i);
+	});
+	if (current.length > 0) chunks.push(current);
+
+	return chunks.map(chunk => {
+		// EQUAL-WIDTH COLUMNS, which is what makes this a grid rather than a run
+		// of sentences. Every cell occupies the same number of cells, so each
+		// figure sits at the same offset inside its column and consecutive figures
+		// are spaced by exactly one column plus one gutter — regular, which is the
+		// property the eye can actually use.
+		//
+		// Note what is NOT claimed: the figures do not share one absolute column
+		// and cannot, because cell i starts at i x (column + gutter). Only the
+		// row's last cell reaches the right edge; the ones before it sit at even
+		// intervals from it. That is a grid. Right-aligning every figure to a
+		// single absolute column is only possible when a row holds ONE cell, which
+		// is the model list's shape and not a strip's.
+		const headingWidth = Math.max(...chunk.map(i => width(cells[i]![0])));
+		const column = columnFor(chunk);
+		const line = chunk
+			.map(i => {
+				const [head, figure] = cells[i]!;
+				return padToWidth(padToWidth(head, headingWidth) + " ".repeat(FIGURE_GAP) + figure, column);
+			})
+			.join(" ".repeat(CELL_GAP))
+			.trimEnd();
+		// A single cell can still exceed the panel on its own — the cost figure
+		// carries the unpriced suffix and is the widest string here — so the last
+		// word is `clamp`, not trust.
+		return clamp(line, ctx.plan.innerWidth);
+	});
+}
+
+/**
+ * A caveat line, or nothing.
+ *
+ * Below the width at which the whole sentence fits, it returns an empty string
+ * rather than a truncated one. A half-sentence about cache-write billing is
+ * worse than no sentence: the reader cannot tell it was cut, so they either
+ * act on the fragment or assume the caveat does not apply.
+ */
+function caveat(ctx: ScreenContext, text: string): readonly string[] {
+	const indented = `  ${dim(ctx)(text)}`;
+	return Bun.stringWidth(indented) > ctx.plan.innerWidth ? [] : [indented];
 }
 
 /**
@@ -178,11 +254,11 @@ function topModels(
 		// figure and its unpriced count is not knowable — claiming "0 unpriced"
 		// would be a claim, so that row states cost alone.
 		if (!source) {
-			return {
-				label: s.label,
-				value: s.values.reduce((sum, v) => sum + v, 0),
-				display: formatCost(s.values.reduce((sum, v) => sum + v, 0)),
-			};
+			// `ChartSeries.values` is `(number | null)[]` because a series may carry
+			// gaps; pivotSeries only produces them for raw points, but the type is
+			// the contract, and a null in a total is a measured zero.
+			const total = s.values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+			return { label: s.label, value: total, display: formatCost(total) };
 		}
 		return {
 			label: s.label,
@@ -203,13 +279,17 @@ function topModels(
 		.sort((a, b) => b.totalRequests - a.totalRequests);
 	const RESTORED = 3;
 	for (const m of dropped.slice(0, RESTORED)) {
+		// Requests beside the money, because a `$0` row with a one-cell bar is
+		// indistinguishable from an empty row without them — EXCEPT when the row is
+		// unpriced, where `costWithUnpriced` already ends in that same request
+		// count. Appending it again printed one number twice under two labels,
+		// which reads as a rendering bug even though it is not one.
+		const cost = costWithUnpriced(m.totalCost, m.unpricedRequests);
 		rows.push({
 			label: m.model,
 			value: m.totalCost,
 			unpriced: m.unpricedRequests,
-			// Requests beside the money, because a `$0` row with a one-cell bar is
-			// indistinguishable from an empty row without them.
-			display: `${costWithUnpriced(m.totalCost, m.unpricedRequests)} · ${formatInteger(m.totalRequests)} req`,
+			display: m.unpricedRequests > 0 ? cost : `${cost} · ${formatInteger(m.totalRequests)} req`,
 		});
 	}
 
@@ -301,8 +381,9 @@ export const overviewScreen: Screen = {
 			keyValue(ctx, "cache share", `${formatPercent(share)} of input`),
 			keyValue(ctx, "output", compactTokens(overall.totalOutputTokens)),
 			// Cache writes sit outside the cache-rate denominator by definition, so a
-			// rate shown alone understates a write-heavy month. Footnoted, not implied.
-			clamp(`  ${dim(ctx)("cache share excludes cache writes, which are billed separately")}`, width),
+			// rate shown alone understates a write-heavy month. Footnoted, not implied,
+			// and dropped whole rather than cut when the width cannot hold it.
+			...caveat(ctx, "cache share excludes cache writes, which are billed separately"),
 			"",
 		);
 
@@ -361,7 +442,7 @@ export const overviewScreen: Screen = {
 		} else {
 			out.push(
 				...models,
-				clamp(`  ${dim(ctx)("ranked by cost · N/A means the spend could not be measured")}`, width),
+				...caveat(ctx, "ranked by cost · N/A means the spend could not be measured"),
 			);
 		}
 		// --- 5. staleness (ADR-0006) ---------------------------------------
