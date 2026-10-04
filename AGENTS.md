@@ -4,7 +4,7 @@
 
 `omp-stats-tui` is a distributable **extension** (shipped inside a **plugin**) that adds a `/stats-tui` slash command to omp 18.4.10. The command renders local usage statistics read from `~/.omp/stats.db` as a **fullscreen overlay** drawn inside the terminal, replacing the browser-launch behaviour of the built-in `/stats` (which becomes the **stats dashboard** — a separate multi-screen browser application over the same records).
 
-This repository is a working extension: source under `src/`, tests under `test/`, the implementation plan under `docs/plans/`. Screens render through the IR now — a `ScreenSpec` declares `Band[]` (`src/layout/spec.ts`) and `renderScreen` (`src/tui/render/screen.ts`) renders them via the band grammar (`src/tui/band.ts`). `LOCAL_BODIES` and `LOCAL_NEEDS` are DELETED (verified absent from `src/`, `test/` and `scripts/`); most screens are thin registry entries whose `render` defers to the pipeline. Three screens (`overview`, `activity`, `models`) still carry hand-written render bodies under migration; `gain`/`providers` render labelled scaffolds and `traces`/`frustration` are excluded.
+This repository is a working extension: source under `src/`, tests under `test/`, the implementation plan under `docs/plans/`. Screens render through the IR now — a `ScreenSpec` declares `Band[]` (`src/layout/spec.ts`) and `renderScreen` (`src/tui/render/screen.ts`) renders them via the band grammar (`src/tui/band.ts`). `LOCAL_BODIES` and `LOCAL_NEEDS` are DELETED (verified absent from `src/`, `test/` and `scripts/`); `overview`, `models`, `costs`, `errors`, `tools`, `requests`, `providers` and `gain` are thin registry entries whose `render` defers to the pipeline. `activity` still carries a hand-written body (the heatmap, its summary line and its loading/empty/error branches); `traces`/`frustration` are excluded.
 
 Vocabulary is load-bearing. `CONTEXT.md` is the glossary; use its terms (request, turn, fact table, rollup table, dirty hour, range, bucket, cache rate, unpriced request, data ink, seam, symbol preset — and, for layout work, band, ScreenSpec, MetricRef, resolve, parity). Where a looser word is already in use and wrong — "message" for a request, "granularity" for bucket, "stale" for dirty hour — do not reintroduce it.
 
@@ -61,10 +61,12 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
 | `AGENTS.md` | **exists** | This file. |
 | `docs/research/omp-stats-tui/REPORT.md` | **exists** | The synthesis. Read this first after `CONTEXT.md`. |
 | `docs/research/omp-stats-tui/findings/` | **exists** | F1–F11, one file per investigation. F9 (import strategies), F10 (glyph system, numeric formatting) and F11 (zero-install paths) are the load-bearing ones for implementation. |
-| `docs/adr/0001…0005` | **exists** | Five settled decisions. See §Settled Decisions. |
+| `docs/adr/0001…0006` | **exists** | Six settled decisions. See §Settled Decisions. |
 | `docs/plans/` | **exists** | `2026-10-03-stats-tui-panel.md` — the implementation plan. |
 | `src/` | **exists** | Real modules. `src/index.ts` (extension entry), `src/data/api.ts` (the data seam: injected reader, typed fetchers, `fetchFor`), `src/data/ranges.ts` (the closed range set), `src/layout/spec.ts` (the IR — `ScreenSpec`, bands, `MetricRef`, `SCREEN_SPECS`), `src/layout/resolve.ts` (`resolveCell` / `resolveNumber` / `resolveLabel` — where a ref meets data), `src/tui/panel.ts` (`SELECTABLE_SCREENS`, the frame), `src/tui/band.ts` (`renderBands`, the G1–G6 grammar), `src/tui/charts/` (`bars.ts`, `heatmap.ts`, `sparkline.ts`, `compose.ts`), `src/tui/screens/` (one module per screen; spec'd screens carry identity and defer `render` to the pipeline), `src/tui/palette.ts` (`PALETTE`, `SERIES_COLORS`), `src/tui/tabs.ts` (`TAB_SHORT`, `tabBarTheme`), `src/tui/footer.ts` (`hintsFor`), `src/tui/layout.ts` (`planLayout`), `src/tui/format.ts`, `src/tui/glyphs.ts`, `src/tui/icons.ts`, `src/sync/` (the ingest subprocess). |
-| `test/` | **exists** | `bun test`. Pure-function tests plus `test/parity.test.ts` (resolver vs the web's own functions on one fixture) and `test/band.test.ts` (the G5 invariant, asserted literally). |
+| `src/tui/chrome.ts` | **exists** | The one nav grammar: `NAV_GROUPS`, `screenForHotkey`, `ago`, `chipFor`, `progressLineFor`, `sidebar`, `topbar`. The sidebar column appears when the frame band allows it; the tab strip stands in as the drawer below that. |
+| `src/tui/responsive.ts` | **exists** | `framePolicy(width)` — the frame band (`wide`/`medium`/`narrow`/`tiny`) and the chrome each band gets, derived from `BREAKPOINTS` in `src/tui/layout.ts`. Pure: no theme, no terminal, no data. |
+| `test/` | **exists** | `bun test` — 619 tests across 42 files. Pure-function tests plus `test/parity.test.ts` (resolver vs the web's own functions on one fixture), `test/band.test.ts` (the G5 invariant, asserted literally), `test/chrome.test.ts`, `test/responsive-frame.test.ts` (frame policy vs `planLayout` at widths 1–200), and one `*-screen.test.ts` per spec'd screen. |
 | `scripts/` | **exists** | `probe-render.ts` (render any screen to stdout at any width), `probe-data.ts`, `probe-glyphs.ts`, `sync-worker.ts`. |
 
 There is a `package.json`, a `bun.lock`, `node_modules`, and a `.gitignore`. All four exist.
@@ -114,7 +116,7 @@ bun test
 bun scripts/probe-render.ts [screenId] [--width N] [--range 24h] [--preset P]
 ```
 
-`bun test` is verified to work as a runner today — it reports `0 test files matching` in this repo, which is the correct result for a repo with no tests.
+`bun test` is verified to work as a runner today — it reports **619 pass / 0 fail across 42 files**. Screens render through the IR, so a screen test asserts its bands and resolved refs, not hand-written rows.
 
 ## Code Conventions & Common Patterns
 
@@ -149,6 +151,8 @@ These are the non-obvious ones. Each has already cost a future agent time once.
 **A value that cannot be resolved is `null`, never `undefined`, never `NaN`, never `"undefined"`.** `src/layout/resolve.ts` returns null explicitly from `resolveCell` / `resolveNumber` / `resolveLabel`; `test/resolve.test.ts` walks every ref in every spec against a route-shaped fixture, and `test/parity.test.ts` walks the same fixture against the web's own functions. An unresolvable ref is a test failure naming the screen and the path, not a blank cell a human has to notice.
 
 **Band order is panel order.** `Band[]` in the spec *is* the vertical order (`src/tui/band.ts` G4: exactly one blank line between consecutive bands, none leading or trailing). Reordering a screen is reordering its bands, not editing a render body.
+
+**One nav grammar, two shapes.** `src/tui/chrome.ts` owns the sidebar, the topbar, the live/sync chip and the hotkey map (`NAV_GROUPS`, `screenForHotkey`, `chipFor`, `progressLineFor`). The panel shows the sidebar column when `framePolicy(width)` says the band affords one and falls back to the tab strip as the drawer below that — so the width decision belongs to `src/tui/responsive.ts` and nowhere else. Never re-derive a width threshold in a chrome module.
 
 ## Important Files
 
@@ -254,5 +258,5 @@ Dead ends already disproven by experiment. Re-testing any of these wastes hours.
 - **Do not print to stdout from extension code.** It corrupts the TUI.
 - **Do not hand-write a multi-series chart.** `src/tui/charts/compose.ts` has no geometry of its own: every mark comes out of `renderDailyBars` called once per series, with band heights sized by each series' peak relative to the shared maximum. `test/chart-primitives.test.ts` asserts this by byte equality, so a second rendering path fails the suite rather than shipping beside the first.
 - **Do not emit a full-width rule in any body.** `src/tui/band.ts` G5: `─`, `━` or `═` inside a band is a bug, full stop. The only rule in the whole panel is the `PanelDivider` between body and footer (G6). `test/band.test.ts` asserts G5 literally for every band kind and every preset.
-- **Do not hardcode a colour or a glyph.** Every colour is a named omp theme token from `src/tui/palette.ts` (`PALETTE`, plus `SERIES_COLORS` for chart series); the theme arrives injected, never from the module-scope singleton. Every heading glyph comes from `statsIcon` in `src/tui/icons.ts` — no screen module may hand-write one, which `test/overview.test.ts` asserts by scanning the source for emoji literals.
+- **Do not hardcode a colour or a glyph.** Every colour is a named omp theme token from `src/tui/palette.ts` (`PALETTE`, plus `SERIES_COLORS` for chart series); the theme arrives injected, never from the module-scope singleton. Every heading glyph comes from `statsIcon` in `src/tui/icons.ts` — no screen module may hand-write one, which `test/overview-screen.test.ts` asserts by scanning the source for emoji literals.
 - **Do not reimplement `pivotSeries`, `densify`, or `buildCostSummary`.** Import them from `@oh-my-pi/omp-stats/client/data/*` and call the host's function on the same input. `test/parity.test.ts` calls the web's own functions and asserts our resolver answers identically, so a second implementation of the arithmetic fails rather than drifting.

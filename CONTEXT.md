@@ -191,3 +191,23 @@ glyph exists cannot.
 **Data ink**:
 The glyphs that carry a magnitude — bar fills, ramp steps, heat cells — as distinct from the chrome drawn
 around them. Data ink must read correctly under every symbol preset; chrome only has to match the panel.
+
+
+**Frame band**:
+The width class a total terminal width falls into — `wide`, `medium`, `narrow`, `tiny`
+(`src/tui/responsive.ts`). Each band fixes what chrome the frame may spend: a full sidebar, an icon
+rail, or none; and a full, condensed or minimal topbar. The band is derived from the breakpoint table
+(`BREAKPOINTS` in `src/tui/layout.ts`) rather than restated beside it, so a retuned threshold flows
+through. Do not confuse it with a band in the layout IR, which is vertical space rather than width.
+
+**Frame policy**:
+One width's answer: its frame band, sidebar and topbar modes, column count and whether a hint row fits
+(`framePolicy` in `src/tui/responsive.ts`). It states no geometry — `planLayout` owns that — and it must
+always agree with `planLayout` at the same width.
+
+**Loading state**:
+The panel's statement that a figure has not arrived yet. It is distinct from an empty result, and an
+empty result is distinct from an error: a heatmap that has not loaded must not draw a grid, because a
+field of zero-day cells reads as a year of silence. Where a host view pins its own wording, ours is the
+host's wording — the summary line's dim ` · syncing…` suffix is the one such string that ships today
+(`src/tui/render/screen.ts`, host `usage-dashboard.ts:847`).
