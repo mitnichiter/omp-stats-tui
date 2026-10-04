@@ -1,0 +1,321 @@
+import { test, expect } from "bun:test";
+import { ensureThemeSync } from "@oh-my-pi/pi-tui/theme";
+import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
+import { NAV_GROUPS } from "../src/tui/chrome";
+import { __testing } from "../src/tui/panel";
+import type { StatsPanel } from "../src/tui/panel";
+import type { PanelData } from "../src/data/api";
+import { RANGES } from "../src/data/ranges";
+import type { Range } from "../src/data/ranges";
+import { hitTest, rangeHit, rangeSpans, sidebarHit, type MouseFrame } from "../src/tui/mouse";
+
+/**
+ * Mouse support: clicks, wheel, hover. Hit areas are pure geometry over the
+ * last rendered frame (fullscreen paints from row 0, so SGR rows map 1:1;
+ * `OverlayPanel` costs one top-border row and two content columns).
+ *
+ * Keyboard stays the full path — every assertion here has a keyboard twin in
+ * test/panel.test.ts, and nothing here removes one.
+ */
+
+ensureThemeSync();
+
+// SGR reports are 1-based; the panel's geometry is 0-based.
+const sgr = (button: number, col1: number, row1: number) => `\x1b[<${button};${col1};${row1}M`;
+const CLICK = 0;
+const MOTION = 35;
+const WHEEL_UP = 64;
+const WHEEL_DOWN = 65;
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+const plain = (panel: StatsPanel, width: number) => panel.render(width).map(line => line.replace(ANSI, ""));
+
+// ---------------------------------------------------------------------------
+// Fixtures (the shape test/panel.test.ts serves: cost on day boundaries)
+// ---------------------------------------------------------------------------
+
+const DAY = 24 * 60 * 60 * 1000;
+const FIXTURE_NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
+const dayStart = (d: number) => Math.floor((FIXTURE_NOW - d * DAY) / DAY) * DAY;
+
+function dataFor(): PanelData {
+	return {
+		overview: {
+			overall: {
+				totalRequests: 1200,
+				successfulRequests: 1180,
+				failedRequests: 20,
+				errorRate: 20 / 1200,
+				totalInputTokens: 1_000_000,
+				totalOutputTokens: 250_000,
+				totalCacheReadTokens: 40_000_000,
+				totalCacheWriteTokens: 2_000_000,
+				cacheRate: 0.93,
+				cacheSavings: 0.18,
+				totalCost: 42.03,
+				unpricedRequests: 0,
+				totalPremiumRequests: 0,
+				avgDuration: 4200,
+				avgTtft: 800,
+				avgTokensPerSecond: 61,
+				firstTimestamp: dayStart(20),
+				lastTimestamp: dayStart(0),
+			},
+			byAgentType: [],
+			timeSeries: [],
+		},
+		costs: {
+			costSeries: [
+				{
+					timestamp: dayStart(20),
+					model: "m",
+					provider: "p",
+					cost: 0.01,
+					unpricedRequests: 0,
+					costInput: 0.01,
+					costOutput: 0,
+					costCacheRead: 0,
+					costCacheWrite: 0,
+					requests: 9000,
+					tokens: 9_000_000,
+				},
+			],
+		},
+		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
+	} as unknown as PanelData;
+}
+
+async function settledPanel(state: { rows?: number } = {}): Promise<StatsPanel> {
+	const panel = __testing.makePanel({ data: dataFor(), rows: state.rows ?? 40, now: () => FIXTURE_NOW });
+	return __testing.settled(panel);
+}
+
+// ---------------------------------------------------------------------------
+// sidebarHit: NAV_GROUPS order, headings inert
+// ---------------------------------------------------------------------------
+
+test("sidebar rows follow NAV_GROUPS: one heading row per group, then its screens", () => {
+	const expected: (string | null)[] = [];
+	for (const group of NAV_GROUPS) {
+		expected.push(null);
+		for (const item of group.items) expected.push(item.id);
+	}
+	// Three headings plus eight screens: the eleven nav rows the panel's
+	// MIN_SIDEBAR_ROWS comment counts.
+	expect(expected.length).toBe(11);
+	for (let row = 0; row < expected.length; row++) {
+		expect(sidebarHit(row), `row ${row}`).toBe(expected[row]);
+	}
+});
+
+test("sidebarHit is null past the nav and for negative rows", () => {
+	expect(sidebarHit(-1)).toBeNull();
+	expect(sidebarHit(11)).toBeNull();
+	expect(sidebarHit(40)).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// rangeSpans / rangeHit: segments found by label, gaps inert
+// ---------------------------------------------------------------------------
+
+function syntheticTopbar(): string {
+	const segments = RANGES.map(id => ` ${rangeMeta(id as Range).label} `).join(" ");
+	return ["omp/stats", "Live", segments].join("  ");
+}
+
+test("every range segment resolves to its range, and only its own cells do", () => {
+	const line = syntheticTopbar();
+	const spans = rangeSpans(line);
+	expect(spans.map(span => span.id)).toEqual([...RANGES]);
+	for (const span of spans) {
+		expect(span.end - span.start).toBeGreaterThan(0);
+		for (let col = span.start; col < span.end; col++) {
+			expect(rangeHit(line, col), `col ${col}`).toBe(span.id);
+		}
+	}
+});
+
+test("brand, chip and the gaps between segments hit nothing", () => {
+	const line = syntheticTopbar();
+	expect(rangeHit(line, 0)).toBeNull();
+	expect(rangeHit(line, 4)).toBeNull();
+	const first = rangeSpans(line)[0]!;
+	expect(rangeHit(line, first.start - 1)).toBeNull();
+	expect(rangeHit(line, -1)).toBeNull();
+	expect(rangeHit(line, line.length + 10)).toBeNull();
+});
+
+// ---------------------------------------------------------------------------
+// hitTest: frame-level routing with synthetic coordinates
+// ---------------------------------------------------------------------------
+
+function syntheticFrame(over: Partial<MouseFrame> = {}): MouseFrame {
+	return {
+		topbarRows: 1,
+		stripRows: 1,
+		sidebarWidth: 0,
+		sidebarRows: 0,
+		topbar: syntheticTopbar(),
+		tabAt: () => undefined,
+		...over,
+	};
+}
+
+test("the top border row and negative coordinates hit nothing", () => {
+	const frame = syntheticFrame();
+	expect(hitTest(frame, 0, 5)).toEqual({ type: "none" });
+	expect(hitTest(frame, -1, 5)).toEqual({ type: "none" });
+	expect(hitTest(frame, 1, 0)).toEqual({ type: "none" });
+	expect(hitTest(frame, 1, 1)).toEqual({ type: "none" });
+});
+
+test("a progress row under the topbar is not the topbar", () => {
+	const frame = syntheticFrame({ topbarRows: 2, stripRows: 0 });
+	const span = rangeSpans(frame.topbar)[0]!;
+	// Overlay row 1 is the topbar: its segment still routes.
+	expect(hitTest(frame, 1, span.start + 2)).toEqual({ type: "range", id: span.id });
+	// Overlay row 2 is the progress line: the same columns route nowhere.
+	expect(hitTest(frame, 2, span.start + 2)).toEqual({ type: "none" });
+});
+
+test("strip rows route through tabAt; misses and missing cols are inert", () => {
+	const frame = syntheticFrame({ tabAt: (line, col) => (line === 0 && col >= 4 && col < 12 ? "models" : undefined) });
+	expect(hitTest(frame, 2, 6)).toEqual({ type: "screen", id: "models", via: "strip" });
+	expect(hitTest(frame, 2, 3)).toEqual({ type: "none" });
+	expect(hitTest(syntheticFrame(), 2, 6)).toEqual({ type: "none" });
+});
+
+test("sidebar rows route only inside the sidebar width; body cols are inert", () => {
+	const frame = syntheticFrame({ stripRows: 0, sidebarWidth: 24, sidebarRows: 11 });
+	// Overlay row = 1 (border) + topbarRows + stripRows + nav row, so nav row
+	// 1 (`overview`) sits at overlay row 3 and nav row 2 (`models`) at row 4.
+	expect(hitTest(frame, 3, 5)).toEqual({ type: "screen", id: "overview", via: "sidebar" });
+	expect(hitTest(frame, 4, 5)).toEqual({ type: "screen", id: "models", via: "sidebar" });
+	// Same row, past the sidebar width, is body text: no target.
+	expect(hitTest(frame, 4, 2 + 24 + 5)).toEqual({ type: "none" });
+	// Nav row 0 is the group heading: inert even inside the width.
+	expect(hitTest(frame, 2, 5)).toEqual({ type: "none" });
+	// Past the eleven nav rows the padding column is inert too.
+	expect(hitTest(frame, 1 + 1 + 11, 5)).toEqual({ type: "none" });
+});
+
+test("a hidden sidebar leaves no dead click zone", () => {
+	const frame = syntheticFrame({ stripRows: 0, sidebarWidth: 0, sidebarRows: 0 });
+	expect(hitTest(frame, 3, 2)).toEqual({ type: "none" });
+	expect(hitTest(frame, 3, 30)).toEqual({ type: "none" });
+});
+
+// ---------------------------------------------------------------------------
+// Panel integration: clicks switch screens and ranges
+// ---------------------------------------------------------------------------
+
+test("clicking a sidebar row switches screens; headings do nothing", async () => {
+	const panel = await settledPanel();
+	const width = 100;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.sidebarRows).toBe(11);
+	const overlayRow = (navRow: number) => 1 + frame.topbarRows + frame.stripRows + navRow + 1;
+	// Nav row 2 is `models`; content col 0 is overlay col 2.
+	panel.handleInput(sgr(CLICK, 3, overlayRow(2)));
+	expect(__testing.debugScreenId(panel)).toBe("models");
+	// Nav row 0 is the `Usage` heading: the screen does not move.
+	panel.handleInput(sgr(CLICK, 3, overlayRow(0)));
+	expect(__testing.debugScreenId(panel)).toBe("models");
+	// Nav row 9 is `tools` in the third group: groups all map.
+	panel.handleInput(sgr(CLICK, 3, overlayRow(9)));
+	expect(__testing.debugScreenId(panel)).toBe("tools");
+});
+
+test("clicking a tab-strip tab switches screens", async () => {
+	const panel = await settledPanel();
+	const width = 60;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.stripRows).toBeGreaterThan(0);
+	expect(frame.sidebarRows).toBe(0);
+	const stripStart = 1 + frame.topbarRows;
+	// Scan the TabBar's own zones for the `models` tab: the strip collapses to
+	// one-cell shorts at this width, so full labels are not on screen.
+	let hit: { row: number; col: number } | null = null;
+	for (let line = 0; line < frame.stripRows && hit === null; line++) {
+		for (let col = 0; col < 60 && hit === null; col++) {
+			if (frame.tabAt(line, col) === "models") hit = { row: stripStart + line, col: col + 2 };
+		}
+	}
+	expect(hit).not.toBeNull();
+	panel.handleInput(sgr(CLICK, hit!.col + 1, hit!.row + 1));
+	expect(__testing.debugScreenId(panel)).toBe("models");
+});
+
+test("clicking a topbar range segment changes the range; clicking body does nothing", async () => {
+	const panel = await settledPanel();
+	const width = 100;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	const col = frame.topbar.indexOf(` ${rangeMeta("7d").label} `);
+	expect(col).not.toBe(-1);
+	panel.handleInput(sgr(CLICK, col + 2 + 1, 1 + 1));
+	await __testing.settled(panel);
+	expect(__testing.debugRange(panel)).toBe("7d");
+	const before = __testing.debugScreenId(panel);
+	const overlayRow = 1 + frame.topbarRows + frame.stripRows + 12 + 1;
+	panel.handleInput(sgr(CLICK, 60, overlayRow));
+	expect(__testing.debugScreenId(panel)).toBe(before);
+	expect(__testing.debugRange(panel)).toBe("7d");
+});
+
+// ---------------------------------------------------------------------------
+// Wheel and hover through the real input path
+// ---------------------------------------------------------------------------
+
+test("the wheel scrolls the body through handleInput", async () => {
+	const panel = await settledPanel({ rows: 10 });
+	plain(panel, 100);
+	expect(__testing.debugMaxScroll(panel)).toBeGreaterThan(0);
+	expect(__testing.debugScroll(panel)).toBe(0);
+	panel.handleInput(sgr(WHEEL_DOWN, 50, 8));
+	expect(__testing.debugScroll(panel)).toBe(2);
+	panel.handleInput(sgr(WHEEL_UP, 50, 8));
+	expect(__testing.debugScroll(panel)).toBe(0);
+});
+
+test("hover over a strip tab arms the host hover style; leaving clears it", async () => {
+	const panel = await settledPanel();
+	const width = 60;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	const stripStart = 1 + frame.topbarRows;
+	let hit: { row: number; col: number } | null = null;
+	for (let line = 0; line < frame.stripRows && hit === null; line++) {
+		for (let col = 0; col < 60 && hit === null; col++) {
+			if (frame.tabAt(line, col) === "models") hit = { row: stripStart + line, col: col + 2 };
+		}
+	}
+	expect(hit).not.toBeNull();
+	const before = panel.render(width)[stripStart]!;
+	panel.handleInput(sgr(MOTION, hit!.col + 1, hit!.row + 1));
+	expect(__testing.debugHoverTab(panel)).toBe("models");
+	const hovered = panel.render(width)[stripStart]!;
+	// The paint is the host's own `hoverTab` token (selectedBg + text), never
+	// an invented style — so the row must differ by ESCAPES, not by cells.
+	expect(hovered).not.toBe(before);
+	expect(hovered.replace(ANSI, "")).toBe(before.replace(ANSI, ""));
+	// The pointer over the body clears the tab hover and restores the row.
+	panel.handleInput(sgr(MOTION, 40, stripStart + frame.stripRows + 3 + 1));
+	expect(__testing.debugHoverTab(panel)).toBeNull();
+	expect(panel.render(width)[stripStart]).toBe(before);
+});
+
+test("clicks never leak to the keyboard map and the keys still work", async () => {
+	const panel = await settledPanel();
+	plain(panel, 100);
+	// A release report and a click on empty chrome change nothing.
+	panel.handleInput("\x1b[<0;50;20m");
+	panel.handleInput(sgr(CLICK, 90, 39));
+	expect(__testing.debugScreenId(panel)).toBe("overview");
+	// Keyboard stays the full path.
+	panel.handleInput("r");
+	await __testing.settled(panel);
+	expect(__testing.debugRange(panel)).not.toBe("24h");
+});
