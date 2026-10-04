@@ -154,6 +154,13 @@ These are the non-obvious ones. Each has already cost a future agent time once.
 
 **One nav grammar, two shapes.** `src/tui/chrome.ts` owns the sidebar, the topbar, the live/sync chip and the hotkey map (`NAV_GROUPS`, `screenForHotkey`, `chipFor`, `progressLineFor`). The panel shows the sidebar column when `framePolicy(width)` says the band affords one and falls back to the tab strip as the drawer below that — so the width decision belongs to `src/tui/responsive.ts` and nowhere else. Never re-derive a width threshold in a chrome module.
 
+**Loading, empty and error are three states, never merged.** On the activity calendar: a payload that
+has not arrived prints "Usage history unavailable." plus why, a fetched-but-empty range prints "No
+activity recorded.", and a failed fetch reaches the panel's own error phase (`fetchFor` throws rather
+than degrading). **We deliberately deviate from `/usage` here**: it renders a fetched-but-empty range as
+a zero-filled grid, and a field of empty cells is a claim about someone's usage that happens to be
+wrong. Do not "restore parity" on this one without that argument.
+
 ## Important Files
 
 Absolute paths, all verified present on disk. **These are read-only host files. Do not modify them.**

@@ -207,7 +207,14 @@ always agree with `planLayout` at the same width.
 
 **Loading state**:
 The panel's statement that a figure has not arrived yet. It is distinct from an empty result, and an
-empty result is distinct from an error: a heatmap that has not loaded must not draw a grid, because a
-field of zero-day cells reads as a year of silence. Where a host view pins its own wording, ours is the
-host's wording — the summary line's dim ` · syncing…` suffix is the one such string that ships today
-(`src/tui/render/screen.ts`, host `usage-dashboard.ts:847`).
+empty result is distinct from an error, and the three are never merged. On the activity calendar a
+day with no requests is an empty day and reads as an empty cell; an entire empty range is "nothing
+recorded" and is stated in words, not drawn as a field of zero-day cells that would read as a quiet
+year; a payload that never arrived says so (`src/tui/screens/activity.ts`). A fetch that fails is not
+one of these states at all — it reaches the panel's own error phase, because `fetchFor` throws rather
+than returning a degraded payload.
+
+_Deliberate deviation_: `/usage` renders a fetched-but-empty range as a zero-filled grid. We state it
+instead. A grid of empty cells is a claim about someone's usage, and a wrong one, where one line of
+words is not. Where a host view does pin wording we reuse it — the summary line's dim ` · syncing…`
+suffix is such a case (`src/tui/render/screen.ts`, host `usage-dashboard.ts:847`).
