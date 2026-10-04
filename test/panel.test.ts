@@ -18,6 +18,8 @@ import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
 import { TAB_SHORT } from "../src/tui/tabs";
 import { hintsFor } from "../src/tui/footer";
+import { SIDE_INSET } from "../src/tui/layout";
+import { liveData } from "./fixtures/panel";
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 
 /**
@@ -408,6 +410,49 @@ test("the composed frame at width 60: the nav becomes the strip row and everythi
 	}
 	expect(plain.filter(row => row.includes("├")).length).toBe(1);
 	expect(plain[plain.length - 2]).toContain("close");
+});
+
+test("no body row is CUT beside the sidebar: the body is planned at the width it is drawn in", async () => {
+	// A CLASS OF BUG NO BODY-SIDE TEST — AND NO COMPOSED-FRAME WIDTH TEST — CAN
+	// SEE.
+	//
+	// Body-side tests render `renderScreen` in isolation and assert
+	// `visibleWidth(row) <= plan.innerWidth`, which was TRUE OF THE BUG: the plan
+	// said 146 and the rows were 146. The cut happens downstream, in `PanelRows`.
+	//
+	// The obvious composed-frame replacement is worse than useless: `PanelRows`
+	// truncates silently, so every composed row fits `width` BY CONSTRUCTION and
+	// `visibleWidth(composedRow) <= room` is true whether or not content was
+	// destroyed. Measured: that version stayed green with the fix reverted.
+	//
+	// What IS observable is the panel's own contract one step earlier — the lines
+	// it is ABOUT to zip beside the nav must already fit the room the nav leaves.
+	// That is `state.source`, the body before composition, checked against
+	// `width - insets - (sidebarWidth + 3)`.
+	//
+	// `liveData`, not this file's `dataFor()`: `dataFor`'s body never reaches the
+	// inner width, so there is nothing to lose and any such test passes
+	// vacuously. Width 80 is the control — no nav column, so the reservation is
+	// zero and the body is legitimately drawn at the full inner width.
+	let sawAFullWidthBody = false;
+	for (const width of [150, 100, 80]) {
+		const panel = __testing.makePanel({ data: liveData(), rows: 40 });
+		await __testing.settled(panel);
+		panel.render(width);
+		const geometry = __testing.debugFrame(panel)!;
+		// The zip's own prefix width (`${side} ${gutter} ${line}`), not a guessed
+		// gutter: the plan and the zip must agree on this number or the same cut
+		// returns at a different size.
+		const reserved = geometry.sidebarWidth > 0 ? geometry.sidebarWidth + 3 : 0;
+		const room = width - 2 * SIDE_INSET - reserved;
+		const body = __testing.debugState(panel).source.map(line => stripAnsi(line));
+		for (const [index, line] of body.entries()) {
+			expect(Bun.stringWidth(line), `width=${width} row=${index} reserved=${reserved} room=${room}`).toBeLessThanOrEqual(room);
+		}
+		if (body.some(line => Bun.stringWidth(line) === room)) sawAFullWidthBody = true;
+	}
+	// Without this the sweep could pass by never once reaching the room.
+	expect(sawAFullWidthBody, "the fixture must fill the body width somewhere, or nothing was proven").toBe(true);
 });
 
 // ─── the sidebar is a FRAME region, never part of the scrolled body ───────────

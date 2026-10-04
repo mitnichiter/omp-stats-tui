@@ -21,7 +21,8 @@ import { costsForBuckets, renderDailyBars } from "./charts/bars";
 import { costWithUnpriced, formatInteger, formatPercent, tokenCells } from "./format";
 import { glyph, glyphsFor, type SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
-import { LABEL_WIDTH, planLayout, type LayoutPlan } from "./layout";
+// `MIN_USABLE_WIDTH` floors the narrowed body plan — see `render`.
+import { LABEL_WIDTH, MIN_USABLE_WIDTH, planLayout, type LayoutPlan } from "./layout";
 import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
 import { SCREEN_SPECS } from "../layout/spec";
 import { renderScreenWith } from "./render/screen";
@@ -632,7 +633,27 @@ export class StatsPanel implements Component {
 		// chrome row that replaced the header, one more per wrap.
 		const headerLines = [...topLines, ...strip];
 		const body = bodyRows(rows, headerLines.length);
-		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
+		// THE BODY IS PLANNED AT THE WIDTH IT WILL BE DRAWN IN. When a nav column
+		// exists it is zipped BESIDE the body by `#zipSidebar`, whose prefix is
+		// `sidebarWidth + 3` cells — the sidebar, a space, the gutter, a space. The
+		// plan used the overlay's full inner width anyway, so every body row was
+		// drawn wider than the room it had and `PanelRows` truncated the excess:
+		// 21 cells lost off the right of every line, which is where the stray `…`
+		// at the end of the stat rows came from.
+		//
+		// The number is the ZIP'S OWN prefix width, not a guessed gutter — the
+		// plan and the composition have to agree on it, or the same cut returns at
+		// a different size. `band.ts` treats `plan.innerWidth` as a hard ceiling
+		// and responds by DROPPING COLUMNS BY PRIORITY rather than overflowing,
+		// so narrowing here degrades honestly instead of silently clipping.
+		//
+		// `Math.max(MIN_USABLE_WIDTH, …)`: a terminal narrower than the nav would
+		// otherwise plan a negative inner width. Only the BODY plan narrows —
+		// `this.#panel.render(width)` still gets the raw width, and the progress
+		// line above already used the full inner width, because both are chrome
+		// rows and both stay full-bleed.
+		const sidebarCols = column ? sidebarWidth + 3 : 0;
+		const plan = { ...planLayout(Math.max(MIN_USABLE_WIDTH, width - sidebarCols), rows, preset), bodyRows: body };
 
 		// The BODY is the only thing that scrolls, and it is sliced as plain
 		// full-width lines. The nav column is attached AFTER the slice
