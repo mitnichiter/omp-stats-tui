@@ -389,11 +389,16 @@ test("an empty legend contributes nothing", () => {
 
 test("statRow lays tiles out in columns of at least 1 and fills the row", () => {
 	const rendered = renderBands([{ kind: "statRow", stats: tiles }], ctx({ innerWidth: 78 }));
-	// 78 / 34 = 2 columns → 2 tile rows for 4 tiles, and each tile is label +
-	// value + hint = 3 rows. A row of tiles is a RECTANGLE: every tile
-	// contributes its rows or none, so the grid never goes ragged.
-	expect(rendered).toHaveLength(6);
-	for (const row of rendered) expect(row.trim()).not.toBe("");
+	// The grid is MEASURED, not divided: one column is as wide as the widest tile
+	// (here `23.2B cache-read`), and as many columns fit in 78 cells share that
+	// width. A row of tiles is a RECTANGLE — every tile contributes its rows or
+	// none, so the grid never goes ragged — and a tile row emits only the slot
+	// rows it has text for, so no tile row contributes a blank line.
+	expect(rendered.length).toBe(5);
+	for (const row of rendered) {
+		expect(row.trim(), JSON.stringify(row)).not.toBe("");
+		expect(visibleWidth(row)).toBeLessThanOrEqual(78);
+	}
 });
 
 test("statRow drops a hint that does not fit whole and never truncates one", () => {

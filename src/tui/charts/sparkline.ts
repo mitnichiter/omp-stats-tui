@@ -41,9 +41,26 @@
 
 import { costWithUnpriced, formatInteger } from "../format";
 import { glyph, type GlyphValue, type SymbolPreset } from "../glyphs";
+import { visibleWidth, truncateToWidth } from "@oh-my-pi/pi-tui/utils";
 
 /** Gap between a share bar's track and its readout, in cells. */
 const SHARE_GAP = 1;
+/**
+ * The most cells a horizontal bar may occupy.
+ *
+ * Web parity, not taste: `MeterCell`'s meter is `width: 64px` (styles.css:
+ * 1401-1403) next to a 13px figure, so the bar is roughly three times the
+ * figure's width. A terminal cell is about as wide as the web's 13px figure
+ * column, so 48 cells is the same proportion — and far short of the 113 cells
+ * a 146-cell panel used to hand the top row, which read as a solid block rather
+ * than as a measurement.
+ *
+ * Exported so the share-bar rows in `render/screen.ts` budget against the SAME
+ * bound. A share bar is a ranked bar with one row, and letting the two
+ * primitives disagree about how wide a bar may be is how one of them ends up
+ * full-bleed again.
+ */
+export const BAR_TRACK_MAX = 48;
 
 // ─── Sparkline ───────────────────────────────────────────────────────────────
 
@@ -118,34 +135,56 @@ export interface RankedBarsOptions {
 	dim: (text: string) => string;
 }
 
-/** Truncate to `width` cells with a trailing ellipsis, measured not counted. */
+/**
+ * Truncate to `width` cells with a trailing ellipsis.
+ *
+ * Measured in ANSI-AWARE cells. `Bun.stringWidth` counts the escape BYTES of a
+ * coloured string, so a themed figure measured wider than it rendered and every
+ * row was truncated — a bare `…` off the end of the burn chart.
+ */
 function ellipsize(text: string, width: number): string {
 	if (width <= 0) return "";
-	if (Bun.stringWidth(text) <= width) return text;
-	let out = "";
-	for (const ch of text) {
-		if (Bun.stringWidth(out + ch) > Math.max(0, width - 1)) break;
-		out += ch;
-	}
-	return `${out}…`;
+	if (visibleWidth(text) <= width) return text;
+	return truncateToWidth(text, width);
 }
 
-function padStartCells(text: string, width: number): string {
-	const gap = width - Bun.stringWidth(text);
+function padStartTo(text: string, width: number): string {
+	const gap = width - visibleWidth(text);
 	return gap > 0 ? " ".repeat(gap) + text : text;
 }
 
-function padEndCells(text: string, width: number): string {
-	const gap = width - Bun.stringWidth(text);
+function padEndTo(text: string, width: number): string {
+	const gap = width - visibleWidth(text);
 	return gap > 0 ? text + " ".repeat(gap) : text;
 }
 
 /**
- * A ranked horizontal bar list: label, bar, value, one row per entry.
+ * Clamp to `width` cells, measured in CELLS rather than UTF-16 units.
+ *
+ * A guard, never a source of an ellipsis: every caller sizes its parts to fit,
+ * so this only fires when a caller hands in a width smaller than the content
+ * it asked for.
+ */
+function clampLine(text: string, width: number): string {
+	return visibleWidth(text) > width ? truncateToWidth(text, width) : text;
+}
+/**
+ * A ranked horizontal bar list: label, bar, figure, one row per entry.
  *
  * Every row shares ONE divisor — `maxShown`, the largest value in the shown
  * set — which is what makes the bars directly comparable and removes the need
- * for an axis, ticks or a legend. Crush, ratatui and btop all scale this way.
+ * for an axis, ticks or a legend.
+ *
+ * **The track is BOUNDED.** The defect this fixes: `track = width - label -
+ * readout` handed the bar every cell the label and figure did not want, so at
+ * 146 columns the top provider painted 113 solid cells and the second provider
+ * painted one — a solid purple block with a stray tick under it, which reads as
+ * a background, not a measurement. The web's own `MeterCell` meter is 64px
+ * (styles.css:1401-1403) beside the figure; the terminal equivalent is the
+ * same proportion, so the bar takes at most {@link BAR_TRACK_MAX} cells.
+ *
+ * A bounded track means the row is SHORTER than the panel, which is the point:
+ * a ranked list is a column of marks, not a full-bleed background.
  */
 export function renderRankedBars(rows: readonly RankedRow[], opts: RankedBarsOptions): readonly string[] {
 	// The one case where returning nothing is right: an empty list has genuinely
@@ -168,26 +207,61 @@ export function renderRankedBars(rows: readonly RankedRow[], opts: RankedBarsOpt
 	// by zero. Rule 4 then still emits a cell, so the row stays visible.
 	const divisor = maxShown > 0 ? maxShown : 1;
 
-	// One label column for the whole list, sized to the longest label that fits,
-	// so bars start at the same x and stay comparable down the column.
-	const readoutWidth = Math.max(...sorted.map((r) => readoutFor(r).length));
-	const labelWidth = Math.min(
-		Math.max(...sorted.map((r) => r.label.length)),
-		Math.max(0, Math.floor(width / 2)),
-	);
-	const track = Math.max(1, width - labelWidth - readoutWidth - 2);
+	// ── The budget, spent in PRIORITY ORDER ──────────────────────────────────
+	//
+	// Three parts compete for the row, and the order below IS the truncation
+	// policy for a ranked list:
+	//
+	//   1. the FIGURE — the measurement. Never truncated, never dropped; a row
+	//      with no figure says nothing at all.
+	//   2. the BAR — the ranking. It yields first, because a shorter bar still
+	//      compares correctly against its neighbours (one divisor across the
+	//      list) whereas a missing bar is merely honest.
+	//   3. the LABEL — the identity. Truncated last, and only while it keeps
+	//      enough characters to identify the row; below that it is DROPPED rather
+	//      than reduced to a bare `…`, which is the floating ellipsis the policy
+	//      forbids.
+	//
+	// The defect this replaces: the row was `label bar figure` with the bar
+	// taking `width - label - figure`, so at a narrow width the label was
+	// ellipsized to nothing and the figure was pushed off the end, leaving
+	// `openrouter █ …` — an ellipsis standing alone as a cell.
+	const readoutWidth = Math.max(...sorted.map((r) => visibleWidth(readoutFor(r))));
+	const wantedLabel = Math.max(...sorted.map((r) => visibleWidth(r.label)));
+	// A label worth printing: enough characters to tell two rows apart, and never
+	// more than a third of the row so the bar keeps a share of it.
+	const minLabel = Math.min(6, wantedLabel);
+	const labelWidth = Math.max(0, Math.min(wantedLabel, Math.floor(width / 3), Math.max(0, width - readoutWidth - 1)));
+	// The BOUND. Below it the bar still reads a ratio across ten orders of
+	// magnitude (a tenth of a cell per percent); above it a bar stops being a bar
+	// and becomes a background.
+	const track = Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - readoutWidth - 2));
+	// Whether the label survives at all. `label + figure + one gutter` must fit in
+	// `width`, or the label goes: a label squeezed to one cell of `…` is the
+	// floating ellipsis, and dropping it leaves a bar and a figure that both
+	// still mean something.
+	const keepLabel = labelWidth >= minLabel && labelWidth + readoutWidth + 1 <= width;
 
 	return sorted.map((row) => {
-		// Rule 4: the one-cell floor. A row that rendered nothing would be
-		// indistinguishable from a row the query never returned — and this may be
-		// the unpriced model the user most needs to see.
-		const filled = Math.max(1, Math.min(track, Math.round((row.value / divisor) * track)));
+		// Rule 4: the one-cell floor on the bar. A row that rendered no bar at all
+		// would be indistinguishable from a row the query never returned — and
+		// this may be the unpriced model the reader most needs to see.
+		const filled = track === 0 ? 0 : Math.max(1, Math.min(track, Math.round((row.value / divisor) * track)));
 
-		const label = padEndCells(row.label, labelWidth);
-		const readout = padStartCells(readoutFor(row), readoutWidth);
-		const bar = opts.accent(fill.repeat(filled)) + opts.dim(blank.repeat(track - filled));
+		// Measured in ANSI-AWARE cells. `Bun.stringWidth` counts the escape BYTES
+		// of a coloured glyph, so under a real theme every row measured over-wide
+		// and was truncated — the `…` at the right of the burn chart.
+		const readout = padStartTo(readoutFor(row), readoutWidth);
+		const label = keepLabel ? `${padEndTo(ellipsize(row.label, labelWidth), labelWidth)} ` : "";
+		const bar =
+			track === 0
+				? ""
+				: `${opts.accent(fill.repeat(filled))}${opts.dim(blank.repeat(track - filled))}${keepLabel ? " " : ""}`;
 
-		return ellipsize(`${label} ${bar} ${readout}`, width);
+		// One row, clamped to the width it was given. Every part above was
+		// budgeted against the same `width`, so this is a guard rather than a
+		// source of an ellipsis: the parts are the row's own label, bar and figure.
+		return clampLine(`${label}${bar}${readout}`, width);
 	});
 }
 

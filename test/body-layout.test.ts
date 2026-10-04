@@ -30,7 +30,7 @@ import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
 import { renderBands, type Band, type BandRenderOptions, type Column } from "../src/tui/band";
 import { renderRankedBars } from "../src/tui/charts/sparkline";
-import { renderScreen, type ScreenRenderOptions } from "../src/tui/render/screen";
+import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
 import { PALETTE, SERIES_COLORS, stripForTest } from "../src/tui/palette";
@@ -225,15 +225,36 @@ test("D2: a ranked row carries a label, a bar and exactly one figure", () => {
 		],
 		{ width: 146, accent: t => t, dim: t => t },
 	);
-	for (const row of rows) {
-		const stripped = plain(row);
+	// Each row carries ITS OWN label — the renderer's label column is one width
+	// for the whole list, so every label is padded (or ellipsized) to it — plus a
+	// bar and a figure, and nothing after the figure.
+	rows.forEach((row, index) => {
+		const stripped = plain(row as string);
 		expect(stripped.trimEnd(), JSON.stringify(stripped)).toBe(stripped);
-		expect(stripped).toContain("opencode-go".slice(0, 8));
-	}
-	// Sorted descending, one bar per entry, and no `…` anywhere in the list.
+		expect(stripped).toContain(index === 0 ? "opencode-go" : "google-antigravity");
+		expect(stripped).toMatch(/[█░]/);
+	});
+	// Sorted descending: the largest row leads.
 	expect(rows[0]).toContain("opencode-go");
 	expect(rows[1]).toContain("google-antigravity");
 	expect(rows.join("")).not.toContain("…");
+});
+
+test("D2: a ranked list drops its LABEL rather than reducing it to a bare `…`", () => {
+	// The truncation policy's last step, at its narrowest: below the width a
+	// label can keep, it goes entirely and the bar and figure carry the row.
+	const rows = renderRankedBars(
+		[
+			{ label: "opencode-go", value: 1_045_814_212 },
+			{ label: "google-antigravity", value: 602 },
+		],
+		{ width: 22, accent: t => t, dim: t => t },
+	);
+	for (const row of rows) {
+		const stripped = plain(row as string);
+		expect(stripped, JSON.stringify(stripped)).not.toMatch(FLOATING_ELLIPSIS);
+		expect(visibleWidth(stripped)).toBeLessThanOrEqual(22);
+	}
 });
 
 test("D2: ANSI in a bar is not counted as width, so the row is not truncated", () => {
@@ -294,8 +315,8 @@ const TOTALS: readonly Column[] = [
 	{ key: "Tokens", header: "Tokens", align: "right" },
 ];
 
-const TOTALS_ROWS = {
-	kind: "inline" as const,
+const TOTALS_ROWS: { kind: "inline"; rows: readonly Readonly<Record<string, string>>[] } = {
+	kind: "inline",
 	rows: [
 		{ Provider: "opencode-go", Requests: "36,616 ████████", "Error rate": "0.2%", Tokens: "1B ████████" },
 		{ Provider: "google-antigravity", Requests: "4,197 ░░", "Error rate": "none", Tokens: "201.5M ░" },
@@ -308,20 +329,22 @@ test("D3: every table header lines up with the column of data beneath it", () =>
 		bandCtx({}),
 	);
 	const header = plain(rendered[1] as string);
-	for (const row of rendered.slice(2, 4)) {
-		const data = plain(row);
-		for (const column of TOTALS) {
-			const cell = TOTALS_ROWS.rows.find(r => r[column.key] !== undefined)?.[column.key];
-			expect(cell, column.header).toBeDefined();
+	// Each rendered row is checked against ITS OWN cells, because a column's
+	// width is the widest of its cells — so row 1's `none` is narrower than
+	// row 0's `0.2%` and only the padding, not the position, may differ.
+	TOTALS_ROWS.rows.forEach((expected, rowIndex) => {
+		const data = plain(rendered[2 + rowIndex] as string);
+		TOTALS.forEach((column, index) => {
+			const cell = expected[column.key] as string;
 			const h = span(header, column.header, column.align);
-			const c = span(data, cell as string, column.align);
+			const c = span(data, cell, column.align);
 			if (column.align === "right") {
-				expect(h.end, `${column.header} end`).toBe(c.end);
+				expect(h.end, `${column.header} end vs ${cell}`).toBe(c.end);
 			} else {
-				expect(h.start, `${column.header} start`).toBe(c.start);
+				expect(h.start, `${column.header} start vs ${cell}`).toBe(c.start);
 			}
-		}
-	}
+		});
+	});
 });
 
 test("D3: the reported table — headers over the wrong cells — is fixed", () => {
@@ -360,16 +383,20 @@ test("D3: a column is sized by its DATA, not by its header", () => {
 });
 
 test("D3: a meter cell shows its FIGURE beside a short bar, not a block of blocks", () => {
-	// The web's MeterCell is `formatInteger(value)` + a 64px meter. Ours drew
-	// twelve glyph cells and no number, so the header "Requests" sat over a
-	// block that said nothing.
-	const rendered = renderScreen(opts(specOf("providers"), liveData(), 150));
-	const body = text(rendered);
-	expect(body).toMatch(/36,616/);
-	// A meter block no wider than a dozen cells, and never the whole row.
-	const meterRun = /([█#]+)/.exec(body);
-	expect(meterRun, "providers table has a meter").not.toBeNull();
-	expect(visibleWidth(meterRun![1] as string)).toBeLessThanOrEqual(16);
+	// The web's MeterCell is `formatInteger(value)` + a 64px meter
+	// (Table.tsx:199-207). Ours drew twelve glyph cells and no number, so the
+	// header "Requests" sat over a block that said nothing — a magnitude with no
+	// value under a header naming a figure that was not on the page.
+	const body = text(renderScreen(opts(specOf("providers"), liveData(), 150)));
+	// The FIGURE is there: opencode-go's 36,616 requests.
+	expect(body).toContain("36,616");
+	// And the bar beside it is short. Scoped to the TABLE row, because the
+	// ranked chart above legitimately carries a longer track.
+	const tableRow = body.split("\n").find(l => l.includes("36,616"));
+	expect(tableRow, "the opencode-go table row").toBeDefined();
+	for (const run of (tableRow as string).match(/[█░]+/g) ?? []) {
+		expect(visibleWidth(run), `meter run ${JSON.stringify(run)}`).toBeLessThanOrEqual(16);
+	}
 });
 
 test("D3: the providers Share column is a percentage, not an empty cell", () => {
@@ -402,17 +429,51 @@ test("D3: an error rate is a percentage, never a raw fraction", () => {
 	expect(errors).not.toMatch(/\b0\.\d{3,}\b/);
 });
 
-test("D3: no table of any screen leaves a declared column blank", () => {
-	// The Share column was blank because it resolved to nothing at that width.
-	// A column that cannot say anything is not rendered as an empty gutter.
+test("D3: no table cell renders as an EMPTY gutter", () => {
+	// The reported Share column was blank at narrow widths: it resolved to
+	// nothing, and an empty column is a hole where a figure should be.
+	//
+	// Asserted on the BAND'S OWN CELLS rather than on rendered text, because two
+	// earlier attempts at a text heuristic were wrong for the same reason: a
+	// stat grid and a table are both "words in columns" in plain text, so any
+	// "find the header row" heuristic eventually matched a tile row instead. The
+	// cells are already structured, so the invariant is one line of arithmetic:
+	// no cell of a table that has data is empty.
 	for (const spec of FILLABLE) {
-		const rows = renderScreen(opts(spec, liveData(), 150));
-		const headers = rows
-			.map(plain)
-			.filter(l => /\b(Share|Tokens|Cost|Requests|Models|Error rate|Premium)\b/.test(l) && !/[█░]/.test(l));
-		for (const header of headers) {
-			const cells = headers.filter(l => l !== header);
-			expect(cells.length, `${spec.id} header ${JSON.stringify(header)} has no sibling row`).toBeGreaterThan(0);
+		for (const band of screenBands(opts(spec, liveData(), 150))) {
+			if (band.kind !== "table" || band.rows.kind !== "inline") continue;
+			for (const row of band.rows.rows) {
+				for (const column of band.columns) {
+					expect(
+						row[column.key],
+						`${spec.id} "${band.title}": cell ${column.key} is empty`,
+					).not.toBe("");
+				}
+			}
+		}
+	}
+});
+
+test("D3: a rendered table row has no gap where a column was dropped", () => {
+	// The second half of the empty-cell defect: a column that prints nothing
+	// still reserves its width, so the row keeps a blank gutter between two
+	// populated columns — invisible to the per-cell assertion above.
+	//
+	// Asserted on the TABLE BAND alone, because a stat grid legitimately has
+	// gaps between its tiles (that is what a grid is) and a whole screen's text
+	// therefore cannot carry this invariant.
+	for (const width of WIDTHS) {
+		const band = screenBands(opts(specOf("providers"), liveData(), width)).find(
+			(candidate): candidate is Extract<Band, { kind: "table" }> =>
+				candidate.kind === "table" && candidate.title === "Provider totals",
+		);
+		if (band === undefined) continue;
+		const lines = renderBands([band], bandCtx({ width: width - 4, innerWidth: width - 4 })).map(plain);
+		for (const line of lines.slice(2)) {
+			if (line.trim() === "" || /[█░]/.test(line)) continue;
+			// Two or more spaces between two non-spaces is the shape of a column
+			// that reserved its width and printed nothing.
+			expect(line, `${width}: ${JSON.stringify(line)}`).not.toMatch(/\S {2,}\S/);
 		}
 	}
 });

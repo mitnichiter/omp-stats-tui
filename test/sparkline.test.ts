@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderRankedBars, renderShareBar, renderSparkline } from "../src/tui/charts/sparkline";
 import { glyphsFor } from "../src/tui/glyphs";
+import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
 
 const identity = (t: string) => t;
 const U = glyphsFor("unicode");
@@ -236,7 +237,12 @@ test("an empty ranked list returns [], the one case where an empty line is right
 	expect(renderRankedBars([], { width: 40, accent: identity, dim: identity })).toEqual([]);
 });
 
-test("every ranked row fits its width, swept 10..200, with long labels", () => {
+test("every ranked row FITS its width, swept 10..200, with long labels", () => {
+	// "Fits", not "fills": a ranked row is a label, a bar and a figure, and the
+	// bar is now BOUNDED (`BAR_TRACK_MAX`) and the label is dropped rather than
+	// squeezed when the row is too narrow for all three. So a row may be SHORTER
+	// than the width — which is the fix for the reported solid block, not a
+	// regression. It may never be LONGER.
 	for (let width = 10; width <= 200; width++) {
 		const rows = renderRankedBars(
 			[
@@ -246,7 +252,27 @@ test("every ranked row fits its width, swept 10..200, with long labels", () => {
 			],
 			{ width, accent: identity, dim: identity },
 		);
-		for (const r of rows) expect(Bun.stringWidth(r), `width ${width}: ${r}`).toBe(width);
+		for (const r of rows) expect(visibleWidth(r), `width ${width}: ${r}`).toBeLessThanOrEqual(width);
+	}
+});
+
+test("a ranked row's bar is bounded, so a wide panel leaves whitespace rather than a block", () => {
+	// The BOUND in action: at width 60 the bar stops at `BAR_TRACK_MAX` (48) and
+	// the row comes out narrower than the panel. That is the fix for the reported
+	// solid block — a bar you cannot see past is a background, not a measurement —
+	// and the leftover width is whitespace, which is honest.
+	const rows = renderRankedBars(
+		[
+			{ label: "alpha", value: 10 },
+			{ label: "beta", value: 5 },
+		],
+		{ width: 60, accent: identity, dim: identity },
+	);
+	for (const row of rows) {
+		expect(visibleWidth(row), row).toBeLessThanOrEqual(60);
+		// But every row is the SAME width, so the figures still align down the
+		// column — that is what makes the list scannable.
+		expect(visibleWidth(row), row).toBe(visibleWidth(rows[0] as string));
 	}
 });
 

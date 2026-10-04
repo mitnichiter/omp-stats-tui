@@ -229,6 +229,19 @@ export interface Column {
 	cell?: "text" | "meter" | "sparkline" | "badge";
 	/** The row carries a detail block, as the web models table expands. */
 	expandable?: boolean;
+	/**
+ * How readily a narrow terminal may DROP this column. Higher goes first; 0
+	 * survives until only the identity column is left.
+	 *
+	 * The web declares no priority — a CSS table scrolls horizontally rather
+	 * than losing a column — so this is the terminal's own decision, and it is
+	 * declared HERE rather than inferred in the renderer so that the order a
+	 * screen drops its columns in is reviewable next to the columns themselves.
+	 * The IR's column ORDER is the web's order, and that order is the default
+	 * priority: the route lists what matters first, so a narrow terminal keeps
+	 * what it listed first.
+	 */
+	priority?: number;
 }
 
 export interface LegendItem {
@@ -439,10 +452,17 @@ const overview: ScreenSpec = {
 				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "usage.cost.total" } },
 				{ header: "Duration", align: "right", source: { kind: "aggregate", source: "recentMessages", field: "duration" } },
 				{
+					// The web's Status column is `REQUEST_STATUS[requestStatus(row)]`
+					// (RequestsRoute.tsx:298-303), and `requestStatus` reads
+					// `stopReason` FIRST — `aborted` is its own outcome, not a failure
+					// (view-models.ts:325-328). Keying this on `errorMessage` alone
+					// therefore lost the abort outcome entirely, and a successful
+					// request resolved to `null` and rendered as a BLANK cell under a
+					// header every row is meant to fill.
 					header: "Status",
 					align: "right",
 					cell: "badge",
-					source: { kind: "aggregate", source: "recentMessages", field: "errorMessage" },
+					source: { kind: "aggregate", source: "recentMessages", field: "stopReason" },
 				},
 			],
 		},
@@ -1200,15 +1220,40 @@ const providers: ScreenSpec = {
 				limit: 12,
 			},
 			columns: [
+				// Drop order, from the panel outward. The web declares no
+				// priority — CSS drops nothing, it scrolls horizontally — so this
+				// is the terminal's own decision, and it follows the web's column
+				// ORDER: what the route lists first is what a narrow terminal
+				// keeps. Provider, Requests, Tokens and Cost are the four the
+				// `ProviderTotalsTable` is about; Premium, Tokens/s, Models, Share
+				// and Error rate go first.
 				{ header: "Provider", align: "left", source: { kind: "label", source: "providerStats", field: "provider" } },
 				{ header: "Requests", align: "right", cell: "meter", source: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
-				{ header: "Error rate", align: "right", cell: "badge", source: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
-				{ header: "Models", align: "right", source: { kind: "aggregate", source: "providerStats", field: "models" } },
 				{ header: "Tokens", align: "right", cell: "meter", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
-				{ header: "Share", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
 				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
-				{ header: "Tokens/s", align: "right", source: { kind: "aggregate", source: "providerStats", field: "avgTokensPerSecond" } },
-				{ header: "Premium", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalPremiumRequests" } },
+				{
+					// The web's Share is `p.totalTokens / grandTokens`
+					// (ProvidersRoute.tsx:371-379). Ours pointed at `totalTokens`
+					// again, so the column printed a SECOND copy of the Tokens
+					// figure — and at narrow widths the squeeze left it blank. It is
+					// a fraction of the GRAND total, which is what
+					// `againstScope: "total"` resolves.
+					header: "Share",
+					align: "right",
+					priority: 4,
+					source: {
+						kind: "derived",
+						name: "providerTokenShare",
+						op: "share",
+						of: { kind: "aggregate", source: "providerStats", field: "totalTokens" },
+						against: { kind: "derived", name: "providerTokens", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+						againstScope: "total",
+					},
+				},
+				{ header: "Error rate", align: "right", cell: "badge", priority: 3, source: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
+				{ header: "Models", align: "right", priority: 5, source: { kind: "aggregate", source: "providerStats", field: "models" } },
+				{ header: "Tokens/s", align: "right", priority: 2, source: { kind: "aggregate", source: "providerStats", field: "avgTokensPerSecond" } },
+				{ header: "Premium", align: "right", priority: 1, source: { kind: "aggregate", source: "providerStats", field: "totalPremiumRequests" } },
 			],
 		},
 		{

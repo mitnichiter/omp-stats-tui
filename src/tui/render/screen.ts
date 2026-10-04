@@ -84,7 +84,7 @@ import { renderBands, type Band, type BandRenderOptions } from "../band";
 import { renderSeriesChart } from "../charts/compose";
 import { buildHeatmapLayout as heatmapLayoutFor } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
 import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
-import { renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
+import { BAR_TRACK_MAX, renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
 import {
 	costWithUnpriced,
 	formatBytes,
@@ -235,6 +235,32 @@ const compact: Formatter = value =>
 /** A fraction as a percentage. An absent fraction is blank, never `NaN%`. */
 const percent: Formatter = value => formatPercent(value);
 
+/**
+ * An error rate, the web's way.
+ *
+ * The web has a DEDICATED formatter for this (`formatErrorRate`,
+ * formatters.ts:60-64) rather than reusing `formatPercent`, and the reason is
+ * the two-digit band: a provider failing 4 of 1,280 requests is 0.31%, which
+ * one decimal rounds to `0.3%` — fine — but 1 of 36,616 is 0.0027%, which one
+ * decimal rounds to `0.0%`. A rate that reads `0.0%` when requests actually
+ * failed is the panel lying, so below 0.005% the web prints `<0.01%`.
+ *
+ * Transcribed rather than imported: `formatErrorRate` is not exported from the
+ * host's `formatters.ts`, and re-deriving the two bands here keeps the rule in
+ * one place beside every other formatter this module owns.
+ */
+function errorRate(value: number): string {
+	const scaled = value * 100;
+	if (scaled > 0 && scaled < 0.005) return "<0.01%";
+	return formatPercent(value, scaled > 0 && scaled < 0.1 ? 2 : 1);
+}
+/**
+ * The same rule as a `FIELD_FORMAT` entry, which is a `Formatter` and so takes
+ * the row it never reads. Named so both call sites — the table below and the
+ * derived-name branch in `formatValue` — share one implementation.
+ */
+const errorRateField: Formatter = value => errorRate(value);
+
 /** Raw seconds with the adapter's precision: `12.3s`. */
 const duration: Formatter = value => formatDurationMs(value);
 
@@ -245,6 +271,10 @@ const elapsed: Formatter = value => formatElapsed(value);
  * A rate of throughput keeps its unit. The host's `formatTokensPerSecond`
  * prints one decimal (`61.2`), so this does too — a rounded `61/s` beside the
  * web's `61.2` would read as a different measurement.
+ *
+ * An ABSENT rate is handled one layer up, in `formatValue`, because a `Formatter`
+ * never sees a `null` — the resolver's early return happens before this table is
+ * consulted. That is why the dash rule lives there and not here.
  */
 const speed: Formatter = value => `${value.toFixed(1)}/s`;
 
@@ -300,11 +330,22 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	totalOutputTokens: compact,
 	totalCacheReadTokens: compact,
 	totalCacheWriteTokens: compact,
-	totalTokens: formatInteger,
+	/**
+	 * Token TOTALS are compact, the web's way: `formatCompact(p.totalTokens)` at
+	 * `ProvidersRoute.tsx:366`, `formatCompact(summary.tokens)` at
+	 * `RequestsRoute.tsx:133`, `formatCompact(tokens)` at `ModelsRoute.tsx:368`.
+	 * `1,017,800,000` is thirteen cells of digits where `1B` is two, and the
+	 * extra precision buys a reader nothing at table density — while costing the
+	 * table two columns, which is how the reported clipping happened.
+	 *
+	 * The exact figure is still available: a stat tile's `hint` may name it, and
+	 * `format.ts`'s `exactTokens` exists for any row that must be auditable.
+	 */
+	totalTokens: compact,
 	totalTokensShare: compact,
 	outputTokensShare: compact,
-	tokens: formatInteger,
-	"usage.totalTokens": formatInteger,
+	tokens: compact,
+	"usage.totalTokens": compact,
 	"usage.input": compact,
 	"usage.output": compact,
 	"usage.cacheRead": compact,
@@ -333,7 +374,7 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	savedBytes: bytes,
 	reductionPercent: reduction,
 	cacheRate: percent,
-	errorRate: percent,
+	errorRate: errorRateField,
 	cacheSavings: percent,
 	share: percent,
 	avgResult: percent,
@@ -401,9 +442,34 @@ function formatValue(
 	row: DataRow | undefined,
 	opts: ScreenRenderOptions,
 ): string {
-	// Reduction is ALWAYS null today and the web renders its dash, not a
-	// blank: a blank cell reads as a value the panel failed to resolve.
-	if (value === null) return leafFieldOf(ref) === "reductionPercent" ? "–" : "";
+	// An ABSENT value is a dash in exactly two places, and blank everywhere else.
+	//
+	// The two are TABLE CELLS, and only there. A table column reserves its width
+	// whether or not it has a figure, so a blank cell leaves a visible hole under
+	// a header that promises one — the reported empty Share and Tokens/s columns.
+	// A STAT TILE has no such gutter: a tile with no figure is a tile that says
+	// nothing, and `toStatTile` drops it so the screen can still answer "no usage
+	// recorded". `row !== undefined` is exactly that distinction — a row-scoped
+	// call is a table cell, an unscoped one is a tile.
+	//
+	// The two dashes are NOT the same character, and each is the host's own:
+	//
+	//  - `reductionPercent` is ALWAYS null (snapcompact never records an original
+	//    size) and `GainRoute.tsx` renders `–`, an EN DASH — U+2013. It is shown on
+	//    a stat tile too, because that tile's whole subject is the absent figure.
+	//  - `avgTokensPerSecond` is null for a provider or model the payload
+	//    measured no throughput for, and `formatTokensPerSecond`
+	//    (formatters.ts:81-84) returns `-`, a HYPHEN, for exactly that case.
+	//
+	// Everything else stays blank: an absent value must be caught upstream by
+	// `test/resolve.test.ts`, where an absence is visible, rather than here where
+	// nobody would see it.
+	if (value === null) {
+		const absent = leafFieldOf(ref);
+		if (absent === "reductionPercent") return "–";
+		if (absent === "avgTokensPerSecond" && row !== undefined) return "-";
+		return "";
+	}
 	// A label is a name, not a figure. `aggregate` also names text fields — the
 	// IR uses it for `recentMessages.model` and `label` for the same idea
 	// elsewhere — so text is returned as-is and only numbers are formatted.
@@ -415,8 +481,29 @@ function formatValue(
 	// per-request figure bottoms out in `requests` (a count) but prints money
 	// with the web's sub-cent bound. Keyed on names the IR declares, so a new
 	// derived name falls through to its field rather than to a wrong format.
+	//
+	// The name is a CONTRACT, not a per-figure patch, and two of its three rules
+	// are general:
 	if (ref.kind === "derived") {
-		if (ref.name === "modelCostShare") return formatPercent(value);
+		// A derived SHARE is a fraction of something, so it reads as a percent.
+		// The IR already names these — `modelCostShare`, `providerTokenShare`,
+		// `sourceShare` — and every one is a share. The defect this fixes:
+		// providers' Share divided `totalTokens` by the grand total, so
+		// `leafFieldOf` found the TOKEN formatter and printed the raw fraction
+		// `0.0424` where a percentage belongs.
+		//
+		// `op: "share"` is deliberately NOT the test: `perPricedRequest` shares
+		// cost by requests and is money, not a percentage. The NAME is what the
+		// IR author declared the figure to be.
+		if (/share$/i.test(ref.name)) return formatPercent(value);
+		// A derived RATE — providers' `providerErrorRate`, overview's
+		// `errorRate` — bottoms out in a COUNT field, so `FIELD_FORMAT[field]`
+		// would print `formatInteger(0.017)` = "0.017". That is the raw fraction,
+		// which is what the reported Error rate tile showed. Same contract: the
+		// name says what the figure measures, with the web's sub-0.005% bound.
+		if (/rate$/i.test(ref.name)) return errorRate(value);
+		// `modelUnitCost` is the one name whose shape is not general — it is money
+		// below a cent, which `formatCost` alone would round to `$0.00`.
 		if (ref.name === "modelUnitCost") return value > 0 && value < 0.0001 ? "<$0.0001" : formatCost(value);
 	}
 	return (FIELD_FORMAT[field] ?? formatInteger)(value, row);
@@ -905,15 +992,25 @@ function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number
 		const share = (series ? published.get(groupKeyOf(series.metric)) : undefined) ??
 			fallback.find(candidate => candidate.label === entry.label)?.share ??
 			0;
-		const readout = `${formatPercent(share)} ${formatInteger(entry.value)}`;
+		// The FIGURE is the SERIES' own figure, formatted by its own metric — not
+		// by the chart's axis. That distinction is the whole point: overview's
+		// Token mix is a `share` axis over four TOKEN kinds, so an axis-driven
+		// formatter printed `1,204,000,000` beside `97.3%` where the web prints
+		// `1.2B` (`OverviewRoute.tsx:233`). `formatValue` routes each series
+		// through `FIELD_FORMAT`, which already knows a token total is compact.
+		const readout = `${formatPercent(share)} ${series ? formatValue(series.metric, entry.value, undefined, opts) : formatInteger(entry.value)}`;
 		const label = padEndTo(entry.label, labelWidth);
 		const bar = renderShareBar(share, {
-			width: Math.max(0, width - labelWidth - visibleWidth(readout) - 2),
+			// BOUNDED, like the ranked list's track. `renderShareBar` is a
+			// single-row bar, and a full-bleed one is the same solid block the
+			// ranked chart had.
+			width: Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - visibleWidth(readout) - 2)),
 			preset: opts.preset,
 		});
 		return clampLine(`${label} ${bar} ${readout}`, width);
 	});
 }
+
 
 /**
  * One share bar per GROUP (folded to `foldTo`), each against the folded
@@ -927,23 +1024,31 @@ function groupedShareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width:
 	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
 	return entries.map(entry => {
 		const share = total === 0 ? 0 : entry.value / total;
-		const readout = `${formatPercent(share)} ${formatInteger(entry.value)}`;
+		const readout = `${formatPercent(share)} ${entryFigure(entry, opts)}`;
 		const label = padEndTo(entry.label, labelWidth);
 		const bar = renderShareBar(share, {
-			width: Math.max(0, width - labelWidth - visibleWidth(readout) - 2),
+			// BOUNDED, like the ranked list's track: a share bar is a ranked bar
+			// with one row, and a full-bleed one is the same solid block.
+			width: Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - visibleWidth(readout) - 2)),
 			preset: opts.preset,
 		});
 		return clampLine(`${label} ${bar} ${readout}`, width);
 	});
 }
+
 /** A ranked bar list: label, bar, figure. One divisor across every row. */
 function rankedBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): readonly string[] {
 	const rows: RankedRow[] = foldTo(chart.foldTo, groupedEntries(chart, opts)).map(entry => ({
 		label: entry.label,
 		value: entry.value,
-		// An unpriced row ranks by its unmeasured requests and reads N/A; the
-		// readout is built by `renderRankedBars` through `costWithUnpriced`.
-		...(entry.unpriced > 0 ? { unpriced: entry.unpriced } : {}),
+		// The FIGURE is built HERE, by `entryFigure`, so `renderRankedBars` never
+		// has to know what a token count or a dollar figure looks like — and an
+		// unpriced row reads `N/A · 4,197 unpriced` rather than `$0.00`.
+		//
+		// It used to be built inside the primitive from `formatInteger`, which is
+		// why a burn row read `1,045,814,212` where the web's own burn legend
+		// reads `1B` (`ProvidersRoute.tsx:236`, `burnFormat`).
+		display: entryFigure(entry, opts),
 	}));
 	return renderRankedBars(rows, {
 		width,
@@ -958,6 +1063,34 @@ interface ChartEntry {
 	label: string;
 	value: number;
 	unpriced: number;
+	/**
+	 * The metric this entry's value was read through, so the readout formats it
+	 * the way that METRIC reads rather than the way the chart's axis is spelled.
+	 *
+	 * The two differ whenever a chart plots one kind of thing: overview's Token
+	 * mix is declared `axis: "share"` — because the BARS are shares — while its
+	 * four series are token counts the web prints compact
+	 * (`OverviewRoute.tsx:233`). Formatting by axis printed `1,204,000,000`
+	 * there; formatting by metric prints `1.2B`.
+	 */
+	metric: MetricRef;
+}
+
+/**
+ * A share bar's or ranked bar's trailing FIGURE, in its own metric's notation.
+ *
+ * This is the host's `formatCompact` where the metric is a token count — which
+ * is every place the web calls it: `OverviewRoute.tsx:233`,
+ * `ProvidersRoute.tsx:366`, `ModelsRoute.tsx:368`, `ProjectsRoute.tsx:268`.
+ * Money keeps `formatCost` and counts keep `formatInteger`, because those are
+ * the forms the web prints for them and a figure the dashboard renders
+ * differently is a parity break, not an improvement.
+ */
+function entryFigure(entry: ChartEntry, opts: ScreenRenderOptions): string {
+	// An unpriced entry's figure is `costWithUnpriced`'s — `N/A · 4,197
+	// unpriced`, never `$0.00` — and that rule lives in one place by design.
+	if (entry.unpriced > 0) return costWithUnpriced(entry.value, entry.unpriced);
+	return formatValue(entry.metric, entry.value, undefined, opts);
 }
 
 /**
@@ -974,6 +1107,7 @@ function groupedEntries(chart: ChartSpec, opts: ScreenRenderOptions): readonly C
 			label: series.label,
 			value: resolveNumber(series.metric, opts.data) ?? 0,
 			unpriced: 0,
+			metric: series.metric,
 		}));
 	}
 	return groupable.flatMap(series => {
@@ -990,7 +1124,10 @@ function groupedEntries(chart: ChartSpec, opts: ScreenRenderOptions): readonly C
 			if (typeof group !== "string") continue;
 			const value = resolveNumber(base, opts.data, row);
 			if (value === null) continue;
-			const entry = byGroup.get(group) ?? { label: group, value: 0, unpriced: 0 };
+			// The `metric` carried on the entry is the series' OWN ref, not `base`:
+			// `base` is what the VALUE is summed through, but the readout formats
+			// through the series so a derived series keeps its own notation.
+			const entry = byGroup.get(group) ?? { label: group, value: 0, unpriced: 0, metric: series.metric };
 			entry.value += value;
 			const unpriced = (row as Record<string, unknown>).unpricedRequests;
 			if (typeof unpriced === "number") entry.unpriced += unpriced;
@@ -1024,12 +1161,20 @@ function foldTo(
 	if (!fold || entries.length <= fold.limit) return entries;
 	const sorted = [...entries].sort((a, b) => b.value - a.value);
 	const tail = sorted.slice(fold.limit);
+	// The fold is a COMPOSITION of the rows it absorbs, so it reads as whatever
+	// they read as. `tail[0]`'s metric represents the whole group because a fold
+	// only ever groups rows of ONE series together: `groupedEntries` emits one
+	// series' groups per call and `foldTo` runs on a single chart's entries. The
+	// `!` is honest — `entries.length > fold.limit` is the guard above, so `tail`
+	// holds at least one row.
+	const [first] = tail;
 	return [
 		...sorted.slice(0, fold.limit),
 		{
 			label: `${fold.label} (${tail.length})`,
 			value: tail.reduce((sum, entry) => sum + entry.value, 0),
 			unpriced: tail.reduce((sum, entry) => sum + entry.unpriced, 0),
+			metric: first!.metric,
 		},
 	];
 }
@@ -1101,6 +1246,9 @@ function tableBand(
 			header: column.header,
 			align: column.align,
 			...(column.cell && column.cell !== "sparkline" ? { cell: column.cell } : {}),
+			// The IR's own drop order, passed through so the grammar can apply the
+			// truncation policy without knowing what any column measures.
+			...(column.priority === undefined ? {} : { priority: column.priority }),
 		})),
 		rows: {
 			kind: "inline",
@@ -1133,6 +1281,17 @@ function columnMaxes(
 	}
 	return maxes;
 }
+/**
+ * How many cells a TABLE cell's meter bar occupies.
+ *
+ * The web's `.meter-cell .meter` is 64px beside a 13px figure (styles.css:
+ * 1401-1403) — roughly three times the figure. A terminal cell is about as wide
+ * as that figure, so 12 cells is the same proportion. It is a quarter of the
+ * ranked list's own track on purpose: a cell bar ranks rows against each other,
+ * while the ranked list IS the measurement.
+ */
+const METER_BAR_CELLS = 12;
+
 
 function renderCell(
 	column: IRColumn,
@@ -1141,9 +1300,10 @@ function renderCell(
 	cellWidth: number,
 	opts: ScreenRenderOptions,
 ): string {
+
 	switch (column.cell) {
 		case "meter":
-			return meterCell(resolveNumber(column.source, opts.data, row) ?? 0, columnMax, cellWidth, opts);
+			return meterCell(column, resolveNumber(column.source, opts.data, row) ?? 0, columnMax, row, opts);
 		case "sparkline":
 			// The axis is threaded so a table sparkline is DENSE over it, matching
 			// the web's `pivotSeries` rather than skipping the buckets a model was
@@ -1160,36 +1320,55 @@ function renderCell(
 }
 
 /**
- * A meter: a bar filling the cell, scaled against its column's own maximum.
+ * A meter cell: the FIGURE, then a short bar beside it.
  *
- * The figure is NOT repeated in the cell — the table has a column for it. A
- * meter that printed its own number would read as two numbers and invite the
- * reader to compare them, which is the one thing a magnitude column must not do.
+ * This is the web's `MeterCell` (Table.tsx:189-209) translated: a
+ * `<span class="num">{display}</span>` followed by a 64px `.meter`. The old
+ * cell drew the bar ALONE across the whole column, which is why the reported
+ * table showed `Requests` as a header over twelve yellow/white/grey blocks that
+ * said nothing — the reader got a magnitude with no value and a header naming
+ * a figure that was not on the page.
  *
- * Host parity: `/usage` tints each bar by its quota status (`#miniBar` +
+ * The bar is bounded by {@link METER_BAR_CELLS}, a third of the ranked list's
+ * track, because a cell bar is decoration for a figure that is already there:
+ * its job is the ranking at a glance, not the measurement.
+ *
+ * Host parity: `/usage` tints each bar by quota status (`#miniBar` +
  * `#statusColor`, usage-dashboard.ts:617-629). The only status a column apex
- * can state honestly is "this is the most": a full bar is `caution`, a zero
- * bar is dim (measured none, not missing), everything between is plain. The
- * tint covers the FILL only, never the track — colouring the empties would
- * tint the gutter the figures align against.
+ * can state honestly is "this is the most": a full bar is `caution`, a zero bar
+ * is dim (measured none, not missing), everything between is plain. The tint
+ * covers the FILL only, never the track — colouring the empties would tint the
+ * gutter the figures align against.
  */
 function meterCell(
+	column: IRColumn,
 	value: number,
 	columnMax: number,
-	cellWidth: number,
+	row: DataRow,
 	opts: ScreenRenderOptions,
 ): string {
 	const fill = glyph(opts.preset, "barFill");
 	const empty = glyph(opts.preset, "barEmpty");
-	if (columnMax <= 0) return opts.fg("dim", empty.repeat(cellWidth));
-	// The one-cell floor: a row that rendered nothing would be indistinguishable
-	// from a row the query never returned, and this may be the unpriced model the
-	// reader most needs to see.
-	const drawn = Math.max(value > 0 ? 1 : 0, Math.min(cellWidth, Math.round((value / columnMax) * cellWidth)));
-	const track = fill.repeat(drawn) + empty.repeat(cellWidth - drawn);
-	if (value <= 0) return opts.fg("dim", track);
-	if (value >= columnMax) return opts.fg(PALETTE.caution, track);
-	return track;
+	// The FIGURE comes first and is never dropped: it is the measurement, and a
+	// magnitude column that shows only a bar has told the reader nothing.
+	const figure = formatValue(column.source, value, row, opts);
+	const track =
+	columnMax <= 0
+		? opts.fg("dim", empty.repeat(METER_BAR_CELLS))
+		// The one-cell floor: a row that rendered nothing would be
+		// indistinguishable from a row the query never returned, and this may be
+		// the unpriced model the reader most needs to see.
+		: (() => {
+				const drawn = Math.max(
+					value > 0 ? 1 : 0,
+					Math.min(METER_BAR_CELLS, Math.round((value / columnMax) * METER_BAR_CELLS)),
+				);
+				const marks = fill.repeat(drawn) + empty.repeat(METER_BAR_CELLS - drawn);
+				if (value <= 0) return opts.fg("dim", marks);
+				if (value >= columnMax) return opts.fg(PALETTE.caution, marks);
+				return marks;
+			})();
+	return figure === "" ? track : `${figure} ${track}`;
 }
 
 /**
@@ -1211,14 +1390,34 @@ function badgeCell(column: IRColumn, row: DataRow, opts: ScreenRenderOptions): s
 		if (statusValue === "failed") return opts.fg(PALETTE.negative, "failed");
 		return opts.fg(PALETTE.positive, "ok");
 	}
-	const value = statusValue;
-	if (typeof value === "string") {
-		return value === "" ? opts.fg(PALETTE.positive, "ok") : opts.fg(PALETTE.negative, "failed");
+	// A Status column keyed on `errorMessage` (the overview's Latest-requests
+	// table) resolves an absent error to `null`, not `""` — and the `null` used
+	// to fall through to the empty return, leaving a BLANK cell under a header
+	// that names a column every row is supposed to fill. The web's
+	// `requestStatus` (view-models.ts:325-328) treats a missing error as `ok`,
+	// which is also the only honest reading: the payload WAS fetched and this
+	// request did not fail.
+	if (typeof statusValue === "string") {
+		return statusValue === "" ? opts.fg(PALETTE.positive, "ok") : opts.fg(PALETTE.negative, "failed");
 	}
-	const figure = count(value);
-	if (figure === null) return "";
-	if (leafFieldOf(column.source).toLowerCase().includes("rate")) {
-		return figure > 0 ? opts.fg(PALETTE.negative, formatPercent(figure)) : opts.fg(PALETTE.positive, "none");
+	const figure = count(statusValue);
+	if (figure === null) {
+		// A numeric badge column whose value is absent. `stopReason` is the one
+		// field where absence is a verdict rather than an unknown, so only it
+		// claims `ok`; anything else has nothing to say and says nothing.
+		return leafFieldOf(column.source) === "stopReason" ? opts.fg(PALETTE.positive, "ok") : "";
+	}
+	// A RATE is a percentage, and the test for "is this a rate" has to look at
+	// the ref's NAME as well as its field. The defect: providers' Error rate is
+	// a `derived` share, so `leafFieldOf` followed it down to `totalRequests`,
+	// found no "rate" in that, and printed `formatInteger(0.0024)` = "0" — a
+	// rate that reads as a clean zero while requests were failing.
+	//
+	// The NAME is the IR's own declaration of what the figure measures, so a
+	// derived ref named `*Rate` is a rate regardless of which field it divides.
+	const named = column.source.kind === "derived" ? column.source.name : "";
+	if (/rate/i.test(named) || leafFieldOf(column.source).toLowerCase().includes("rate")) {
+		return figure > 0 ? opts.fg(PALETTE.negative, errorRate(figure)) : opts.fg(PALETTE.positive, "none");
 	}
 	return figure > 0 ? opts.fg(PALETTE.negative, formatInteger(figure)) : opts.fg(PALETTE.positive, "none");
 }
