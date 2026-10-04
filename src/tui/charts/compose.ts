@@ -155,17 +155,41 @@ export function bandHeights(peaks: readonly number[], budget: number): readonly 
 	// share, so a band could never claim a row another band was not using — and
 	// at four series that slice is two rows, which is too few to tell 16x apart.
 	//
-	// EVERY BAND GETS ONE ROW FIRST, handed to the LOUDEST bands if the budget
-	// cannot cover them all. A band with no row at all draws nothing, and a band
-	// that drew nothing is indistinguishable from a series that recorded nothing.
-	// Which row it is does not matter: a one-row band draws its floor when the
-	// series is all zero, and its single row of ink otherwise (`plotRows`).
+	// A BAND'S ROWS ARE ITS MAGNITUDE PLUS ITS FLOOR, and the floor is now
+	// mandatory for every band at every height (see `compose`). So a band that
+	// RECORDED something needs TWO rows to be a chart at all — one row of ink and
+	// the baseline under it — while a band that recorded NOTHING needs exactly
+	// ONE, which is its floor and its only ink.
+	//
+	// Handing both to one row each is what produced the defect: a live band
+	// allocated a single row drew its ink with no baseline under it, and an
+	// all-zero band allocated a single row drew an empty row that read as the
+	// padding between two cards. Both were "the band is there" and neither looked
+	// like a chart.
 	const loudest = peaks
 		.map((peak, index) => ({ index, peak }))
 		.sort((a, b) => b.peak - a.peak || a.index - b.index);
 	const rows = new Array<number>(count).fill(0);
-	const covered = Math.min(count, budget);
-	for (const { index } of loudest.slice(0, covered)) rows[index] = 1;
+	// PASS ONE — every band gets its floor, loudest first. That row is what makes
+	// zero visible, so it is claimed before any band is given a second row:
+	// spending the budget on ink first leaves a quiet band with NO rows at all, and
+	// a band with no rows is indistinguishable from a series that was never
+	// declared, which is the one claim a chart must never make by omission.
+	let left = budget;
+	for (const { index } of loudest) {
+		if (left <= 0) break;
+		rows[index] = 1;
+		left -= 1;
+	}
+	// PASS TWO — a band that RECORDED something is upgraded to two rows, so it has
+	// one row of ink standing on its floor and is a chart rather than a bare
+	// baseline. Loudest first again: when the budget cannot upgrade every live
+	// band, the ones that keep their ink are the ones that recorded the most.
+	for (const { index, peak } of loudest) {
+		if (left <= 0 || peak <= 0) continue;
+		rows[index] = 2;
+		left -= 1;
+	}
 
 	// WHAT IS LEFT OVER IS APPORTIONED BY PEAK SHARE, one row at a time, to
 	// whichever band is furthest below its share — the highest-averages method.
@@ -176,7 +200,7 @@ export function bandHeights(peaks: readonly number[], budget: number): readonly 
 	//
 	// Rows that no band can claim — an all-zero chart, where the series count has
 	// taken the budget and there is no magnitude to divide — go to NOBODY.
-	for (let left = budget - covered; left > 0; left--) {
+	for (let spare = left; spare > 0; spare--) {
 		let best = -1;
 		let furthest = Number.POSITIVE_INFINITY;
 		for (let index = 0; index < count; index++) {

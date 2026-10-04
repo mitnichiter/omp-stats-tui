@@ -167,22 +167,16 @@ function heights(values: readonly number[], rows: number, supplied?: number): re
  * body would overflow — and `renderSeriesChart` splits one `height` between its
  * series, so an extra row per band would silently halve the resolution.
  *
- * WHETHER THE LAST ROW IS DATA OR FLOOR IS A QUESTION ABOUT THE DATA, NOT ABOUT
- * THE HEIGHT. At `height` 1 there is no room for both, so the single row is
- * normally the DATA — `bandHeights` floors a series that recorded something at
- * one row, and a bare baseline would render that series as having recorded
- * nothing.
- *
- * But a band with no ink at all has no data to give that row to: it measured
- * zero, every bucket of it. Its one row is therefore the FLOOR, and that row is
- * the only ink the chart has — present, accounted for, nothing recorded. Reading
- * the height alone made an all-zero series render as a blank band with nothing
- * under it, which is the one claim a blank band cannot make: a band that was
- * never there looks identical, and "this series recorded nothing" then reads as
- * "this chart lost a series".
+ * So the floor comes out of the height rather than being added to it, and it
+ * comes out of EVERY band, `height` 1 included: one row is the floor and there
+ * is no magnitude above it. It used to be given to the data at `height` 1, on
+ * the reasoning that a bare baseline would render a quiet series as having
+ * recorded nothing — but a band of ink with no baseline under it is not a
+ * column chart either, and it is the all-zero series that pays worst, since its
+ * one row then had nothing in it and read as the gap between two cards.
  */
-function plotRows(height: number, hasInk: boolean): number {
-	return height >= 2 || !hasInk ? Math.max(0, height - 1) : height;
+function plotRows(height: number): number {
+	return Math.max(0, height - 1);
 }
 
 /**
@@ -218,10 +212,23 @@ function compose(columnHeights: readonly number[], rows: number, opts: BarsOptio
 		const threshold = rows - r;
 		out.push(columnHeights.map(h => (h >= threshold ? opts.accent(fill) : " ")).join(""));
 	}
-	if (rows < opts.height) {
-		const width = Math.max(0, Math.floor(opts.width));
-		out.push(opts.dim(mark(opts.glyphs, "axisLine").repeat(width)));
-	}
+	// EVERY BAND ENDS ON ITS FLOOR, always, with no exception for a one-row band.
+	//
+	// This used to be `if (rows < opts.height)`, which quietly dropped the floor
+	// from any band whose whole allocation was one row — the loud row of ink was
+	// there, so the band looked drawn, but the ink had no baseline under it and
+	// the band read as a floating line rather than a column chart. Worse, at a
+	// one-row allocation an all-zero band produced a row of nothing at all: the
+	// row existed, it carried no glyph, and it was indistinguishable from the
+	// padding between two cards.
+	//
+	// `plotRows` is what decides how many rows of DATA fit above the floor, so the
+	// floor belongs here unconditionally: a band of `height` rows is `height - 1`
+	// of magnitude and one mark of baseline, and a height-1 band is that single
+	// mark with no magnitude above it — which is exactly the honest reading of a
+	// series that recorded nothing.
+	const width = Math.max(0, Math.floor(opts.width));
+	out.push(opts.dim(mark(opts.glyphs, "axisLine").repeat(width)));
 	return out;
 }
 
@@ -279,7 +286,7 @@ export function renderDailyBars(values: readonly number[], opts: BarsOptions): r
 		Array.from({ length: width }, (_, i) => i),
 	);
 
-	const rows = plotRows(opts.height, columns.some(value => value > 0));
+	const rows = plotRows(opts.height);
 	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }
 
@@ -327,6 +334,6 @@ export function renderModelCostBars(
 					Array.from({ length: width }, (_, i) => i),
 				);
 
-	const rows = plotRows(opts.height, columns.some(value => value > 0));
+	const rows = plotRows(opts.height);
 	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }

@@ -39,7 +39,7 @@
 import { expect, test } from "bun:test";
 
 import { renderDailyBars, renderModelCostBars } from "../src/tui/charts/bars";
-import { renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
+import { bandHeights, renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
 import { renderRankedBars, renderShareBar, renderSparkline } from "../src/tui/charts/sparkline";
 import { glyph, glyphsFor, type GlyphSet, type SymbolPreset } from "../src/tui/glyphs";
 import { stripForTest, type PaletteTheme } from "../src/tui/palette";
@@ -383,12 +383,18 @@ test("a chart too short for BOTH names and discrimination drops the names, not t
 		{ label: "Cache read", values: [4, 2, 3] },
 		{ label: "Cache write", values: [2, 1, 1] },
 	];
-	// Eight rows for four bands: two rows each with names, or one spare row for
-	// the loudest band without them. The second is strictly more informative.
+	// Eight rows for four bands. With the floor now mandatory, two rows per band is
+	// the most a live band can have — one row of ink and its baseline — so this is
+	// the shape that chart must reach: every band drawn, none named.
 	const rows = renderSeriesChart(shape, { width: 20, height: 8, preset: "unicode", theme: THEME, paint: (_c, t) => t });
 	expect(rows.some(row => shape.some(s => stripForTest(row).includes(s.label)))).toBe(false);
-	expect(rows.length).toBeLessThanOrEqual(8);
-	expect(rows.filter(row => [...stripForTest(row)].includes(fill)).length).toBeGreaterThan(4);
+	expect(rows.length).toBe(8);
+	// Every band is a chart: ink standing on a floor, never a bare baseline.
+	const axis = glyph("unicode", "axisLine");
+	const ink = rows.filter(row => [...stripForTest(row)].includes(fill)).length;
+	const floors = rows.filter(row => stripForTest(row).trim() === axis.repeat(20)).length;
+	expect(ink, "one row of ink per band").toBe(shape.length);
+	expect(floors, "one floor per band").toBe(shape.length);
 	// One row taller, and there IS room for both — so the names come back.
 	const roomy = renderSeriesChart(shape, { width: 20, height: 14, preset: "unicode", theme: THEME, paint: (_c, t) => t });
 	for (const series of shape) {
@@ -416,13 +422,90 @@ test("no band ever claims a row the chart was not given", () => {
 	}
 });
 
-test("a one-row chart is marks, not a floor — a quiet series never vanishes", () => {
-	// `bandRows` floors a band at one row. Were the floor to eat that row the
-	// band would render as a bare baseline and the series would silently
-	// disappear, so at height 1 the single row is data.
+test("EVERY band ends on a row that CARRIES INK, not merely on a row", () => {
+	// The defect this pins is one a row-COUNT check cannot see. The floor was
+	// emitted only when `rows < height`, so a band allocated exactly one row drew
+	// either a bare line of ink with no baseline under it, or — for an all-zero
+	// series — a row containing no glyph at all, which rendered as the blank
+	// padding between two cards. Both cases had the right NUMBER of rows and the
+	// wrong CONTENT, which is why an earlier sweep that only counted rows per band
+	// reported the chart as clean.
+	//
+	// So this asserts the INK on each band's last row, at every arity and height.
+	for (const preset of PRESETS) {
+		const mark = glyph(preset, "axisLine");
+		for (const count of [1, 2, 3, 4, 5, 6]) {
+			for (const height of [1, 2, 3, 4, 8, 14, 20]) {
+				// EQUAL PEAKS, every series live. Equal peaks are what collapsed the
+				// old allocation to one row per band (`[1,1,1,1]`), and one row per
+				// band is the shape that drew no floor. A DECAYING profile cannot
+				// reproduce it: its loudest band soaks up the spare rows and lands on
+				// two, so a sweep built from one quietly misses the defect — which is
+				// what the first version of this test did.
+				const series: SeriesChartSeries[] = Array.from({ length: count }, (_, i) => ({
+					label: `s${i}`,
+					values: [4, 2, 4],
+				}));
+				for (const labels of [false, true]) {
+					const rows = renderSeriesChart(series, { width: 20, height, preset, theme: THEME, paint: (_c, t) => t, labels });
+					// Split into bands: `renderSeriesChart` labels a band AFTER its
+					// marks, and a floor row closes one whether or not it is labelled.
+					const bands: string[][] = [];
+					let open: string[] = [];
+					for (const row of rows) {
+						const plain = stripForTest(row);
+						if (labels && series.some(s => plain.trim() === s.label)) { bands.push(open); open = []; continue; }
+						open.push(row);
+						if (plain.includes(mark)) { bands.push(open); open = []; }
+					}
+					if (open.length > 0) bands.push(open);
+					for (const [index, band] of bands.entries()) {
+						if (band.length === 0) continue;
+						// Every band must OWN a floor row, and that floor must carry the
+						// axis glyph. Counting rows per band cannot see this — the defective
+						// bands had the right row COUNT and no baseline under it — and
+						// checking only that a band ends on *some* ink cannot see it
+						// either, because a one-row band of data is itself ink. So this asks
+						// the question directly: a floor, carrying a glyph, under every band.
+						const floors = band.filter(row => stripForTest(row).includes(mark));
+						expect(
+							floors.length,
+							`${preset} ${count}/${height}/${labels} band ${index} has a floor, got ${JSON.stringify(band.map(r => stripForTest(r).slice(0, 12)))}`,
+						).toBeGreaterThan(0);
+						expect(
+							stripForTest(band[band.length - 1] ?? "").includes(mark),
+							`${preset} ${count}/${height}/${labels} band ${index} ENDS on its floor`,
+						).toBe(true);
+					}
+				}
+			}
+		}
+	}
+});
+
+test("a one-row chart is its FLOOR, and the allocator is what stops a live band being only that", () => {
+	// This test used to pin the opposite rule: at height 1 the single row was the
+	// DATA, on the reasoning that a bare baseline would render a quiet series as
+	// having recorded nothing. That reasoning was right about the intent and wrong
+	// about the mechanism, and it cost a defect — a band of ink with no baseline
+	// under it is not a column chart either, and the series that suffered most was
+	// the ALL-ZERO one, whose single row then held no glyph at all and was
+	// indistinguishable from the padding between two cards.
+	//
+	// So the floor is unconditional, and `bandHeights` gives a band that recorded
+	// something TWO rows so it has ink over a baseline. A band of one row is
+	// therefore a claim that nothing was recorded — which is exactly what it says.
+	const axis = glyph("unicode", "axisLine");
 	const rows = renderDailyBars([0, 4, 0], barOpts(3, 1, glyphsFor("unicode")));
 	expect(rows.length).toBe(1);
-	expect(rows[0]).toBe(` ${glyph("unicode", "barFill")} `);
+	expect(rows[0]).toBe(axis.repeat(3));
+
+	// And the allocation is what makes a quiet series readable rather than a bare
+	// baseline: it never gets a single row while it still has ink to show.
+	for (const budget of [4, 8, 14]) {
+		expect(bandHeights([44, 4], budget).every(rows => rows >= 2), `[44,4]/${budget}`).toBe(true);
+		expect(bandHeights([1], budget)[0]).toBeGreaterThanOrEqual(2);
+	}
 });
 
 // ─── 3. Measured zero, an empty series and absent data are three things ──────

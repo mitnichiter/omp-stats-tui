@@ -371,18 +371,32 @@ test("the SHARED scale is what stops a 4% failure rate reading as 100%", () => {
 	// pixels here would be testing the primitive's rounding, not this rule.
 	// THE BUDGET IS THE WHOLE CHART, so these sums are the chart height — a band
 	// cannot claim a row another band is not giving up.
-	expect(bandHeights([44, 4], 8)).toEqual([7, 1]);
+	//
+	// EVERY BAND IS ITS MAGNITUDE PLUS ITS FLOOR, and the floor is unconditional,
+	// so a band that recorded something is never allocated a single row: that
+	// would be a bare baseline, which reads as a series that recorded nothing.
+	expect(bandHeights([44, 4], 8)).toEqual([6, 2]);
 	// Equal peaks get equal bands — the case the composition equalities rely on.
 	expect(bandHeights([10, 10, 10], 3)).toEqual([1, 1, 1]);
-	// A series that recorded something keeps at least one row, so "drew nothing"
-	// and "recorded nothing" stay distinguishable.
-	expect(bandHeights([100, 1], 4)).toEqual([3, 1]);
+	// A series that recorded something keeps at least one row of INK over its
+	// floor, so "drew nothing" and "recorded nothing" stay distinguishable.
+	expect(bandHeights([100, 1], 4)).toEqual([2, 2]);
 	// No budget, no bands.
 	expect(bandHeights([44, 4], 0)).toEqual([0, 0]);
-	// Nothing recorded anywhere: every band still gets a row, so "no data" reads
-	// as a flat empty chart rather than a missing one. There is no magnitude to
-	// divide, so the rows left over after that go to NOBODY.
+	// Nothing recorded anywhere: every band still gets its floor, so "no data"
+	// reads as a flat empty chart rather than a missing one. There is no magnitude
+	// to divide, so the rows left over after that go to NOBODY.
 	expect(bandHeights([0, 0], 4)).toEqual([1, 1]);
+	// And whenever the budget can cover the bands, EVERY band is covered — a band
+	// with no rows at all is indistinguishable from a series never declared.
+	for (const peaks of [[16, 8, 2, 1], [1, 1, 1], [9], [44, 4, 0], [4, 4, 4, 4]]) {
+		for (const budget of [peaks.length, peaks.length + 1, peaks.length + 2, 8, 14, 40]) {
+			expect(
+				bandHeights(peaks, budget).filter(rows => rows === 0),
+				`${JSON.stringify(peaks)} / ${budget}`,
+			).toEqual([]);
+		}
+	}
 	// And the sum never exceeds the budget, at any series count — the property
 	// that lets a four-series chart keep the rows its bands actually drew.
 	for (const peaks of [[16, 8, 2, 1], [1, 1, 1], [9], [44, 4, 0]]) {
