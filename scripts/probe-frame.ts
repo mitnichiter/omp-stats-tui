@@ -1,11 +1,17 @@
 // Capture the composed panel frame at several widths, ANSI stripped, and report
-// the frame contract by measurement. Run: bun -e "$(cat scripts/probe-frame.ts)"
+// the frame contract by measurement. Run: bun scripts/probe-frame.ts
+//
+// The four widths are the ones the chrome brief names — 40 (tiny topbar),
+// 60 (condensed), 100 (the common terminal, wide sidebar) and 150 (the widest
+// band, where the topbar's painted spacer is most visible). OVERWIDE must be 0
+// at every one: a row that overflows is torn by `OverlayPanel.row`, not
+// squeezed, so the control on the trailing edge is what disappears.
 import { __testing } from "../src/tui/panel";
 import { liveData } from "../test/fixtures/panel";
 import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
 
 const ANSI = /\x1b\[[0-9;]*m/g;
-const WIDTHS = [100, 60, 40];
+const WIDTHS = [150, 100, 60, 40];
 const summary: string[] = [];
 const blocks: string[] = [];
 
