@@ -30,6 +30,7 @@ export type PaletteRole =
 	| "primary"
 	| "negative"
 	| "positive"
+	| "caution"
 	| "heading"
 	| "label"
 	| "meta"
@@ -39,7 +40,6 @@ export type PaletteRole =
 	| "heat1"
 	| "heat2"
 	| "heat3";
-
 /**
  * Role → theme token.
  *
@@ -71,6 +71,14 @@ export const PALETTE = {
 	 * never reads as a caution.
 	 */
 	positive: "success",
+
+	/**
+	 * `warning` — the pressured state: a meter pinned at its column maximum,
+	 * a quota near exhaustion. `/usage`'s `#statusColor` returns `warning`
+	 * for exactly this state (usage-dashboard.ts:617-621); naming it keeps
+	 * tables from hardcoding the token.
+	 */
+	caution: "warning",
 
 	/** `mdHeading` — screen titles. Matches markdown headings in chat, so a
 	 * titled stats screen reads as a heading by the same visual rule. */

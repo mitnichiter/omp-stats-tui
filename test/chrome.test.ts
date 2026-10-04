@@ -124,28 +124,79 @@ test("sidebar has one row per screen under its group heading, with a G-letter hi
 	const { width, lines } = sidebar(theme, "unicode", "overview");
 	const plain = lines.map(strip);
 	expect(plain).toHaveLength(3 + 8);
-	expect(plain[0]!.trimEnd()).toBe("Usage");
-	expect(plain[4]!.trimEnd()).toBe("Activity");
-	expect(plain[8]!.trimEnd()).toBe("Insights");
+	// Every row carries the host's 2-column prefix slot: cursor + space when
+	// selected, two spaces otherwise (settings-list.ts:939-940).
+	expect(plain[0]!.trim()).toBe("Usage");
+	expect(plain[4]!.trim()).toBe("Activity");
+	expect(plain[8]!.trim()).toBe("Insights");
 	expect(plain[1]).toMatch(/Overview/);
 	expect(plain[1]).toMatch(/G O/);
 	expect(plain[6]).toMatch(/Requests/);
 	expect(plain[6]).toMatch(/G R/);
 	for (const line of plain) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-	expect(width).toBeLessThanOrEqual(24);
+	expect(width).toBeLessThanOrEqual(26);
 });
 
-test("the active sidebar row is a luminance step reusing the tab strip style", () => {
+test("the active sidebar row is host section style: accent text plus cursor, never a pill", () => {
+	// /settings marks selection with cursor + accent and reserves the
+	// selectedBg pill for the tab strip (tui-adapters.ts:336-350,
+	// chrome/shared.ts:18-27). A pill in the sidebar is a second active style.
 	const { lines } = sidebar(theme, "unicode", "costs");
 	const active = lines.find(l => strip(l).includes("Costs"));
 	expect(active).toBeDefined();
-	expect(active!).toContain(ACTIVE_BG);
+	expect(strip(active!)).toStartWith(`${theme.nav.cursor} `);
+	// The cursor slot is accent-tinted (settings-list.ts:939, tui-adapters.ts:344).
+	expect(active!).toContain(theme.fg("accent", `${theme.nav.cursor} `));
 	for (const line of lines) {
 		if (line === active) continue;
 		expect(line).not.toContain(ACTIVE_BG);
 	}
+	expect(active!).not.toContain(ACTIVE_BG);
 });
 
+test("sidebar headings follow the host section style: active group accent+bold, rest muted", () => {
+	// getSettingsListTheme().section: active accent+bold, inactive muted
+	// (tui-adapters.ts:348-349). Headings are group names, not rows: no cursor.
+	const { lines } = sidebar(theme, "unicode", "overview");
+	const usage = lines[0]!;
+	expect(strip(usage).trim()).toBe("Usage");
+	expect(usage).toContain(theme.bold(theme.fg("accent", "Usage")));
+	const activity = lines[4]!;
+	expect(strip(activity).trim()).toBe("Activity");
+	expect(activity).toContain(theme.fg("muted", "Activity"));
+	expect(activity).not.toContain(theme.nav.cursor);
+});
+
+test("sidebar hover paints the host hover band on a non-active row only", () => {
+	// settings-list.ts:778,792-796: hover is a full-row selectedBg band behind
+	// the row; the keyboard cursor stays where it is.
+	const { lines } = sidebar(theme, "unicode", "overview", "models");
+	const hovered = lines.find(l => strip(l).includes("Models"));
+	const active = lines.find(l => strip(l).includes("Overview"));
+	expect(hovered).toBeDefined();
+	expect(hovered!).toContain(ACTIVE_BG);
+	expect(hovered!).not.toContain("\x1b[1m");
+	expect(active!).not.toContain(ACTIVE_BG);
+	const { lines: plain } = sidebar(theme, "unicode", "overview", "Usage");
+	for (const line of plain) expect(line).not.toContain(ACTIVE_BG);
+});
+
+test("an omitted hover id paints byte-identical output to the 3-arg call", () => {
+	expect(sidebar(theme, "unicode", "overview")).toEqual(sidebar(theme, "unicode", "overview", undefined));
+	expect(sidebar(theme, "unicode", "overview")).toEqual(sidebar(theme, "unicode", "overview", null));
+});
+
+test("the sidebar gutter is the dim column bar, settings split-layout parity", () => {
+	// settings-list.ts:989: the split column separator is theme.hint("│ ").
+	// panel.ts zips sidebar and body with the same dim bar between them.
+	const panel = __testing.makePanel({ data: liveData(), rows: 40 });
+	return __testing.settled(panel).then(() => {
+		const frame = panel.render(100).map(strip);
+		const navRow = frame.find(row => row.includes("Overview") && row.includes("G O"));
+		expect(navRow).toBeDefined();
+		expect(navRow!).toMatch(/│/);
+	});
+});
 // ─── live chip: LiveChip.tsx branch order, minus connected ────────────────────
 
 test("chip shows Live only when settled: syncing, error and backlog all override it", () => {

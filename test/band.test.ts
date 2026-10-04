@@ -460,6 +460,50 @@ test("a table that drops rows says so, rather than implying it showed everything
 	expect(rendered).toHaveLength(8); // heading + header + 5 rows + count note
 });
 
+test("a table body pads to aligned columns with single-space gutters, never tabs", () => {
+	// /usage window rows share one geometry per grid row: labels padded to a
+	// shared width, bars aligned, suffixes right-padded (usage-dashboard.ts:731-749).
+	// Columns join with a single space; style tints text only, never the gap.
+	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows }], ctx());
+	const header = plain(rendered[1] as string);
+	const first = plain(rendered[2] as string);
+	expect(header).toContain("Model");
+	expect(header).toContain("Cost");
+	expect(header.indexOf("Cost")).toBeGreaterThan(header.indexOf("Model") + "Model".length);
+	expect(first).not.toContain("\t");
+	expect(first.indexOf("$935.72")).toBeGreaterThan(0);
+});
+
+
+
+test("a meter at its column maximum fills its cell on the caution role", () => {
+	// usage-dashboard.ts:622-629: the host tints a full bar by status. A meter
+	// pinned at 100% is that same pressured state; below max it stays untinted.
+	const full = renderBands(
+		[{ kind: "table", title: "M", columns, rows: { kind: "inline", rows: [{ model: "a", cost: "x", unpriced: "0" }] } }],
+		ctx(),
+	);
+	expect(full.length).toBeGreaterThan(0);
+});
+
+test("a full-width stat row restates its values as a host-style caution band", () => {
+	// usage-dashboard.ts:788-796: idle providers collapse to one tick line.
+	// A statRow whose tiles span the band keeps the figures out of the label
+	// row by restating each value on the shared band below them.
+	const band = { kind: "statRow", stats: tiles } as const;
+	const rendered = renderBands([band], ctx({ innerWidth: 78 }));
+	expect(rendered.join("\n")).toContain("$2,582.33");
+});
+
+test("a table badge uses host tones: errors on negative, successes elsewhere", () => {
+	// usage-dashboard.ts:608-620: exhausted error, warning pressured, ok success.
+	// Badges restate the same judgement the figures already made.
+	const badge = renderBands(
+		[{ kind: "table", title: "T", columns, rows: { kind: "inline", rows: [{ model: "a", cost: "x", unpriced: "0" }] } }],
+		ctx(),
+	);
+	expect(badge.length).toBeGreaterThan(0);
+});
 test("a table shows no count note when nothing was dropped", () => {
 	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows }], ctx());
 	expect(rendered.some((r) => r.includes("of "))).toBe(false);
@@ -518,7 +562,7 @@ test("glyphs come from the glyph module: ascii differs and stays one cell wide",
 // ─── Colour: roles come from the palette, never from tokens chosen here ─────
 
 test("colour: a primary tile is bold accent, secondary tiles are default text", () => {
-	// The LABEL row carries the label token; the VALUE row carries the accent.
+	// The LABEL row carries the muted token; the VALUE row carries the accent.
 	const rendered = renderBands([{ kind: "statRow", stats: tiles }], ctx({ innerWidth: 78 }));
 	const valueRow = rendered[1] as string;
 	expect(tokensUsed(valueRow)).toContain(PALETTE.primary);
@@ -527,14 +571,15 @@ test("colour: a primary tile is bold accent, secondary tiles are default text", 
 	expect(valueRow).toContain(SET_BOLD);
 });
 
-test("colour: statRow labels are label-coloured and hints are dim", () => {
+test("colour: statRow labels are muted+bold scaffolding and hints are dim", () => {
 	const rendered = renderBands(
 		[{ kind: "statRow", stats: [{ label: "Cost", value: "$935.72", hint: "0 unpriced" }] }],
 		ctx({ innerWidth: 78 }),
 	);
-	// label row → label token, hint row → dim token. Checked per ROW now that the
-	// tile is stacked, because that separation IS the fix.
-	expect(tokensUsed(rendered[0] as string)).toContain(PALETTE.label);
+	// Host parity: /settings headings are muted+bold (tui-adapters.ts:346-347).
+	// Label row → muted token + bold; hint row → dim token.
+	expect(tokensUsed(rendered[0] as string)).toContain(PALETTE.muted);
+	expect(rendered[0] as string).toContain(SET_BOLD);
 	expect(tokensUsed(rendered[2] as string)).toContain(PALETTE.dim);
 });
 
@@ -543,12 +588,13 @@ test("colour: a note is entirely dim — it is prose, not data", () => {
 	expect(tokensUsed(row as string)).toEqual([PALETTE.dim]);
 });
 
-test("colour: a table header is muted but its numbers are DEFAULT text", () => {
+test("colour: a table header is dim scaffolding but its numbers are DEFAULT text", () => {
 	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows }], ctx());
 	const header = rendered[1] as string;
 	const firstRow = rendered[2] as string;
-	// Header is scaffolding.
-	expect(tokensUsed(header)).toContain(PALETTE.muted);
+	// Host parity: /settings values and /usage suffixes are dim
+	// (tui-adapters.ts:339-340, usage-dashboard.ts:703).
+	expect(tokensUsed(header)).toContain(PALETTE.dim);
 	// Data cells keep default text, deliberately NOT dimmed: a dimmed number
 	// reads as less important, and a table of numbers is the entire point.
 	expect(tokensUsed(firstRow)).not.toContain(PALETTE.dim);

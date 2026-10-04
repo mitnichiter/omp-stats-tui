@@ -55,6 +55,7 @@ test("the panel's roles are all present", () => {
 		"primary",
 		"negative",
 		"positive",
+		"caution",
 		"heading",
 		"label",
 		"meta",
@@ -67,6 +68,12 @@ test("the panel's roles are all present", () => {
 	] as PaletteRole[]) {
 		expect(PALETTE[role]).toBeDefined();
 	}
+});
+
+test("the caution role rides the host warning token", () => {
+	// usage-dashboard.ts #statusColor: warning for pressured quotas. Our meter
+	// at/over its column max is the same pressured state, styled by name.
+	expect(PALETTE.caution satisfies ThemeColor).toBe("warning");
 });
 
 test("the heat roles form a 4-level ladder, matching HEAT_LEVELS in our glyphs", () => {

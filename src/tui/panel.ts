@@ -678,12 +678,16 @@ export class StatsPanel implements Component {
 		state.chart = rendered.chart;
 		if (sidebarLines === null) return rendered.lines;
 		// The sidebar zips beside the body, not above it: sidebar row first,
-		// body row after, one column of gap. No rule inside (G5); the divider
-		// below the body (G6) is the panel's own PanelDivider.
-		const gap = " ";
+		// a DIM column bar between them, body row after. The bar copies the
+		// split layout's `theme.hint("│ ")` (settings-list.ts:989): it is the
+		// one vertical in the body, and G5 bans full-width rules, not columns.
+		// DIVERGENCE (deliberate, noted): the host draws no gutters around the
+		// outer frame — OverlayPanel's `row()` already insets both sides — so
+		// only this inner column carries the bar.
+		const gutter = this.#theme.fg("dim", "│");
 		return rendered.lines.map((line, index) => {
 			const side = index < sidebarLines.length ? sidebarLines[index]! : " ".repeat(sidebarWidth);
-			return `${side}${gap}${line}`;
+			return `${side} ${gutter} ${line}`;
 		});
 	}
 

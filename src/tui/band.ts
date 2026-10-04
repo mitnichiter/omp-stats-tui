@@ -239,7 +239,6 @@ function renderStatRow(stats: readonly StatTile[], ctx: BandRenderOptions): read
 	const sparkWidth = Math.max(0, tileWidth - 1);
 	const sparkVisible = columns <= 2;
 	const lines: string[] = [];
-
 	for (let start = 0; start < stats.length; start += columns) {
 		const tiles = stats.slice(start, start + columns);
 		// One row of slots PER TILE ROW. A shared set of slots across every tile row
@@ -248,13 +247,22 @@ function renderStatRow(stats: readonly StatTile[], ctx: BandRenderOptions): read
 		const slots: string[][] = [[], [], [], []];
 
 		for (const tile of tiles) {
-			// Rule 3: the LABEL is never truncated — "a truncated label is still a
-			// label" (F23 §2.3). On its own row it cannot collide with the value,
-			// which is what D1 was.
-			slots[0].push(padEndTo(clamp(ctx.fg(PALETTE.label, tile.label), tileWidth), tileWidth));
+			// Host parity: `/settings` headings are muted+bold+underline and
+			// `/usage` card titles are bold (tui-adapters.ts:346-347,
+			// usage-dashboard.ts:641). Ours was `label`-coloured, which made a
+			// tile label read as body text; muted+bold keeps it scaffolding.
+			// DIVERGENCE (deliberate, noted): no underline — the host underlines
+			// section headings inside a list pane, where the line separates the
+			// heading from rows below it. A tile label sits above its own value
+			// with no rows beneath to separate from; an underline here would
+			// read as a rule fragment and fight G5.
+			slots[0].push(padEndTo(clamp(ctx.bold(ctx.fg(PALETTE.muted, tile.label)), tileWidth), tileWidth));
 
-			let value = ctx.fg(PALETTE.label, tile.value);
-			if (tile.emphasis === "primary") value = ctx.bold(ctx.fg(PALETTE.primary, value));
+			// Host parity: `/usage` tints a full/pressured figure by status
+			// (#statusColor, usage-dashboard.ts:617-621). The primary value is
+			// the tile the reader lands on, so it carries the emphasis the IR
+			// already declares: bold + primary. Secondary values stay `label`.
+			let value = tile.emphasis === "primary" ? ctx.bold(ctx.fg(PALETTE.primary, tile.value)) : ctx.fg(PALETTE.label, tile.value);
 			// The VALUE truncates, because it is the thing that can lose precision
 			// least legibly.
 			slots[1].push(padEndTo(clamp(value, tileWidth), tileWidth));
@@ -331,7 +339,10 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
 
 	const header = line(
 		band.columns.map((c) => c.header),
-		(t) => ctx.fg(PALETTE.muted, t),
+		// Host parity: `/settings` value column and `/usage` reset/suffix text
+		// are the quietest ink (tui-adapters.ts:339-340, usage-dashboard.ts:703).
+		// A muted header competes with the figures; a dim header scaffolds.
+		(t) => ctx.fg(PALETTE.dim, t),
 	);
 	// Data cells take DEFAULT TEXT explicitly rather than being left uncoloured:
 	// the rule is "not dimmed", and naming the token keeps the table inside the

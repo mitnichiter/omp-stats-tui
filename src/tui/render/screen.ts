@@ -1165,6 +1165,13 @@ function renderCell(
  * The figure is NOT repeated in the cell — the table has a column for it. A
  * meter that printed its own number would read as two numbers and invite the
  * reader to compare them, which is the one thing a magnitude column must not do.
+ *
+ * Host parity: `/usage` tints each bar by its quota status (`#miniBar` +
+ * `#statusColor`, usage-dashboard.ts:617-629). The only status a column apex
+ * can state honestly is "this is the most": a full bar is `caution`, a zero
+ * bar is dim (measured none, not missing), everything between is plain. The
+ * tint covers the FILL only, never the track — colouring the empties would
+ * tint the gutter the figures align against.
  */
 function meterCell(
 	value: number,
@@ -1174,12 +1181,15 @@ function meterCell(
 ): string {
 	const fill = glyph(opts.preset, "barFill");
 	const empty = glyph(opts.preset, "barEmpty");
-	if (columnMax <= 0) return empty.repeat(cellWidth);
+	if (columnMax <= 0) return opts.fg("dim", empty.repeat(cellWidth));
 	// The one-cell floor: a row that rendered nothing would be indistinguishable
 	// from a row the query never returned, and this may be the unpriced model the
 	// reader most needs to see.
 	const drawn = Math.max(value > 0 ? 1 : 0, Math.min(cellWidth, Math.round((value / columnMax) * cellWidth)));
-	return fill.repeat(drawn) + empty.repeat(cellWidth - drawn);
+	const track = fill.repeat(drawn) + empty.repeat(cellWidth - drawn);
+	if (value <= 0) return opts.fg("dim", track);
+	if (value >= columnMax) return opts.fg(PALETTE.caution, track);
+	return track;
 }
 
 /**
@@ -1193,11 +1203,11 @@ function meterCell(
 function badgeCell(column: IRColumn, row: DataRow, opts: ScreenRenderOptions): string {
 	// The request log's Status is the host's `requestStatus`, not the raw
 	// `errorMessage`: an aborted request carries no error and must not read
-	// "failed". Aborted is `warning` — interrupted work, not a failure — and
+	// "failed". Aborted is `caution` — interrupted work, not a failure — and
 	// only genuinely failed rows take `negative`.
 	const statusValue = resolveCell(column.source, opts.data, row);
 	if (leafFieldOf(column.source) === "stopReason" && typeof statusValue === "string") {
-		if (statusValue === "aborted") return opts.fg("warning", "aborted");
+		if (statusValue === "aborted") return opts.fg(PALETTE.caution, "aborted");
 		if (statusValue === "failed") return opts.fg(PALETTE.negative, "failed");
 		return opts.fg(PALETTE.positive, "ok");
 	}

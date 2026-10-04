@@ -190,20 +190,43 @@ export interface Sidebar {
 }
 
 /**
- * The full grouped sidebar: one dim heading row per group, one row per screen
- * (`icon + label + G <letter>`, mirroring the web's icon + label + kbd).
- * The active row reuses the tab strip's luminance step (`tabBarTheme`
- * activeTab: selectedBg + bold) — never a second active style. Rows are padded
- * to a common width so the pill fills the column.
+ * The full grouped sidebar: one heading row per group, one row per screen
+ * (`cursor + icon + label + G <letter>`, mirroring the web's icon + label + kbd).
+ *
+ * Host parity (settings-selector.ts + settings-list.ts:914-996,
+ * theme/tui-adapters.ts:336-350): rows carry the host's 2-column prefix slot
+ * (`cursor + space` for the active row, two spaces otherwise); the ACTIVE row
+ * is accent text under the cursor (the `section` style), never the tab strip's
+ * selectedBg pill — the pill belongs to the topbar segment and the strip
+ * (chrome/shared.ts:18-27), and a second pill here is a second active style.
+ * Group headings are `section` styled by ACTIVE GROUP (accent+bold for the
+ * group holding the active screen, muted otherwise); hover paints the host's
+ * `hoverTab` band on a non-active row and never moves the cursor
+ * (settings-list.ts:778,792-796). Rows are padded to a common width so the
+ * hover band fills the column.
+ *
+ * DIVERGENCE (deliberate, noted): headings track the active group rather than
+ * the settings-list dim wash. The host dims off-section ROWS in a split pane
+ * where rows stay selectable; our sidebar rows are never dimmed because a dim
+ * nav row reads as disabled, and the group cue has to live somewhere — so it
+ * lives in the heading.
  */
-export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string): Sidebar {
+export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, hoveredId?: string | null): Sidebar {
 	const bar = tabBarTheme(theme);
+	const activeGroup = NAV_GROUPS.find(group => group.items.some(item => item.id === activeId));
 	const lines: string[] = [];
 	for (const group of NAV_GROUPS) {
-		lines.push(theme.fg("dim", group.heading));
+		const head = group === activeGroup ? theme.bold(theme.fg("accent", group.heading)) : theme.fg("muted", group.heading);
+		lines.push(`  ${head}`);
 		for (const item of group.items) {
 			const text = `${statsIcon(preset, TAB_ICON[item.id], theme)} ${item.label}  G ${item.hotkey.toUpperCase()}`;
-			lines.push(item.id === activeId ? bar.activeTab(text) : theme.fg("muted", text));
+			if (item.id === activeId) {
+				lines.push(`${theme.fg("accent", `${theme.nav.cursor} `)}${theme.fg("accent", theme.bold(text))}`);
+			} else if (item.id === hoveredId) {
+				lines.push((bar.hoverTab ?? bar.inactiveTab)(`  ${text}`));
+			} else {
+				lines.push(theme.fg("muted", `  ${text}`));
+			}
 		}
 	}
 	const width = Math.max(...lines.map(line => visibleWidth(line)));
