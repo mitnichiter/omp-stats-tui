@@ -597,7 +597,7 @@ export class StatsPanel implements Component {
 			this.#tabBar.setTabs(tabs, spec.id);
 			strip = this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT));
 		}
-		const nav = column ? sidebar(this.#theme, preset, state.screenId) : null;
+		const nav = column ? sidebar(this.#theme, preset, state.screenId, state.hoveredSidebarId) : null;
 		const sidebarWidth = nav?.width ?? 0;
 		// The routers hit-test against THIS frame, exactly as `/settings` reads
 		// its `#tabRowStart` bookkeeping: strip zones come from the `TabBar`'s
@@ -1118,6 +1118,7 @@ export const __testing = {
 	debugDoneCalls: (panel: StatsPanel) => STATE.get(panel)!.doneCalls,
 	debugFrame: (panel: StatsPanel) => STATE.get(panel)!.mouse,
 	debugHoverTab: (panel: StatsPanel) => STATE.get(panel)!.hoveredStripId,
+	debugHoverSidebar: (panel: StatsPanel) => STATE.get(panel)!.hoveredSidebarId,
 	debugChartRows: (panel: StatsPanel, width = 120): readonly string[] => {
 		panel.render(width);
 		return STATE.get(panel)!.chart;

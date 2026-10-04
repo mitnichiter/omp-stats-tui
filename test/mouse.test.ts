@@ -307,6 +307,26 @@ test("hover over a strip tab arms the host hover style; leaving clears it", asyn
 	expect(panel.render(width)[stripStart]).toBe(before);
 });
 
+test("hover over a sidebar row paints the 4th-arg hover band; leaving clears it", async () => {
+	const panel = await settledPanel();
+	const width = 100;
+	const lines = panel.render(width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.sidebarRows).toBe(11);
+	const bodyStart = 1 + frame.topbarRows + frame.stripRows;
+	// Nav row 2 is `models` (overview is active): motion over its cells arms
+	// the sidebar hover, and the painted frame must carry the band while the
+	// active row keeps its own style.
+	panel.handleInput(sgr(MOTION, 5, bodyStart + 2 + 1));
+	expect(__testing.debugHoverSidebar(panel)).toBe("models");
+	const hovered = panel.render(width).map(line => line.replace(ANSI, ""));
+	expect(hovered[bodyStart + 2]).toContain("Models");
+	// The pointer over the heading row clears the hover and restores the row.
+	panel.handleInput(sgr(MOTION, 5, bodyStart + 0 + 1));
+	expect(__testing.debugHoverSidebar(panel)).toBeNull();
+	expect(panel.render(width)).toEqual(lines);
+});
+
 test("clicks never leak to the keyboard map and the keys still work", async () => {
 	const panel = await settledPanel();
 	plain(panel, 100);
