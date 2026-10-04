@@ -24,7 +24,7 @@
 import { expect, test } from "bun:test";
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { __testing, SELECTABLE_SCREENS } from "../src/tui/panel";
-import { NAV_GROUPS, sidebar } from "../src/tui/chrome";
+import { NAV_GROUPS, screenForHotkey, sidebar } from "../src/tui/chrome";
 import type { ScreenId } from "../src/tui/screens/types";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 
@@ -128,4 +128,63 @@ test("the nav and the tab strip draw the same screens in different orders", () =
 	const stripOrder = SCREEN_SPECS.filter(s => !s.deferred).map(s => s.label);
 	expect(navOrder.indexOf("Activity")).toBeGreaterThan(navOrder.indexOf("Costs"));
 	expect(stripOrder.indexOf("Activity")).toBeLessThan(stripOrder.indexOf("Costs"));
+});
+
+// ─── the jump path, which is the part that would actually break ───────────────
+
+/**
+ * THE JUMP TARGET MUST NOT DEPEND ON WHICH CONTROL IS VISIBLE.
+ *
+ * The sidebar and the tab strip deliberately order the same ten screens
+ * differently — `NAV_GROUPS` is a navigation order, `SCREEN_SPECS` is the IR's
+ * declaration order, and they are different jobs. That is agreed and not being
+ * unified.
+ *
+ * What is NOT acceptable is the two disagreeing about where a KEY LANDS. Below
+ * `MIN_SIDEBAR_ROWS` the panel swaps sidebar for strip (`panel.ts:620-626`), so
+ * a jump derived from whichever control happened to be drawn would send the same
+ * letter to different screens at different terminal heights — a session that
+ * breaks silently as the window changes.
+ *
+ * `screenForHotkey` resolves by LETTER, scanning `NAV_GROUPS` for a matching
+ * hotkey and returning that item's id. Nothing else contributes, so the target
+ * is the same at every height. These assertions are green by construction — they
+ * pin a property nothing else covers, and would catch a future index-based
+ * rewrite of the jump lookup, which is the plausible way this could rot.
+ */
+test("every jump letter lands on the nav item that owns it, not on a position", () => {
+	for (const group of NAV_GROUPS) {
+		for (const item of group.items) {
+			expect(screenForHotkey(item.hotkey), `letter "${item.hotkey}" → ${item.id}`).toBe(item.id);
+			// Case-insensitive, like the web's `e.key.toLowerCase()`.
+			expect(screenForHotkey(item.hotkey.toUpperCase())).toBe(item.id);
+		}
+	}
+});
+
+test("no jump letter is ambiguous, so the target cannot depend on scan order", () => {
+	// If two items shared a letter, which one won would depend on the order the
+	// groups happened to be walked in — and the groups change when the nav
+	// changes. One letter, one screen, or the jump is not order-independent.
+	const owners: Record<string, string> = {};
+	for (const group of NAV_GROUPS) {
+		for (const item of group.items) {
+			const letter = item.hotkey.toLowerCase();
+			expect(owners[letter], `letter "${letter}" is claimed by both ${owners[letter]} and ${item.id}`).toBeUndefined();
+			owners[letter] = item.id;
+		}
+	}
+	expect(Object.keys(owners).length).toBe(NAV_GROUPS.reduce((n, g) => n + g.items.length, 0));
+});
+
+test("every screen the strip can show that has a nav row is reachable by its own letter", () => {
+	// The strip and the sidebar disagree about ORDER only. They must still agree
+	// about IDENTITY: for any screen shown in both, the jump and the nav name the
+	// same thing, or the two controls are not showing the same ten screens.
+	const navIds = NAV_GROUPS.flatMap(g => g.items.map(i => i.id));
+	for (const spec of SCREEN_SPECS.filter(s => !s.deferred)) {
+		if (!navIds.includes(spec.id)) continue;
+		const item = NAV_GROUPS.flatMap(g => g.items).find(i => i.id === spec.id)!;
+		expect(screenForHotkey(item.hotkey), `${spec.id}`).toBe(spec.id);
+	}
 });
