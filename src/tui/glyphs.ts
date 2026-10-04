@@ -57,19 +57,23 @@ heatCell: ["■", "■", "■", "■"], // U+25A0 ×4 — every rung is BLACK SQ
 	// under unicode/ascii and 1 under nerd, so it would triple the gap on two
 	// presets and look correct on the third.
 	columnGap: "│", // U+2502 — matches boxRound.vertical
-	// The chart baseline, as a MARK rather than a rule. The web strokes a real
-	// `<line>` at y(0) in `--line-3` (Chart.tsx:304) and a terminal has no rules
-	// in a body (G5; /usage draws none), so the floor is marked with a glyph that
-	// repeats across the row. `─`/`━`/`═` would trip G5's RULE_RUN, and this is
-	// deliberately not `sparkRamp[0]` — a floor mark and a sparkline rung are
-	// different meanings and should be able to move apart.
+	// The chart baseline, as a MARK rather than a rule.
 	//
-	// SHARED WITH `heatEmpty` IN UNICODE, on purpose and with the tradeoff known:
-	// both are U+00B7. They are not visually distinct there. What the separate
-	// role buys is that the two meanings can diverge later; if a baseline ever
-	// needs to read as low rather than centred, `_` is the better mark and only
-	// this one line changes.
-	axisLine: "·", // U+00B7
+	// DIVERGENCE FROM THE WEB, deliberate: the web strokes a real `<line>` at
+	// y(0) in `--line-3` (Chart.tsx:304). G5 and /usage's zero-rules body forbid
+	// a full-width rule here, so we MARK the floor instead of drawing one — and a
+	// mark is the better terminal translation anyway, because a rule cannot be
+	// distinguished from a section separator. `─`/`━`/`═` would also trip G5's
+	// RULE_RUN, and this is deliberately not `sparkRamp[0]`: a floor mark and a
+	// sparkline rung are different meanings and should be able to move apart.
+	//
+	// `_` in EVERY preset, and that is the whole reason it is `_` and not `·`.
+	// A baseline belongs at the BOTTOM of the cell; `·` is vertically centred and
+	// would float in the middle of the plot. The same argument made ascii `_`
+	// rather than a dot, and unicode was simply inconsistent until this line was
+	// made to match. It also makes the mark distinct from `heatEmpty` on every
+	// preset, which it did not before.
+	axisLine: "_", // U+005F
 	trendUp: "▲", // U+25B2
 	trendFlat: "─", // U+2500
 	trendDown: "▼", // U+25BC
@@ -92,9 +96,9 @@ const ASCII_GLYPHS = {
 	heatEmpty: " ",
 	heatMarker: "o",
 	columnGap: "|",
-	// `_` rather than the unicode `·`: ascii has no vertical shading, so a
-	// baseline wants to sit LOW on the row, and `_` is the one ASCII character
-	// that does. Never a blank — the floor must be visible under ascii too.
+	// The same `_` the unicode set uses, for the same reason: a baseline sits at
+	// the bottom of the cell. It is never a blank, or the floor would vanish under
+	// ascii entirely.
 	axisLine: "_", // U+005F
 	trendUp: "^",
 	trendFlat: "-",

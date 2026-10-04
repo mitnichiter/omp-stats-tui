@@ -3,6 +3,7 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import { SYMBOL_PRESETS } from "@oh-my-pi/pi-tui/theme/symbols";
 import {
 	type GlyphSet,
+	type GlyphRole,
 	glyph,
 	glyphsFor,
 	HEAT_LEVELS,
@@ -63,22 +64,24 @@ test("axisLine is a floor mark, not a rule run and not a sparkline rung", () => 
 	}
 });
 
-test("axisLine is a distinct ROLE even where it shares heatEmpty's codepoint", () => {
-	// A deliberate, recorded decision rather than an oversight. In `unicode`,
-	// `axisLine` and `heatEmpty` are both U+00B7 MIDDLE DOT, so they are NOT
-	// visually distinct — the request that asked for this glyph argued they
-	// should not be, and also specified this exact codepoint.
-	//
-	// What the separate role buys is INDEPENDENCE: the two meanings move
-	// separately from here on, which is the same reason `heatCell` is one `■`
-	// at all four levels rather than four different squares. The alternative —
-	// `_` in both presets — is still on the table and is the better mark if a
-	// baseline ever needs to read as low rather than centred.
-	expect(glyph("unicode", "axisLine")).toBe("·");
-	expect(glyph("ascii", "axisLine")).toBe("_");
-	// And it is never the ascii blank, or the baseline would vanish under ascii.
-	expect(glyph("ascii", "axisLine")).not.toBe(glyph("ascii", "heatEmpty"));
-	expect(glyph("ascii", "axisLine")).not.toBe(" ");
+test("axisLine is `_` on every preset, and distinct from every other role's glyph", () => {
+	// `_` and not `·` because a baseline belongs at the BOTTOM of the cell and
+	// `·` is vertically centred — the mark would float in the middle of the plot.
+	// It was `·` in unicode only, which also made it identical to `heatEmpty`
+	// there: the one preset where the two marks could not be told apart, while
+	// ascii `heatEmpty` is a blank and a dot would have been invisible anyway.
+	for (const preset of PRESETS) {
+		expect(glyph(preset, "axisLine"), preset).toBe("_");
+		// Distinct from every other single-glyph role, so no meaning is expressed
+		// twice by accident — which is the property the swap actually bought.
+		const set = glyphsFor(preset);
+		const others = (Object.keys(set) as GlyphRole[])
+			.filter(role => role !== "axisLine" && typeof set[role] === "string")
+			.map(role => glyph(preset, role));
+		expect(others, `${preset} axisLine collides with another role`).not.toContain("_");
+		// Never a blank, under any preset.
+		expect(glyph(preset, "axisLine")).not.toBe(" ");
+	}
 });
 
 test("nerd preset emits byte-identical data ink to unicode", () => {
