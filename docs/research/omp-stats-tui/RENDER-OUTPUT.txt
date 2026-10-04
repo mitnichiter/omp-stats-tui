@@ -5661,3 +5661,2064 @@ CAPTURES
 ├──────────────────────────────────────┤
 │ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
 ╰──────────────────────────────────────╯
+
+==============================================================================
+19) $ bun scripts/probe-showcase.ts 40 60 100 150  — /stats-test SHOWCASE
+==============================================================================
+
+Six showcase sections x four widths, ANSI stripped. No database is read: every
+figure is a fixture (src/tui/showcase/fixtures.ts), and the clock is fixed.
+Each section is captured at scroll 0 AND at the end of its scroll range, and the
+nav column is diffed between them.
+
+READING THE SUMMARY LINE
+  widest            the widest row, which must equal the width
+  dividers         exactly 1 — G6, the PanelDivider between body and footer
+  OVERWIDE         rows exceeding the width; 0 at every width and section
+  G5 violations    rules inside a body; 0 (OverlayPanel's own borders and the G6
+                    divider are excluded, since neither is a band's rule)
+  nav              the sidebar is a FRAME region: at 40/60 the band affords none
+                    (the tab strip stands in), at 100/150 it appears and is
+                    byte-identical at every scroll position
+
+  tiles    @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..12, nav hidden
+  charts   @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..31, nav hidden
+  tables   @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..2, nav hidden
+  awkward  @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav hidden
+  states   @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..2, nav hidden
+  empty    @ 40 — 40 rows, widest 40, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav hidden
+  tiles    @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..3, nav hidden
+  charts   @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..52, nav hidden
+  tables   @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..5, nav hidden
+  awkward  @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav hidden
+  states   @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..15, nav hidden
+  empty    @ 60 — 40 rows, widest 60, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav hidden
+  tiles    @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+  charts   @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..51, nav SCROLL-STABLE true
+  tables   @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..4, nav SCROLL-STABLE true
+  awkward  @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+  states   @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..10, nav SCROLL-STABLE true
+  empty    @100 — 40 rows, widest 100, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+  tiles    @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+  charts   @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..63, nav SCROLL-STABLE true
+  tables   @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..5, nav SCROLL-STABLE true
+  awkward  @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+  states   @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..18, nav SCROLL-STABLE true
+  empty    @150 — 40 rows, widest 150, dividers 1, OVERWIDE 0, G5 violations 0, scroll 0..0, nav SCROLL-STABLE true
+
+--- tiles @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..12 nav=hidden
+╭─ Showcase · Stat tiles ──────────────╮
+│ omp/stats      24h                   │
+│  Stat tiles    ▤    ▥    ⚠    ◇    … │
+│ API-equivalent cost                  │
+│ $112.36                              │
+│ 0                                    │
+│ ▂▂▁▂▃▃▄▅▆▇▇████▇▇▆                   │
+│ Requests                             │
+│ 65,460                               │
+│ 1,315                                │
+│ ▃▂▂▃▃▄▅▆▇▇██████▇▇                   │
+│ Cache rate                           │
+│ 96.2%                                │
+│ 81.4%                                │
+│ Error rate                           │
+│ 2.0%                                 │
+│ 64,145                               │
+│ ▁▁▁▁▁▁▅▆▆▇▇▇███▇▇▇                   │
+│                                      │
+│ Uncached input    Cache read         │
+│ 47M               1.2B               │
+│ Cache write       Output             │
+│ 13M               9.4M               │
+│ Premium requests  Tokens/s           │
+│ 1.5               61.2/s             │
+│ Avg latency       Avg TTFT           │
+│ 12.3s             0.43s              │
+│                                      │
+│ vendor/experimental-model-2026-07…   │
+│ $123,456,789,012,345.67              │
+│ Total requests                       │
+│ 65,460                               │
+│ x                                    │
+│ 96.2%                                │
+│                                      │
+│ Trend                                │
+│ $112.36                              │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- tiles @40 @scroll12 (the same frame scrolled to its end)
+╭─ Showcase · Stat tiles ──────────────╮
+│ omp/stats      24h                   │
+│  Stat tiles    ▤    ▥    ⚠    ◇    … │
+│ 2.0%                                 │
+│ 64,145                               │
+│ ▁▁▁▁▁▁▅▆▆▇▇▇███▇▇▇                   │
+│                                      │
+│ Uncached input    Cache read         │
+│ 47M               1.2B               │
+│ Cache write       Output             │
+│ 13M               9.4M               │
+│ Premium requests  Tokens/s           │
+│ 1.5               61.2/s             │
+│ Avg latency       Avg TTFT           │
+│ 12.3s             0.43s              │
+│                                      │
+│ vendor/experimental-model-2026-07…   │
+│ $123,456,789,012,345.67              │
+│ Total requests                       │
+│ 65,460                               │
+│ x                                    │
+│ 96.2%                                │
+│                                      │
+│ Trend                                │
+│ $112.36                              │
+│                                      │
+│ Measured zero                        │
+│ $123,456,789,012,345.67              │
+│ Unmeasured                           │
+│ 0                                    │
+│ spend that could not be measured     │
+│ Negative                             │
+│ 81.4%                                │
+│ cache savings can be negative        │
+│ Absent                               │
+│ –                                    │
+│ never recorded, so never 0.0%        │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- charts @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..31 nav=hidden
+╭─ Showcase · Charts ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    Charts    Tables    ⚠    ◇   … │
+│ ⏱ Cost per day per day, by billing … │
+│                                    █ │
+│                █ █     █           █ │
+│ ____________________________________ │
+│  Cost                                │
+│                                      │
+│ ⏱ Cost by billing component per day… │
+│  Input                               │
+│  Output                              │
+│  Cache read                          │
+│  Cache write                         │
+│                                      │
+│ ⏱ Requests per bucket requests per … │
+│ ████████████████████████████████████ │
+│ ____________________________________ │
+│  Succeeded                           │
+│   ███████████████       ████████████ │
+│  Failed                              │
+│                                      │
+│ ⏱ Tokens per bucket tokens per buck… │
+│ ▂▃▄▅▆▆▇████▇▇▆▅▄▃▂▂▁▁▂▂▃▄▅▆▆▇████▇▇▆ │
+│                                      │
+│ ⏱ Spend over time over the range     │
+│ ▃▃▄▅▆▇▇████▇▇▆▅▅▄▃▂▂▁▂▃▃▄▅▆▇▇████▇▇▆ │
+│                                      │
+│ ⏱ Tool calls per bucket calls per b… │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁██▇▇▇▆▆▆▅▅▅▄▄▃ │
+│                                      │
+│ ⏱ Activity per day, by billing comp… │
+│ Activity $922 · 2.1K requests · las… │
+│                                      │
+│   Mar Apr     May     Jun       Jul  │
+│ M · · · · · · · · · · · ■ · ■ ■ ■ ■  │
+│ T · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- charts @40 @scroll31 (the same frame scrolled to its end)
+╭─ Showcase · Charts ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    Charts    Tables    ⚠    ◇   … │
+│   Mar Apr     May     Jun       Jul  │
+│ M · · · · · · · · · · · ■ · ■ ■ ■ ■  │
+│ T · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│ W · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│ T · · · · · · · · · · · ■ ■ ■ ■ ■    │
+│ F · · · · · · · · · · · · ■ ■ ■ ■    │
+│ S · · · · · · · · · · · · · · · ·    │
+│ S · · · · · · · · · · ■ · ■ ■ ■ ■    │
+│                                      │
+│ ⏱ Cost by model per day, by billing… │
+│ gpt-5.6-ter… $123,456,789,012,345.67 │
+│ vendor/expe…                   $3.14 │
+│ gemini-3.7-…    N/A · 4,197 unpriced │
+│                                      │
+│ ⏱ Requests by model requests per bu… │
+│ locally-hos…                 36,616  │
+│ gemini-3.7-… 4,197 · 4,197 unpriced  │
+│ gpt-5.6-ter…                  1,280  │
+│ Other model…                    512  │
+│                                      │
+│ ⏱ Token mix share of the total       │
+│ Uncached input            3.7% 47M   │
+│ Cache read     █████████  94.6% 1.2B │
+│ Cache write               1.0% 13M   │
+│ Output                    0.7% 9.4M  │
+│ █ Uncached input    3.7%             │
+│ █ Cache read       94.6%             │
+│ █ Cache write       1.0%             │
+│ █ Output            0.7%             │
+│ █ Main agent   33.3%                 │
+│ █ Subagents    33.3%                 │
+│ █ Advisor      33.3%                 │
+│                                      │
+│ Scaled by COST, never by tokens: th… │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- tables @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..2 nav=hidden
+╭─ Showcase · Tables ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    Tables    Awkward    ◇  … │
+│ 📊 Latest requests                   │
+│ Model                    Prov…       │
+│ gpt-5.6-terra            open…       │
+│ locally-hosted-free-tier open…       │
+│ 2 of 6                               │
+│                                      │
+│ 📊 Cost by model                     │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ 📊 Model trend                       │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ 📊 By folder                         │
+│ Folder                               │
+│ /Users/yuzu/Documents/Projects/omp-… │
+│ /Users/yuzu/Documents/Projects/a-ve… │
+│ 2 of 3                               │
+│                                      │
+│ 📊 By tool                           │
+│ Tool              Calls Errors       │
+│ read 4,021 ████████████      3       │
+│ bash 1,884 ██████░░░░░░     41       │
+│ 2 of 3                               │
+│                                      │
+│ 📊 Errors                            │
+│ Model                 Messa… When    │
+│ gpt-5.6-terra         upstr… 2h ago  │
+│ gemini-3.7-flash-high conte… 3h ago  │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- tables @40 @scroll2 (the same frame scrolled to its end)
+╭─ Showcase · Tables ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    Tables    Awkward    ◇  … │
+│ gpt-5.6-terra            open…       │
+│ locally-hosted-free-tier open…       │
+│ 2 of 6                               │
+│                                      │
+│ 📊 Cost by model                     │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ 📊 Model trend                       │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ 📊 By folder                         │
+│ Folder                               │
+│ /Users/yuzu/Documents/Projects/omp-… │
+│ /Users/yuzu/Documents/Projects/a-ve… │
+│ 2 of 3                               │
+│                                      │
+│ 📊 By tool                           │
+│ Tool              Calls Errors       │
+│ read 4,021 ████████████      3       │
+│ bash 1,884 ██████░░░░░░     41       │
+│ 2 of 3                               │
+│                                      │
+│ 📊 Errors                            │
+│ Model                 Messa… When    │
+│ gpt-5.6-terra         upstr… 2h ago  │
+│ gemini-3.7-flash-high conte… 3h ago  │
+│                                      │
+│ Narrow columns are DROPPED by decla… │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- awkward @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=hidden
+╭─ Showcase · Awkward ─────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    Awkward    States  … │
+│ 📊 A single request                  │
+│ Model         Provi…   Tokens Durat… │
+│ gpt-5.6-terra openr…     1.3M  12.3s │
+│                                      │
+│ 📊 Every failure                     │
+│ Message                              │
+│ provider rejected request 0: upstre… │
+│ provider rejected request 1: upstre… │
+│ 2 of 100                             │
+│                                      │
+│ vendor/experimental-model-2026-07…   │
+│ $123,456,789,012,345.67              │
+│ Requests                             │
+│ 1,280                                │
+│ Cache rate                           │
+│ 96.1%                                │
+│ 81.4%                                │
+│                                      │
+│ ⏱ Share of spend share of the total  │
+│ gpt-5.6-terra       100.0% $123,456… │
+│ vendor/experiment…  0.0% $3.14       │
+│ Everything else (…  0.0% $0 · 4,197… │
+│                                      │
+│ ⏱ Cost by model per day, by billing… │
+│ gpt-5.6-ter… $123,456,789,012,345.67 │
+│ vendor/expe…                   $3.14 │
+│ gemini-3.7-…    N/A · 4,197 unpriced │
+│                                      │
+│ A long figure is TRUNCATED on its o… │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+├──────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- awkward @40 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Awkward ─────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    Awkward    States  … │
+│ 📊 A single request                  │
+│ Model         Provi…   Tokens Durat… │
+│ gpt-5.6-terra openr…     1.3M  12.3s │
+│                                      │
+│ 📊 Every failure                     │
+│ Message                              │
+│ provider rejected request 0: upstre… │
+│ provider rejected request 1: upstre… │
+│ 2 of 100                             │
+│                                      │
+│ vendor/experimental-model-2026-07…   │
+│ $123,456,789,012,345.67              │
+│ Requests                             │
+│ 1,280                                │
+│ Cache rate                           │
+│ 96.1%                                │
+│ 81.4%                                │
+│                                      │
+│ ⏱ Share of spend share of the total  │
+│ gpt-5.6-terra       100.0% $123,456… │
+│ vendor/experiment…  0.0% $3.14       │
+│ Everything else (…  0.0% $0 · 4,197… │
+│                                      │
+│ ⏱ Cost by model per day, by billing… │
+│ gpt-5.6-ter… $123,456,789,012,345.67 │
+│ vendor/expe…                   $3.14 │
+│ gemini-3.7-…    N/A · 4,197 unpriced │
+│                                      │
+│ A long figure is TRUNCATED on its o… │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+├──────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- states @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..2 nav=hidden
+╭─ Showcase · States ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    ⚠    States    ○     │
+│ Flat cost                            │
+│ $0                                   │
+│ fetched, and every bucket is zero    │
+│ Activity cost                        │
+│ $922.40                              │
+│ Activity requests                    │
+│ 2,139                                │
+│ Measured zero                        │
+│ $123,456,789,012,345.67              │
+│ a price of zero is a real price      │
+│                                      │
+│ ⏱ Cost per day (flat) per day, by b… │
+│                                    █ │
+│                █ █     █           █ │
+│ ____________________________________ │
+│  Cost                                │
+│                                      │
+│ ⏱ Requests per bucket (flat) reques… │
+│ ████████████████████████████████████ │
+│ ____________________________________ │
+│  Succeeded                           │
+│                                      │
+│  Failed                              │
+│                                      │
+│ 📊 Zero is not unknown               │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ ⏱ Cost by model per day, by billing… │
+│ gpt-5.6-ter… $123,456,789,012,345.67 │
+│ vendor/expe…                   $3.14 │
+│ gemini-3.7-…    N/A · 4,197 unpriced │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- states @40 @scroll2 (the same frame scrolled to its end)
+╭─ Showcase · States ──────────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    ⚠    States    ○     │
+│ fetched, and every bucket is zero    │
+│ Activity cost                        │
+│ $922.40                              │
+│ Activity requests                    │
+│ 2,139                                │
+│ Measured zero                        │
+│ $123,456,789,012,345.67              │
+│ a price of zero is a real price      │
+│                                      │
+│ ⏱ Cost per day (flat) per day, by b… │
+│                                    █ │
+│                █ █     █           █ │
+│ ____________________________________ │
+│  Cost                                │
+│                                      │
+│ ⏱ Requests per bucket (flat) reques… │
+│ ████████████████████████████████████ │
+│ ____________________________________ │
+│  Succeeded                           │
+│                                      │
+│  Failed                              │
+│                                      │
+│ 📊 Zero is not unknown               │
+│ Model                                │
+│ gpt-5.6-terra                        │
+│ vendor/experimental-model-2026-07-p… │
+│ 2 of 4                               │
+│                                      │
+│ ⏱ Cost by model per day, by billing… │
+│ gpt-5.6-ter… $123,456,789,012,345.67 │
+│ vendor/expe…                   $3.14 │
+│ gemini-3.7-…    N/A · 4,197 unpriced │
+│                                      │
+│ An all-zero series is a measured ze… │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- empty @40 preset=unicode: rows=40 widest=40 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=hidden
+╭─ Showcase · Empty range ─────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    ⚠    ◇    Empty ran… │
+│ No usage recorded in this range.     │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+├──────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- empty @40 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Empty range ─────────────╮
+│ omp/stats      24h                   │
+│  ▦    ▤    ▥    ⚠    ◇    Empty ran… │
+│ No usage recorded in this range.     │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+│                                      │
+├──────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · ⎋/q close  │
+╰──────────────────────────────────────╯
+
+--- tiles @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..3 nav=hidden
+╭─ Showcase · Stat tiles ──────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│ API-equivalent cost  Requests                            │
+│ $112.36              65,460                              │
+│ 0                    1,315                               │
+│ ▂▂▁▂▃▃▄▅▆▇▇████▇▇▆   ▃▂▂▃▃▄▅▆▇▇██████▇▇                  │
+│ Cache rate           Error rate                          │
+│ 96.2%                2.0%                                │
+│ 81.4%                64,145                              │
+│                      ▁▁▁▁▁▁▅▆▆▇▇▇███▇▇▇                  │
+│                                                          │
+│ Uncached input    Cache read        Cache write          │
+│ 47M               1.2B              13M                  │
+│ Output            Premium requests  Tokens/s             │
+│ 9.4M              1.5               61.2/s               │
+│ Avg latency       Avg TTFT                               │
+│ 12.3s             0.43s                                  │
+│                                                          │
+│ vendor/experimental-model-2026-07…                       │
+│ $123,456,789,012,345.67                                  │
+│ Total requests                                           │
+│ 65,460                                                   │
+│ x                                                        │
+│ 96.2%                                                    │
+│                                                          │
+│ Trend                                                    │
+│ $112.36                                                  │
+│                                                          │
+│ Measured zero                                            │
+│ $123,456,789,012,345.67                                  │
+│ Unmeasured                                               │
+│ 0                                                        │
+│ spend that could not be measured                         │
+│ Negative                                                 │
+│ 81.4%                                                    │
+│ cache savings can be negative                            │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- tiles @60 @scroll3 (the same frame scrolled to its end)
+╭─ Showcase · Stat tiles ──────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│ ▂▂▁▂▃▃▄▅▆▇▇████▇▇▆   ▃▂▂▃▃▄▅▆▇▇██████▇▇                  │
+│ Cache rate           Error rate                          │
+│ 96.2%                2.0%                                │
+│ 81.4%                64,145                              │
+│                      ▁▁▁▁▁▁▅▆▆▇▇▇███▇▇▇                  │
+│                                                          │
+│ Uncached input    Cache read        Cache write          │
+│ 47M               1.2B              13M                  │
+│ Output            Premium requests  Tokens/s             │
+│ 9.4M              1.5               61.2/s               │
+│ Avg latency       Avg TTFT                               │
+│ 12.3s             0.43s                                  │
+│                                                          │
+│ vendor/experimental-model-2026-07…                       │
+│ $123,456,789,012,345.67                                  │
+│ Total requests                                           │
+│ 65,460                                                   │
+│ x                                                        │
+│ 96.2%                                                    │
+│                                                          │
+│ Trend                                                    │
+│ $112.36                                                  │
+│                                                          │
+│ Measured zero                                            │
+│ $123,456,789,012,345.67                                  │
+│ Unmeasured                                               │
+│ 0                                                        │
+│ spend that could not be measured                         │
+│ Negative                                                 │
+│ 81.4%                                                    │
+│ cache savings can be negative                            │
+│ Absent                                                   │
+│ –                                                        │
+│ never recorded, so never 0.0%                            │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- charts @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..52 nav=hidden
+╭─ Showcase · Charts ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│ ⏱ Cost per day per day, by billing component             │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                            █           █ │
+│                                            █           █ │
+│                                    █ █     █           █ │
+│ ________________________________________________________ │
+│  Cost                                                    │
+│                                                          │
+│ ⏱ Cost by billing component per day, by billing compone… │
+│                                    █ █     █           █ │
+│  Input                                                   │
+│                                    █ █     █           █ │
+│  Output                                                  │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                            █           █ │
+│                                    █ █     █           █ │
+│ ________________________________________________________ │
+│  Cache read                                              │
+│                                    █ █     █           █ │
+│  Cache write                                             │
+│                                                          │
+│ ⏱ Requests per bucket requests per bucket                │
+│     ██████                ██████                ██████   │
+│   ██████████            ██████████            ██████████ │
+│  ████████████          ████████████          ███████████ │
+│ ███████████████       ███████████████       ████████████ │
+│ ████████████████    ██████████████████    ██████████████ │
+│ █████████████████  ████████████████████  ███████████████ │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- charts @60 @scroll52 (the same frame scrolled to its end)
+╭─ Showcase · Charts ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│   Jan   Feb     Mar       Apr     May     Jun       Jul  │
+│ M · · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■  │
+│ T · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│ W · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│ T · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■    │
+│ F · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■    │
+│ S · · · · · · · · · · · · · · · · · · · · · · · · · ·    │
+│ S · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■    │
+│                                                          │
+│ ⏱ Cost by model per day, by billing component            │
+│ gpt-5.6-terra      █████████████ $123,456,789,012,345.67 │
+│ vendor/experiment… █                               $3.14 │
+│ gemini-3.7-flash-… █                N/A · 4,197 unpriced │
+│                                                          │
+│ ⏱ Requests by model requests per bucket                  │
+│ locally-hosted-fr… ██████████████                 36,616 │
+│ gemini-3.7-flash-… ██             4,197 · 4,197 unpriced │
+│ gpt-5.6-terra      █                               1,280 │
+│ Other models (1)   █                                 512 │
+│                                                          │
+│ ⏱ Token mix share of the total                           │
+│ Uncached input █                              3.7% 47M   │
+│ Cache read     ████████████████████████████   94.6% 1.2B │
+│ Cache write                                   1.0% 13M   │
+│ Output                                        0.7% 9.4M  │
+│ █ Uncached input    3.7%                                 │
+│ █ Cache read       94.6%                                 │
+│ █ Cache write       1.0%                                 │
+│ █ Output            0.7%                                 │
+│ █ Main agent   33.3%                                     │
+│ █ Subagents    33.3%                                     │
+│ █ Advisor      33.3%                                     │
+│                                                          │
+│ Scaled by COST, never by tokens: this project's own pri… │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- tables @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..5 nav=hidden
+╭─ Showcase · Tables ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│ 📊 Latest requests                                       │
+│ Model                                    Prov… When      │
+│ gpt-5.6-terra                            open… 4m ago    │
+│ locally-hosted-free-tier                 open… 40m ago   │
+│ vendor/experimental-model-2026-07-previe expe… 2h ago    │
+│ 3 of 6                                                   │
+│                                                          │
+│ 📊 Cost by model                                         │
+│ Model                                                    │
+│ gpt-5.6-terra                                            │
+│ vendor/experimental-model-2026-07-previe                 │
+│ locally-hosted-free-tier                                 │
+│ 3 of 4                                                   │
+│                                                          │
+│ 📊 Model trend                                           │
+│ Model                                    Trend           │
+│ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ 3 of 4                                                   │
+│                                                          │
+│ 📊 By folder                                             │
+│ Folder                                                   │
+│ /Users/yuzu/Documents/Projects/omp-stats-tui             │
+│ /Users/yuzu/Documents/Projects/a-very-long-directory-na… │
+│ scratch                                                  │
+│                                                          │
+│ 📊 By tool                                               │
+│ Tool              Calls Errors Result chars Last used    │
+│ read 4,021 ████████████      3         413K 5m ago       │
+│ bash 1,884 ██████░░░░░░     41          96K 2m ago       │
+│ grep   610 ██░░░░░░░░░░   none          52K 1h ago       │
+│                                                          │
+│ 📊 Errors                                                │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- tables @60 @scroll5 (the same frame scrolled to its end)
+╭─ Showcase · Tables ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  Stat tiles    Charts    Tables    Awkward    States   … │
+│ 3 of 6                                                   │
+│                                                          │
+│ 📊 Cost by model                                         │
+│ Model                                                    │
+│ gpt-5.6-terra                                            │
+│ vendor/experimental-model-2026-07-previe                 │
+│ locally-hosted-free-tier                                 │
+│ 3 of 4                                                   │
+│                                                          │
+│ 📊 Model trend                                           │
+│ Model                                    Trend           │
+│ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█    │
+│ 3 of 4                                                   │
+│                                                          │
+│ 📊 By folder                                             │
+│ Folder                                                   │
+│ /Users/yuzu/Documents/Projects/omp-stats-tui             │
+│ /Users/yuzu/Documents/Projects/a-very-long-directory-na… │
+│ scratch                                                  │
+│                                                          │
+│ 📊 By tool                                               │
+│ Tool              Calls Errors Result chars Last used    │
+│ read 4,021 ████████████      3         413K 5m ago       │
+│ bash 1,884 ██████░░░░░░     41          96K 2m ago       │
+│ grep   610 ██░░░░░░░░░░   none          52K 1h ago       │
+│                                                          │
+│ 📊 Errors                                                │
+│ Model                 Messa… When                        │
+│ gpt-5.6-terra         upstr… 2h ago                      │
+│ gemini-3.7-flash-high conte… 3h ago                      │
+│                                                          │
+│ Narrow columns are DROPPED by declared priority, never … │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- awkward @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=hidden
+╭─ Showcase · Awkward ─────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│ 📊 A single request                                      │
+│ Model         Provider   Tokens Duration Status          │
+│ gpt-5.6-terra openrouter   1.3M    12.3s     ok          │
+│                                                          │
+│ 📊 Every failure                                         │
+│ Message                                                  │
+│ provider rejected request 0: upstream 503 after 1 retri… │
+│ provider rejected request 1: upstream 503 after 2 retri… │
+│ provider rejected request 2: upstream 503 after 3 retri… │
+│ 3 of 100                                                 │
+│                                                          │
+│ vendor/experimental-model-2026-07…                       │
+│ $123,456,789,012,345.67                                  │
+│ Requests                                                 │
+│ 1,280                                                    │
+│ Cache rate                                               │
+│ 96.1%                                                    │
+│ 81.4%                                                    │
+│                                                          │
+│ ⏱ Share of spend share of the total                      │
+│ gpt-5.6-terra                 100.0% $123,456,789,012,3… │
+│ vendor/experimental-model-2…  0.0% $3.14                 │
+│ Everything else (1)           0.0% $0 · 4,197 unpriced   │
+│                                                          │
+│ ⏱ Cost by model per day, by billing component            │
+│ gpt-5.6-terra      █████████████ $123,456,789,012,345.67 │
+│ vendor/experiment… █                               $3.14 │
+│ gemini-3.7-flash-… █                N/A · 4,197 unpriced │
+│                                                          │
+│ A long figure is TRUNCATED on its own digits, never wra… │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close             │
+╰──────────────────────────────────────────────────────────╯
+
+--- awkward @60 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Awkward ─────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│ 📊 A single request                                      │
+│ Model         Provider   Tokens Duration Status          │
+│ gpt-5.6-terra openrouter   1.3M    12.3s     ok          │
+│                                                          │
+│ 📊 Every failure                                         │
+│ Message                                                  │
+│ provider rejected request 0: upstream 503 after 1 retri… │
+│ provider rejected request 1: upstream 503 after 2 retri… │
+│ provider rejected request 2: upstream 503 after 3 retri… │
+│ 3 of 100                                                 │
+│                                                          │
+│ vendor/experimental-model-2026-07…                       │
+│ $123,456,789,012,345.67                                  │
+│ Requests                                                 │
+│ 1,280                                                    │
+│ Cache rate                                               │
+│ 96.1%                                                    │
+│ 81.4%                                                    │
+│                                                          │
+│ ⏱ Share of spend share of the total                      │
+│ gpt-5.6-terra                 100.0% $123,456,789,012,3… │
+│ vendor/experimental-model-2…  0.0% $3.14                 │
+│ Everything else (1)           0.0% $0 · 4,197 unpriced   │
+│                                                          │
+│ ⏱ Cost by model per day, by billing component            │
+│ gpt-5.6-terra      █████████████ $123,456,789,012,345.67 │
+│ vendor/experiment… █                               $3.14 │
+│ gemini-3.7-flash-… █                N/A · 4,197 unpriced │
+│                                                          │
+│ A long figure is TRUNCATED on its own digits, never wra… │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close             │
+╰──────────────────────────────────────────────────────────╯
+
+--- states @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..15 nav=hidden
+╭─ Showcase · States ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│ Flat cost                                                │
+│ $0                                                       │
+│ fetched, and every bucket is zero                        │
+│ Activity cost                                            │
+│ $922.40                                                  │
+│ Activity requests                                        │
+│ 2,139                                                    │
+│ Measured zero                                            │
+│ $123,456,789,012,345.67                                  │
+│ a price of zero is a real price                          │
+│                                                          │
+│ ⏱ Cost per day (flat) per day, by billing component      │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                                        █ │
+│                                            █           █ │
+│                                            █           █ │
+│                                    █ █     █           █ │
+│ ________________________________________________________ │
+│  Cost                                                    │
+│                                                          │
+│ ⏱ Requests per bucket (flat) requests per bucket         │
+│      █████                ██████                ██████   │
+│   ██████████            ██████████            ██████████ │
+│  ████████████          ████████████          ███████████ │
+│ ███████████████       ███████████████       ████████████ │
+│ ████████████████     █████████████████     █████████████ │
+│ █████████████████  ████████████████████  ███████████████ │
+│ ████████████████████████████████████████████████████████ │
+│ ________________________________________________________ │
+│  Succeeded                                               │
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- states @60 @scroll15 (the same frame scrolled to its end)
+╭─ Showcase · States ──────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│                                                        █ │
+│                                                        █ │
+│                                            █           █ │
+│                                            █           █ │
+│                                    █ █     █           █ │
+│ ________________________________________________________ │
+│  Cost                                                    │
+│                                                          │
+│ ⏱ Requests per bucket (flat) requests per bucket         │
+│      █████                ██████                ██████   │
+│   ██████████            ██████████            ██████████ │
+│  ████████████          ████████████          ███████████ │
+│ ███████████████       ███████████████       ████████████ │
+│ ████████████████     █████████████████     █████████████ │
+│ █████████████████  ████████████████████  ███████████████ │
+│ ████████████████████████████████████████████████████████ │
+│ ________________________________________________________ │
+│  Succeeded                                               │
+│                                                          │
+│  Failed                                                  │
+│                                                          │
+│ 📊 Zero is not unknown                                   │
+│ Model                                                    │
+│ gpt-5.6-terra                                            │
+│ vendor/experimental-model-2026-07-previe                 │
+│ locally-hosted-free-tier                                 │
+│ 3 of 4                                                   │
+│                                                          │
+│ ⏱ Cost by model per day, by billing component            │
+│ gpt-5.6-terra      █████████████ $123,456,789,012,345.67 │
+│ vendor/experiment… █                               $3.14 │
+│ gemini-3.7-flash-… █                N/A · 4,197 unpriced │
+│                                                          │
+│ An all-zero series is a measured zero and draws a real … │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- empty @60 preset=unicode: rows=40 widest=60 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=hidden
+╭─ Showcase · Empty range ─────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│ No usage recorded in this range.                         │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close             │
+╰──────────────────────────────────────────────────────────╯
+
+--- empty @60 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Empty range ─────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ▦    Charts    Tables    Awkward    States    Empty ra… │
+│ No usage recorded in this range.                         │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+│                                                          │
+├──────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close             │
+╰──────────────────────────────────────────────────────────╯
+
+--- tiles @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Stat tiles ──────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ API-equivalent cost  Requests             Cache rate                     │
+│ ❯ 🪙 Stat tiles   G T │ $112.36              65,460               96.2%                          │
+│   💲 Charts       G C │ 0                    1,315                81.4%                          │
+│   📊 Tables       G B │ Error rate                                                               │
+│   Edges               │ 2.0%                                                                     │
+│   ⚠  Awkward      G A │ 64,145                                                                   │
+│   💾 States       G S │                                                                          │
+│   Ranges              │ Uncached input    Cache read        Cache write                          │
+│   ❓ Empty range  G E │ 47M               1.2B              13M                                  │
+│                       │ Output            Premium requests  Tokens/s                             │
+│                       │ 9.4M              1.5               61.2/s                               │
+│                       │ Avg latency       Avg TTFT                                               │
+│                       │ 12.3s             0.43s                                                  │
+│                       │                                                                          │
+│                       │ vendor/experimental-model-2026-07…  Total requests                       │
+│                       │ $123,456,789,012,345.67             65,460                               │
+│                       │ x                                                                        │
+│                       │ 96.2%                                                                    │
+│                       │                                                                          │
+│                       │ Trend                                                                    │
+│                       │ $112.36                                                                  │
+│                       │                                                                          │
+│                       │ Measured zero                       Unmeasured                           │
+│                       │ $123,456,789,012,345.67             0                                    │
+│                       │                                     spend that could not be measured     │
+│                       │ Negative                            Absent                               │
+│                       │ 81.4%                               –                                    │
+│                       │ cache savings can be negative       never recorded, so never 0.0%        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tiles @100 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Stat tiles ──────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ API-equivalent cost  Requests             Cache rate                     │
+│ ❯ 🪙 Stat tiles   G T │ $112.36              65,460               96.2%                          │
+│   💲 Charts       G C │ 0                    1,315                81.4%                          │
+│   📊 Tables       G B │ Error rate                                                               │
+│   Edges               │ 2.0%                                                                     │
+│   ⚠  Awkward      G A │ 64,145                                                                   │
+│   💾 States       G S │                                                                          │
+│   Ranges              │ Uncached input    Cache read        Cache write                          │
+│   ❓ Empty range  G E │ 47M               1.2B              13M                                  │
+│                       │ Output            Premium requests  Tokens/s                             │
+│                       │ 9.4M              1.5               61.2/s                               │
+│                       │ Avg latency       Avg TTFT                                               │
+│                       │ 12.3s             0.43s                                                  │
+│                       │                                                                          │
+│                       │ vendor/experimental-model-2026-07…  Total requests                       │
+│                       │ $123,456,789,012,345.67             65,460                               │
+│                       │ x                                                                        │
+│                       │ 96.2%                                                                    │
+│                       │                                                                          │
+│                       │ Trend                                                                    │
+│                       │ $112.36                                                                  │
+│                       │                                                                          │
+│                       │ Measured zero                       Unmeasured                           │
+│                       │ $123,456,789,012,345.67             0                                    │
+│                       │                                     spend that could not be measured     │
+│                       │ Negative                            Absent                               │
+│                       │ 81.4%                               –                                    │
+│                       │ cache savings can be negative       never recorded, so never 0.0%        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- charts @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..51 nav=stable=true
+╭─ Showcase · Charts ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ ⏱ Cost per day per day, by billing component                             │
+│   🪙 Stat tiles   G T │                                                                        █ │
+│ ❯ 💲 Charts       G C │                                                                        █ │
+│   📊 Tables       G B │                                                                        █ │
+│   Edges               │                                                                        █ │
+│   ⚠  Awkward      G A │                                                                        █ │
+│   💾 States       G S │                                                            █           █ │
+│   Ranges              │                                                            █           █ │
+│   ❓ Empty range  G E │                                                    █ █     █           █ │
+│                       │ ________________________________________________________________________ │
+│                       │  Cost                                                                    │
+│                       │                                                                          │
+│                       │ ⏱ Cost by billing component per day, by billing component                │
+│                       │                                                    █ █     █           █ │
+│                       │  Input                                                                   │
+│                       │                                                    █ █     █           █ │
+│                       │  Output                                                                  │
+│                       │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                            █           █ │
+│                       │                                                    █ █     █           █ │
+│                       │ ________________________________________________________________________ │
+│                       │  Cache read                                                              │
+│                       │                                                    █ █     █           █ │
+│                       │  Cache write                                                             │
+│                       │                                                                          │
+│                       │ ⏱ Requests per bucket requests per bucket                                │
+│                       │                     ██████                ██████                ██████   │
+│                       │                   ██████████            ██████████            ██████████ │
+│                       │                  ████████████          ████████████          ███████████ │
+│                       │                 ███████████████       ███████████████       ████████████ │
+│                       │               ██████████████████    ██████████████████    ██████████████ │
+│                       │ ██████       ████████████████████  ████████████████████  ███████████████ │
+│                       │ ████████████████████████████████████████████████████████████████████████ │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- charts @100 @scroll51 (the same frame scrolled to its end)
+╭─ Showcase · Charts ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │                                                                          │
+│   🪙 Stat tiles   G T │   Nov Dec       Jan     Feb     Mar       Apr     May     Jun       Jul  │
+│ ❯ 💲 Charts       G C │ M · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■  │
+│   📊 Tables       G B │ T · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│   Edges               │ W · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■  │
+│   ⚠  Awkward      G A │ T · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■    │
+│   💾 States       G S │ F · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■    │
+│   Ranges              │ S · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ·    │
+│   ❓ Empty range  G E │ S · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■    │
+│                       │                                                                          │
+│                       │ ⏱ Cost by model per day, by billing component                            │
+│                       │ gpt-5.6-terra            ███████████████████████ $123,456,789,012,345.67 │
+│                       │ vendor/experimental-mod… █                                         $3.14 │
+│                       │ gemini-3.7-flash-high    █                          N/A · 4,197 unpriced │
+│                       │                                                                          │
+│                       │ ⏱ Requests by model requests per bucket                                  │
+│                       │ locally-hosted-free-tier ████████████████████████                 36,616 │
+│                       │ gemini-3.7-flash-high    ███                      4,197 · 4,197 unpriced │
+│                       │ gpt-5.6-terra            █                                         1,280 │
+│                       │ Other models (1)         █                                           512 │
+│                       │                                                                          │
+│                       │ ⏱ Token mix share of the total                                           │
+│                       │ Uncached input ██                                             3.7% 47M   │
+│                       │ Cache read     ███████████████████████████████████████████    94.6% 1.2B │
+│                       │ Cache write                                                   1.0% 13M   │
+│                       │ Output                                                        0.7% 9.4M  │
+│                       │ █ Uncached input    3.7%                                                 │
+│                       │ █ Cache read       94.6%                                                 │
+│                       │ █ Cache write       1.0%                                                 │
+│                       │ █ Output            0.7%                                                 │
+│                       │ █ Main agent   33.3%                                                     │
+│                       │ █ Subagents    33.3%                                                     │
+│                       │ █ Advisor      33.3%                                                     │
+│                       │                                                                          │
+│                       │ Scaled by COST, never by tokens: this project's own price spread is 41x… │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tables @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..4 nav=stable=true
+╭─ Showcase · Tables ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ 📊 Latest requests                                                       │
+│   🪙 Stat tiles   G T │ Model                                    Provid… When   Toke…    Cost    │
+│   💲 Charts       G C │ gpt-5.6-terra                            openro… 4m ago  1.3M   $0.42    │
+│ ❯ 📊 Tables       G B │ locally-hosted-free-tier                 openco… 40m a…  494K   $0.42    │
+│   Edges               │ vendor/experimental-model-2026-07-previe experi… 2h ago  1.3M   $0.42    │
+│   ⚠  Awkward      G A │ 3 of 6                                                                   │
+│   💾 States       G S │                                                                          │
+│   Ranges              │ 📊 Cost by model                                                         │
+│   ❓ Empty range  G E │ Model                                                                    │
+│                       │ gpt-5.6-terra                                                            │
+│                       │ vendor/experimental-model-2026-07-previe                                 │
+│                       │ locally-hosted-free-tier                                                 │
+│                       │ 3 of 4                                                                   │
+│                       │                                                                          │
+│                       │ 📊 Model trend                                                           │
+│                       │ Model                                    Trend         Total             │
+│                       │ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█  1,280             │
+│                       │ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    512             │
+│                       │ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█ 36,616             │
+│                       │ 3 of 4                                                                   │
+│                       │                                                                          │
+│                       │ 📊 By folder                                                             │
+│                       │ Folder                                                                   │
+│                       │ /Users/yuzu/Documents/Projects/omp-stats-tui                             │
+│                       │ /Users/yuzu/Documents/Projects/a-very-long-directory-name-for-testing/o… │
+│                       │ scratch                                                                  │
+│                       │                                                                          │
+│                       │ 📊 By tool                                                               │
+│                       │ Tool              Calls Errors Result chars Last used                    │
+│                       │ read 4,021 ████████████      3         413K 5m ago                       │
+│                       │ bash 1,884 ██████░░░░░░     41          96K 2m ago                       │
+│                       │ grep   610 ██░░░░░░░░░░   none          52K 1h ago                       │
+│                       │                                                                          │
+│                       │ 📊 Errors                                                                │
+│                       │ Model                 Messa… When                                        │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tables @100 @scroll4 (the same frame scrolled to its end)
+╭─ Showcase · Tables ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ vendor/experimental-model-2026-07-previe experi… 2h ago  1.3M   $0.42    │
+│   🪙 Stat tiles   G T │ 3 of 6                                                                   │
+│   💲 Charts       G C │                                                                          │
+│ ❯ 📊 Tables       G B │ 📊 Cost by model                                                         │
+│   Edges               │ Model                                                                    │
+│   ⚠  Awkward      G A │ gpt-5.6-terra                                                            │
+│   💾 States       G S │ vendor/experimental-model-2026-07-previe                                 │
+│   Ranges              │ locally-hosted-free-tier                                                 │
+│   ❓ Empty range  G E │ 3 of 4                                                                   │
+│                       │                                                                          │
+│                       │ 📊 Model trend                                                           │
+│                       │ Model                                    Trend         Total             │
+│                       │ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█  1,280             │
+│                       │ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    512             │
+│                       │ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█ 36,616             │
+│                       │ 3 of 4                                                                   │
+│                       │                                                                          │
+│                       │ 📊 By folder                                                             │
+│                       │ Folder                                                                   │
+│                       │ /Users/yuzu/Documents/Projects/omp-stats-tui                             │
+│                       │ /Users/yuzu/Documents/Projects/a-very-long-directory-name-for-testing/o… │
+│                       │ scratch                                                                  │
+│                       │                                                                          │
+│                       │ 📊 By tool                                                               │
+│                       │ Tool              Calls Errors Result chars Last used                    │
+│                       │ read 4,021 ████████████      3         413K 5m ago                       │
+│                       │ bash 1,884 ██████░░░░░░     41          96K 2m ago                       │
+│                       │ grep   610 ██░░░░░░░░░░   none          52K 1h ago                       │
+│                       │                                                                          │
+│                       │ 📊 Errors                                                                │
+│                       │ Model                 Messa… When                                        │
+│                       │ gpt-5.6-terra         upstr… 2h ago                                      │
+│                       │ gemini-3.7-flash-high conte… 3h ago                                      │
+│                       │                                                                          │
+│                       │ Narrow columns are DROPPED by declared priority, never squeezed, and th… │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- awkward @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Awkward ─────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ 📊 A single request                                                      │
+│   🪙 Stat tiles   G T │ Model         Provider   Tokens Duration Status                          │
+│   💲 Charts       G C │ gpt-5.6-terra openrouter   1.3M    12.3s     ok                          │
+│   📊 Tables       G B │                                                                          │
+│   Edges               │ 📊 Every failure                                                         │
+│ ❯ ⚠  Awkward      G A │ Message                                                   Model          │
+│   💾 States       G S │ provider rejected request 0: upstream 503 after 1 retries gpt-5.6…       │
+│   Ranges              │ provider rejected request 1: upstream 503 after 2 retries gpt-5.6…       │
+│   ❓ Empty range  G E │ provider rejected request 2: upstream 503 after 3 retries gpt-5.6…       │
+│                       │ 3 of 100                                                                 │
+│                       │                                                                          │
+│                       │ vendor/experimental-model-2026-07…  Requests                             │
+│                       │ $123,456,789,012,345.67             1,280                                │
+│                       │                                                                          │
+│                       │ Cache rate                                                               │
+│                       │ 96.1%                                                                    │
+│                       │ 81.4%                                                                    │
+│                       │                                                                          │
+│                       │ ⏱ Share of spend share of the total                                      │
+│                       │ gpt-5.6-terra                        ████ 100.0% $123,456,789,012,345.67 │
+│                       │ vendor/experimental-model-2026-07-p…      0.0% $3.14                     │
+│                       │ Everything else (1)                       0.0% $0 · 4,197 unpriced       │
+│                       │                                                                          │
+│                       │ ⏱ Cost by model per day, by billing component                            │
+│                       │ gpt-5.6-terra            ███████████████████████ $123,456,789,012,345.67 │
+│                       │ vendor/experimental-mod… █                                         $3.14 │
+│                       │ gemini-3.7-flash-high    █                          N/A · 4,197 unpriced │
+│                       │                                                                          │
+│                       │ A long figure is TRUNCATED on its own digits, never wrapped: wrapping b… │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- awkward @100 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Awkward ─────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ 📊 A single request                                                      │
+│   🪙 Stat tiles   G T │ Model         Provider   Tokens Duration Status                          │
+│   💲 Charts       G C │ gpt-5.6-terra openrouter   1.3M    12.3s     ok                          │
+│   📊 Tables       G B │                                                                          │
+│   Edges               │ 📊 Every failure                                                         │
+│ ❯ ⚠  Awkward      G A │ Message                                                   Model          │
+│   💾 States       G S │ provider rejected request 0: upstream 503 after 1 retries gpt-5.6…       │
+│   Ranges              │ provider rejected request 1: upstream 503 after 2 retries gpt-5.6…       │
+│   ❓ Empty range  G E │ provider rejected request 2: upstream 503 after 3 retries gpt-5.6…       │
+│                       │ 3 of 100                                                                 │
+│                       │                                                                          │
+│                       │ vendor/experimental-model-2026-07…  Requests                             │
+│                       │ $123,456,789,012,345.67             1,280                                │
+│                       │                                                                          │
+│                       │ Cache rate                                                               │
+│                       │ 96.1%                                                                    │
+│                       │ 81.4%                                                                    │
+│                       │                                                                          │
+│                       │ ⏱ Share of spend share of the total                                      │
+│                       │ gpt-5.6-terra                        ████ 100.0% $123,456,789,012,345.67 │
+│                       │ vendor/experimental-model-2026-07-p…      0.0% $3.14                     │
+│                       │ Everything else (1)                       0.0% $0 · 4,197 unpriced       │
+│                       │                                                                          │
+│                       │ ⏱ Cost by model per day, by billing component                            │
+│                       │ gpt-5.6-terra            ███████████████████████ $123,456,789,012,345.67 │
+│                       │ vendor/experimental-mod… █                                         $3.14 │
+│                       │ gemini-3.7-flash-high    █                          N/A · 4,197 unpriced │
+│                       │                                                                          │
+│                       │ A long figure is TRUNCATED on its own digits, never wrapped: wrapping b… │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- states @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..10 nav=stable=true
+╭─ Showcase · States ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ Flat cost                          Activity cost                         │
+│   🪙 Stat tiles   G T │ $0                                 $922.40                               │
+│   💲 Charts       G C │ fetched, and every bucket is zero                                        │
+│   📊 Tables       G B │ Activity requests                  Measured zero                         │
+│   Edges               │ 2,139                              $123,456,789,012,345.67               │
+│   ⚠  Awkward      G A │                                    a price of zero is a real price       │
+│ ❯ 💾 States       G S │                                                                          │
+│   Ranges              │ ⏱ Cost per day (flat) per day, by billing component                      │
+│   ❓ Empty range  G E │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                                        █ │
+│                       │                                                            █           █ │
+│                       │                                                            █           █ │
+│                       │                                                    █ █     █           █ │
+│                       │ ________________________________________________________________________ │
+│                       │  Cost                                                                    │
+│                       │                                                                          │
+│                       │ ⏱ Requests per bucket (flat) requests per bucket                         │
+│                       │                      █████                ██████                ██████   │
+│                       │                   ██████████            ██████████            ██████████ │
+│                       │                  ████████████          ████████████          ███████████ │
+│                       │                 ███████████████       ███████████████       ████████████ │
+│                       │                █████████████████     █████████████████     █████████████ │
+│                       │ ██████        ███████████████████  ████████████████████  ███████████████ │
+│                       │ ████████████████████████████████████████████████████████████████████████ │
+│                       │ ________________________________________________________________________ │
+│                       │  Succeeded                                                               │
+│                       │                                                                          │
+│                       │  Failed                                                                  │
+│                       │                                                                          │
+│                       │ 📊 Zero is not unknown                                                   │
+│                       │ Model                                                                    │
+│                       │ gpt-5.6-terra                                                            │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- states @100 @scroll10 (the same frame scrolled to its end)
+╭─ Showcase · States ──────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │                                                                        █ │
+│   🪙 Stat tiles   G T │                                                                        █ │
+│   💲 Charts       G C │                                                                        █ │
+│   📊 Tables       G B │                                                            █           █ │
+│   Edges               │                                                            █           █ │
+│   ⚠  Awkward      G A │                                                    █ █     █           █ │
+│ ❯ 💾 States       G S │ ________________________________________________________________________ │
+│   Ranges              │  Cost                                                                    │
+│   ❓ Empty range  G E │                                                                          │
+│                       │ ⏱ Requests per bucket (flat) requests per bucket                         │
+│                       │                      █████                ██████                ██████   │
+│                       │                   ██████████            ██████████            ██████████ │
+│                       │                  ████████████          ████████████          ███████████ │
+│                       │                 ███████████████       ███████████████       ████████████ │
+│                       │                █████████████████     █████████████████     █████████████ │
+│                       │ ██████        ███████████████████  ████████████████████  ███████████████ │
+│                       │ ████████████████████████████████████████████████████████████████████████ │
+│                       │ ________________________________________________________________________ │
+│                       │  Succeeded                                                               │
+│                       │                                                                          │
+│                       │  Failed                                                                  │
+│                       │                                                                          │
+│                       │ 📊 Zero is not unknown                                                   │
+│                       │ Model                                                                    │
+│                       │ gpt-5.6-terra                                                            │
+│                       │ vendor/experimental-model-2026-07-previe                                 │
+│                       │ locally-hosted-free-tier                                                 │
+│                       │ 3 of 4                                                                   │
+│                       │                                                                          │
+│                       │ ⏱ Cost by model per day, by billing component                            │
+│                       │ gpt-5.6-terra            ███████████████████████ $123,456,789,012,345.67 │
+│                       │ vendor/experimental-mod… █                                         $3.14 │
+│                       │ gemini-3.7-flash-high    █                          N/A · 4,197 unpriced │
+│                       │                                                                          │
+│                       │ An all-zero series is a measured zero and draws a real chart. A source … │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- empty @100 preset=unicode: rows=40 widest=100 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Empty range ─────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ No usage recorded in this range.                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- empty @100 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Empty range ─────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                           ● Live 7m ago    1h  24h  7d  30d  90d  All  │
+│   Grammar             │ No usage recorded in this range.                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tiles @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Stat tiles ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ API-equivalent cost  Requests             Cache rate                                                                       │
+│ ❯ 🪙 Stat tiles   G T │ $112.36              65,460               96.2%                                                                            │
+│   💲 Charts       G C │ 0                    1,315                81.4%                                                                            │
+│   📊 Tables       G B │ Error rate                                                                                                                 │
+│   Edges               │ 2.0%                                                                                                                       │
+│   ⚠  Awkward      G A │ 64,145                                                                                                                     │
+│   💾 States       G S │                                                                                                                            │
+│   Ranges              │ Uncached input    Cache read        Cache write                                                                            │
+│   ❓ Empty range  G E │ 47M               1.2B              13M                                                                                    │
+│                       │ Output            Premium requests  Tokens/s                                                                               │
+│                       │ 9.4M              1.5               61.2/s                                                                                 │
+│                       │ Avg latency       Avg TTFT                                                                                                 │
+│                       │ 12.3s             0.43s                                                                                                    │
+│                       │                                                                                                                            │
+│                       │ vendor/experimental-model-2026-07…  Total requests                      x                                                  │
+│                       │ $123,456,789,012,345.67             65,460                              96.2%                                              │
+│                       │                                                                                                                            │
+│                       │                                                                                                                            │
+│                       │ Trend                                                                                                                      │
+│                       │ $112.36                                                                                                                    │
+│                       │                                                                                                                            │
+│                       │ Measured zero                       Unmeasured                          Negative                                           │
+│                       │ $123,456,789,012,345.67             0                                   81.4%                                              │
+│                       │                                     spend that could not be measured    cache savings can be negative                      │
+│                       │ Absent                                                                                                                     │
+│                       │ –                                                                                                                          │
+│                       │ never recorded, so never 0.0%                                                                                              │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tiles @150 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Stat tiles ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ API-equivalent cost  Requests             Cache rate                                                                       │
+│ ❯ 🪙 Stat tiles   G T │ $112.36              65,460               96.2%                                                                            │
+│   💲 Charts       G C │ 0                    1,315                81.4%                                                                            │
+│   📊 Tables       G B │ Error rate                                                                                                                 │
+│   Edges               │ 2.0%                                                                                                                       │
+│   ⚠  Awkward      G A │ 64,145                                                                                                                     │
+│   💾 States       G S │                                                                                                                            │
+│   Ranges              │ Uncached input    Cache read        Cache write                                                                            │
+│   ❓ Empty range  G E │ 47M               1.2B              13M                                                                                    │
+│                       │ Output            Premium requests  Tokens/s                                                                               │
+│                       │ 9.4M              1.5               61.2/s                                                                                 │
+│                       │ Avg latency       Avg TTFT                                                                                                 │
+│                       │ 12.3s             0.43s                                                                                                    │
+│                       │                                                                                                                            │
+│                       │ vendor/experimental-model-2026-07…  Total requests                      x                                                  │
+│                       │ $123,456,789,012,345.67             65,460                              96.2%                                              │
+│                       │                                                                                                                            │
+│                       │                                                                                                                            │
+│                       │ Trend                                                                                                                      │
+│                       │ $112.36                                                                                                                    │
+│                       │                                                                                                                            │
+│                       │ Measured zero                       Unmeasured                          Negative                                           │
+│                       │ $123,456,789,012,345.67             0                                   81.4%                                              │
+│                       │                                     spend that could not be measured    cache savings can be negative                      │
+│                       │ Absent                                                                                                                     │
+│                       │ –                                                                                                                          │
+│                       │ never recorded, so never 0.0%                                                                                              │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- charts @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..63 nav=stable=true
+╭─ Showcase · Charts ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ ⏱ Cost per day per day, by billing component                                                                               │
+│   🪙 Stat tiles   G T │                                                                                                                          █ │
+│ ❯ 💲 Charts       G C │                                                                                                                          █ │
+│   📊 Tables       G B │                                                                                                                          █ │
+│   Edges               │                                                                                                                          █ │
+│   ⚠  Awkward      G A │                                                                                                                          █ │
+│   💾 States       G S │                                                                                                                          █ │
+│   Ranges              │                                                                                                                          █ │
+│   ❓ Empty range  G E │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                      █ █     █           █ │
+│                       │ __________________________________________________________________________________________________________________________ │
+│                       │  Cost                                                                                                                      │
+│                       │                                                                                                                            │
+│                       │ ⏱ Cost by billing component per day, by billing component                                                                  │
+│                       │                                                                                                      █ █     █           █ │
+│                       │  Input                                                                                                                     │
+│                       │                                                                                                      █ █     █           █ │
+│                       │  Output                                                                                                                    │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                      █ █     █           █ │
+│                       │ __________________________________________________________________________________________________________________________ │
+│                       │  Cache read                                                                                                                │
+│                       │                                                                                                      █ █     █           █ │
+│                       │  Cache write                                                                                                               │
+│                       │                                                                                                                            │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- charts @150 @scroll63 (the same frame scrolled to its end)
+╭─ Showcase · Charts ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │                                                                                                                            │
+│   🪙 Stat tiles   G T │   Jul   Aug     Sep       Oct     Nov     Dec       Jan     Feb     Mar       Apr     May     Jun       Jul                │
+│ ❯ 💲 Charts       G C │ M · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■                │
+│   📊 Tables       G B │ T · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■                │
+│   Edges               │ W · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■ ■                │
+│   ⚠  Awkward      G A │ T · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■ ■                  │
+│   💾 States       G S │ F · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ ■ ■ ■                  │
+│   Ranges              │ S · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ·                  │
+│   ❓ Empty range  G E │ S · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · · ■ · ■ ■ ■ ■                  │
+│                       │                                                                                                                            │
+│                       │ ⏱ Cost by model per day, by billing component                                                                              │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ $123,456,789,012,345.67          │
+│                       │ vendor/experimental-model-2026-07-previe █                                                                  $3.14          │
+│                       │ gemini-3.7-flash-high                    █                                                   N/A · 4,197 unpriced          │
+│                       │                                                                                                                            │
+│                       │ ⏱ Requests by model requests per bucket                                                                                    │
+│                       │ locally-hosted-free-tier ████████████████████████████████████████████████                 36,616                           │
+│                       │ gemini-3.7-flash-high    ██████                                           4,197 · 4,197 unpriced                           │
+│                       │ gpt-5.6-terra            ██                                                                1,280                           │
+│                       │ Other models (1)         █                                                                   512                           │
+│                       │                                                                                                                            │
+│                       │ ⏱ Token mix share of the total                                                                                             │
+│                       │ Uncached input ██                                               3.7% 47M                                                   │
+│                       │ Cache read     █████████████████████████████████████████████    94.6% 1.2B                                                 │
+│                       │ Cache write                                                     1.0% 13M                                                   │
+│                       │ Output                                                          0.7% 9.4M                                                  │
+│                       │ █ Uncached input    3.7%                                                                                                   │
+│                       │ █ Cache read       94.6%                                                                                                   │
+│                       │ █ Cache write       1.0%                                                                                                   │
+│                       │ █ Output            0.7%                                                                                                   │
+│                       │ █ Main agent   33.3%                                                                                                       │
+│                       │ █ Subagents    33.3%                                                                                                       │
+│                       │ █ Advisor      33.3%                                                                                                       │
+│                       │                                                                                                                            │
+│                       │ Scaled by COST, never by tokens: this project's own price spread is 41x at comparable token volume, so a token-scaled cha… │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tables @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..5 nav=stable=true
+╭─ Showcase · Tables ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ 📊 Latest requests                                                                                                         │
+│   🪙 Stat tiles   G T │ Model                                    Provider              When    Tokens  Cost Duration  Status                       │
+│   💲 Charts       G C │ gpt-5.6-terra                            openrouter            4m ago    1.3M $0.42    12.3s      ok                       │
+│ ❯ 📊 Tables       G B │ locally-hosted-free-tier                 opencode-go           40m ago   494K $0.42    12.3s      ok                       │
+│   Edges               │ vendor/experimental-model-2026-07-previe experimental-endpoint 2h ago    1.3M $0.42     4.1s aborted                       │
+│   ⚠  Awkward      G A │ gpt-5.6-terra                            openrouter            2h ago    1.3M $0.42    30.4s      ok                       │
+│   💾 States       G S │ 4 of 6                                                                                                                     │
+│   Ranges              │                                                                                                                            │
+│   ❓ Empty range  G E │ 📊 Cost by model                                                                                                           │
+│                       │ Model                                                                    Cost            Requests Cache rate               │
+│                       │ gpt-5.6-terra                            $123,456,789,012,345.67 ████████████  1,280 █░░░░░░░░░░░      96.1%               │
+│                       │ vendor/experimental-model-2026-07-previe                   $3.14 █░░░░░░░░░░░    512 █░░░░░░░░░░░      94.0%               │
+│                       │ locally-hosted-free-tier                                      $0 ░░░░░░░░░░░░ 36,616 ████████████      98.1%               │
+│                       │ gemini-3.7-flash-high                       N/A · 4,197 unpriced ░░░░░░░░░░░░  4,197 █░░░░░░░░░░░      95.5%               │
+│                       │                                                                                                                            │
+│                       │ 📊 Model trend                                                                                                             │
+│                       │ Model                                    Trend         Total                                                               │
+│                       │ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█  1,280                                                               │
+│                       │ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    512                                                               │
+│                       │ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█ 36,616                                                               │
+│                       │ gemini-3.7-flash-high                    ▁▁▁▁▁▁▁▁▁▁▁█  4,197                                                               │
+│                       │                                                                                                                            │
+│                       │ 📊 By folder                                                                                                               │
+│                       │ Folder                                                                               Requests   Cost Last used             │
+│                       │ /Users/yuzu/Documents/Projects/omp-stats-tui                              31,002 ████████████ $74.10 1h ago                │
+│                       │ /Users/yuzu/Documents/Projects/a-very-long-directory-name-for-testing/omp 18,458 ███████░░░░░ $31.26 9h ago                │
+│                       │ scratch                                                                   16,000 ██████░░░░░░  $7.00 1d ago                │
+│                       │                                                                                                                            │
+│                       │ 📊 By tool                                                                                                                 │
+│                       │ Tool              Calls Errors Result chars Last used                                                                      │
+│                       │ read 4,021 ████████████      3         413K 5m ago                                                                         │
+│                       │ bash 1,884 ██████░░░░░░     41          96K 2m ago                                                                         │
+│                       │ grep   610 ██░░░░░░░░░░   none          52K 1h ago                                                                         │
+│                       │                                                                                                                            │
+│                       │ 📊 Errors                                                                                                                  │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- tables @150 @scroll5 (the same frame scrolled to its end)
+╭─ Showcase · Tables ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ gpt-5.6-terra                            openrouter            2h ago    1.3M $0.42    30.4s      ok                       │
+│   🪙 Stat tiles   G T │ 4 of 6                                                                                                                     │
+│   💲 Charts       G C │                                                                                                                            │
+│ ❯ 📊 Tables       G B │ 📊 Cost by model                                                                                                           │
+│   Edges               │ Model                                                                    Cost            Requests Cache rate               │
+│   ⚠  Awkward      G A │ gpt-5.6-terra                            $123,456,789,012,345.67 ████████████  1,280 █░░░░░░░░░░░      96.1%               │
+│   💾 States       G S │ vendor/experimental-model-2026-07-previe                   $3.14 █░░░░░░░░░░░    512 █░░░░░░░░░░░      94.0%               │
+│   Ranges              │ locally-hosted-free-tier                                      $0 ░░░░░░░░░░░░ 36,616 ████████████      98.1%               │
+│   ❓ Empty range  G E │ gemini-3.7-flash-high                       N/A · 4,197 unpriced ░░░░░░░░░░░░  4,197 █░░░░░░░░░░░      95.5%               │
+│                       │                                                                                                                            │
+│                       │ 📊 Model trend                                                                                                             │
+│                       │ Model                                    Trend         Total                                                               │
+│                       │ gpt-5.6-terra                            ▁▁▁▁▁▁▁▁▁▁▁█  1,280                                                               │
+│                       │ vendor/experimental-model-2026-07-previe ▁▁▁▁▁▁▁▁▁▁▁█    512                                                               │
+│                       │ locally-hosted-free-tier                 ▁▁▁▁▁▁▁▁▁▁▁█ 36,616                                                               │
+│                       │ gemini-3.7-flash-high                    ▁▁▁▁▁▁▁▁▁▁▁█  4,197                                                               │
+│                       │                                                                                                                            │
+│                       │ 📊 By folder                                                                                                               │
+│                       │ Folder                                                                               Requests   Cost Last used             │
+│                       │ /Users/yuzu/Documents/Projects/omp-stats-tui                              31,002 ████████████ $74.10 1h ago                │
+│                       │ /Users/yuzu/Documents/Projects/a-very-long-directory-name-for-testing/omp 18,458 ███████░░░░░ $31.26 9h ago                │
+│                       │ scratch                                                                   16,000 ██████░░░░░░  $7.00 1d ago                │
+│                       │                                                                                                                            │
+│                       │ 📊 By tool                                                                                                                 │
+│                       │ Tool              Calls Errors Result chars Last used                                                                      │
+│                       │ read 4,021 ████████████      3         413K 5m ago                                                                         │
+│                       │ bash 1,884 ██████░░░░░░     41          96K 2m ago                                                                         │
+│                       │ grep   610 ██░░░░░░░░░░   none          52K 1h ago                                                                         │
+│                       │                                                                                                                            │
+│                       │ 📊 Errors                                                                                                                  │
+│                       │ Model                 Message                               When   Status                                                  │
+│                       │ gpt-5.6-terra         upstream returned 502 after 3 retries 2h ago     ok                                                  │
+│                       │ gemini-3.7-flash-high context length exceeded               3h ago     ok                                                  │
+│                       │                                                                                                                            │
+│                       │ Narrow columns are DROPPED by declared priority, never squeezed, and the identity column is never dropped: a row whose su… │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- awkward @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Awkward ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ 📊 A single request                                                                                                        │
+│   🪙 Stat tiles   G T │ Model         Provider   Tokens Duration Status                                                                            │
+│   💲 Charts       G C │ gpt-5.6-terra openrouter   1.3M    12.3s     ok                                                                            │
+│   📊 Tables       G B │                                                                                                                            │
+│   Edges               │ 📊 Every failure                                                                                                           │
+│ ❯ ⚠  Awkward      G A │ Message                                                   Model         When     Duration                                  │
+│   💾 States       G S │ provider rejected request 0: upstream 503 after 1 retries gpt-5.6-terra just now                                           │
+│   Ranges              │ provider rejected request 1: upstream 503 after 2 retries gpt-5.6-terra 9m ago       8.0s                                  │
+│   ❓ Empty range  G E │ provider rejected request 2: upstream 503 after 3 retries gpt-5.6-terra 18m ago      8.1s                                  │
+│                       │ provider rejected request 3: upstream 503 after 4 retries gpt-5.6-terra 27m ago      8.1s                                  │
+│                       │ 4 of 100                                                                                                                   │
+│                       │                                                                                                                            │
+│                       │ vendor/experimental-model-2026-07…  Requests                            Cache rate                                         │
+│                       │ $123,456,789,012,345.67             1,280                               96.1%                                              │
+│                       │                                                                         81.4%                                              │
+│                       │                                                                                                                            │
+│                       │ ⏱ Share of spend share of the total                                                                                        │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ 100.0% $123,456,789,012,345.67   │
+│                       │ vendor/experimental-model-2026-07-previe                                                  0.0% $3.14                       │
+│                       │ Everything else (1)                                                                       0.0% $0 · 4,197 unpriced         │
+│                       │                                                                                                                            │
+│                       │ ⏱ Cost by model per day, by billing component                                                                              │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ $123,456,789,012,345.67          │
+│                       │ vendor/experimental-model-2026-07-previe █                                                                  $3.14          │
+│                       │ gemini-3.7-flash-high                    █                                                   N/A · 4,197 unpriced          │
+│                       │                                                                                                                            │
+│                       │ A long figure is TRUNCATED on its own digits, never wrapped: wrapping breaks one row per record, which every row-count in… │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- awkward @150 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Awkward ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ 📊 A single request                                                                                                        │
+│   🪙 Stat tiles   G T │ Model         Provider   Tokens Duration Status                                                                            │
+│   💲 Charts       G C │ gpt-5.6-terra openrouter   1.3M    12.3s     ok                                                                            │
+│   📊 Tables       G B │                                                                                                                            │
+│   Edges               │ 📊 Every failure                                                                                                           │
+│ ❯ ⚠  Awkward      G A │ Message                                                   Model         When     Duration                                  │
+│   💾 States       G S │ provider rejected request 0: upstream 503 after 1 retries gpt-5.6-terra just now                                           │
+│   Ranges              │ provider rejected request 1: upstream 503 after 2 retries gpt-5.6-terra 9m ago       8.0s                                  │
+│   ❓ Empty range  G E │ provider rejected request 2: upstream 503 after 3 retries gpt-5.6-terra 18m ago      8.1s                                  │
+│                       │ provider rejected request 3: upstream 503 after 4 retries gpt-5.6-terra 27m ago      8.1s                                  │
+│                       │ 4 of 100                                                                                                                   │
+│                       │                                                                                                                            │
+│                       │ vendor/experimental-model-2026-07…  Requests                            Cache rate                                         │
+│                       │ $123,456,789,012,345.67             1,280                               96.1%                                              │
+│                       │                                                                         81.4%                                              │
+│                       │                                                                                                                            │
+│                       │ ⏱ Share of spend share of the total                                                                                        │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ 100.0% $123,456,789,012,345.67   │
+│                       │ vendor/experimental-model-2026-07-previe                                                  0.0% $3.14                       │
+│                       │ Everything else (1)                                                                       0.0% $0 · 4,197 unpriced         │
+│                       │                                                                                                                            │
+│                       │ ⏱ Cost by model per day, by billing component                                                                              │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ $123,456,789,012,345.67          │
+│                       │ vendor/experimental-model-2026-07-previe █                                                                  $3.14          │
+│                       │ gemini-3.7-flash-high                    █                                                   N/A · 4,197 unpriced          │
+│                       │                                                                                                                            │
+│                       │ A long figure is TRUNCATED on its own digits, never wrapped: wrapping breaks one row per record, which every row-count in… │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- states @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..18 nav=stable=true
+╭─ Showcase · States ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ Flat cost                          Activity cost                      Activity requests                                    │
+│   🪙 Stat tiles   G T │ $0                                 $922.40                            2,139                                                │
+│   💲 Charts       G C │ fetched, and every bucket is zero                                                                                          │
+│   📊 Tables       G B │ Measured zero                                                                                                              │
+│   Edges               │ $123,456,789,012,345.67                                                                                                    │
+│   ⚠  Awkward      G A │ a price of zero is a real price                                                                                            │
+│ ❯ 💾 States       G S │                                                                                                                            │
+│   Ranges              │ ⏱ Cost per day (flat) per day, by billing component                                                                        │
+│   ❓ Empty range  G E │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                                          █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                              █           █ │
+│                       │                                                                                                      █ █     █           █ │
+│                       │ __________________________________________________________________________________________________________________________ │
+│                       │  Cost                                                                                                                      │
+│                       │                                                                                                                            │
+│                       │ ⏱ Requests per bucket (flat) requests per bucket                                                                           │
+│                       │      ████                                                              ████                  ████                  ████    │
+│                       │    ████████                                                          ████████              ████████              ████████  │
+│                       │   ██████████                                                        ██████████            ██████████            ██████████ │
+│                       │  ████████████                                                      ████████████          ████████████          ███████████ │
+│                       │  ████████████                                                      █████████████         █████████████         ███████████ │
+│                       │ █████████████                                                     ███████████████       ███████████████       ████████████ │
+│                       │ █████████████                                                    ████████████████      ████████████████      █████████████ │
+│                       │ █████████████                                                   ██████████████████    ██████████████████    ██████████████ │
+│                       │ █████████████             ███████               ███████         ███████████████████   ███████████████████   ██████████████ │
+│                       │ ███████████████      ████████████████      ████████████████  █ █████████████████████ █████████████████████ ███████████████ │
+│                       │ ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- states @150 @scroll18 (the same frame scrolled to its end)
+╭─ Showcase · States ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │                                                                                                              █           █ │
+│   🪙 Stat tiles   G T │                                                                                                      █ █     █           █ │
+│   💲 Charts       G C │ __________________________________________________________________________________________________________________________ │
+│   📊 Tables       G B │  Cost                                                                                                                      │
+│   Edges               │                                                                                                                            │
+│   ⚠  Awkward      G A │ ⏱ Requests per bucket (flat) requests per bucket                                                                           │
+│ ❯ 💾 States       G S │      ████                                                              ████                  ████                  ████    │
+│   Ranges              │    ████████                                                          ████████              ████████              ████████  │
+│   ❓ Empty range  G E │   ██████████                                                        ██████████            ██████████            ██████████ │
+│                       │  ████████████                                                      ████████████          ████████████          ███████████ │
+│                       │  ████████████                                                      █████████████         █████████████         ███████████ │
+│                       │ █████████████                                                     ███████████████       ███████████████       ████████████ │
+│                       │ █████████████                                                    ████████████████      ████████████████      █████████████ │
+│                       │ █████████████                                                   ██████████████████    ██████████████████    ██████████████ │
+│                       │ █████████████             ███████               ███████         ███████████████████   ███████████████████   ██████████████ │
+│                       │ ███████████████      ████████████████      ████████████████  █ █████████████████████ █████████████████████ ███████████████ │
+│                       │ ██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████ │
+│                       │ __________________________________________________________________________________________________________________________ │
+│                       │  Succeeded                                                                                                                 │
+│                       │                                                                                                                            │
+│                       │  Failed                                                                                                                    │
+│                       │                                                                                                                            │
+│                       │ 📊 Zero is not unknown                                                                                                     │
+│                       │ Model                                                                    Cost       Unpriced                               │
+│                       │ gpt-5.6-terra                            $123,456,789,012,345.67 ████████████              0                               │
+│                       │ vendor/experimental-model-2026-07-previe                   $3.14 █░░░░░░░░░░░              0                               │
+│                       │ locally-hosted-free-tier                                      $0 ░░░░░░░░░░░░              0                               │
+│                       │ gemini-3.7-flash-high                       N/A · 4,197 unpriced ░░░░░░░░░░░░ 4,197 unpriced                               │
+│                       │                                                                                                                            │
+│                       │ ⏱ Cost by model per day, by billing component                                                                              │
+│                       │ gpt-5.6-terra                            ████████████████████████████████████████████████ $123,456,789,012,345.67          │
+│                       │ vendor/experimental-model-2026-07-previe █                                                                  $3.14          │
+│                       │ gemini-3.7-flash-high                    █                                                   N/A · 4,197 unpriced          │
+│                       │                                                                                                                            │
+│                       │ An all-zero series is a measured zero and draws a real chart. A source that was never FETCHED is dropped instead, because… │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- empty @150 preset=unicode: rows=40 widest=150 dividers=1 OVERWIDE=0 G5=0 scroll 0..0 nav=stable=true
+╭─ Showcase · Empty range ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ No usage recorded in this range.                                                                                           │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- empty @150 @scroll0 (the same frame scrolled to its end)
+╭─ Showcase · Empty range ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                              ● Live 7m ago    1h  24h  7d  30d  90d  All                                                 │
+│   Grammar             │ No usage recorded in this range.                                                                                           │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+│                                                                                                                                                    │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
