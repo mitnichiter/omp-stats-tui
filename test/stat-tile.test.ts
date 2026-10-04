@@ -21,10 +21,11 @@
  */
 
 import { expect, test } from "bun:test";
-import { glyph } from "../src/tui/glyphs";
+import { glyph, glyphClass } from "../src/tui/glyphs";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 
-import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
+import { SCREEN_SPECS, type ScreenSpec, type StatTile as IRStatTile } from "../src/layout/spec";
+import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { SERIES_COLORS, stripForTest } from "../src/tui/palette";
@@ -228,10 +229,7 @@ test("D4: a legend swatch is exactly ONE glyph", () => {
 	// fill vocabulary without this assertion following it, and it stays honest if
 	// `barEmpty` ever comes back. `render()` takes no preset, so the class is the
 	// union over all three — every glyph that can be a swatch.
-	const swatchChars = (["unicode", "nerd", "ascii"] as const)
-		.flatMap(p => [glyph(p, "barFill"), glyph(p, "barEmpty")])
-		.join("");
-	const twoSwatches = new RegExp(`^[${swatchChars}]{2} \\S`);
+	const twoSwatches = new RegExp(`^[${glyphClass("barFill", "barEmpty")}]{2} \\S`);
 	for (const spec of SCREEN_SPECS) {
 		if (spec.deferred) continue;
 		for (const row of render(spec, 120).map(stripForTest)) {
@@ -326,3 +324,119 @@ function stripForText(row: string): string {
 function stripAll(rows: readonly string[]): readonly string[] {
 	return rows.map(stripForTest);
 }
+// ─── The hint contract: THREE legal shapes, one narrowing ─────────────────────
+
+/**
+ * `StatTile.hint` is `MetricRef | string | { text: string }` — a second FIGURE,
+ * PROSE as a bare string, or PROSE as an object. All three are legal and mean
+ * different things.
+ *
+ * The renderer used to tell them apart with `"text" in tile.hint`, which CRASHES
+ * on a bare string: `in` requires an object on its right. So the check that
+ * existed to distinguish prose from a figure threw on one of the three shapes it
+ * was meant to handle. These tests are the completing half of that fix — the
+ * type is the contract, and these pin the narrowing that consumes it.
+ *
+ * The two with TEETH are deliberately not "does not throw": a guard that merely
+ * avoided the crash would satisfy those. They pin what each site COMPUTES, which
+ * is what a naive single narrowing gets wrong.
+ */
+
+/** Render one synthetic screen so a hint can be exercised in isolation. */
+function renderTiles(tiles: readonly IRStatTile[]): readonly string[] {
+	const spec: ScreenSpec = {
+		id: "hint-probe",
+		label: "Hint probe",
+		short: "hint",
+		needs: [],
+		source: { file: "test/stat-tile.test.ts", lines: "hint contract" },
+		bands: [{ kind: "statRow", stats: tiles }],
+	};
+	const options = {
+		spec,
+		data: liveData(),
+		plan: planLayout(120, 40, "unicode"),
+		preset: "unicode" as const,
+		range: DEFAULT_RANGE,
+		now: FIXTURE_NOW,
+		fg: (color: ThemeColor, text: string) => theme.fg(color, text),
+		bold: (text: string) => theme.bold(text),
+		palette: theme,
+	};
+	return screenBands(options)
+		.filter((band): band is Extract<Band, { kind: "statRow" }> => band.kind === "statRow")
+		.flatMap(band => band.stats)
+		.map(tile => `${tile.label}=${tile.value}${tile.hint === undefined ? "" : ` hint:${tile.hint}`}`);
+}
+
+test("a bare string hint is PROSE and prints verbatim, in both legal spellings", () => {
+	// The same prose, written two ways the IR explicitly allows. Both must land
+	// on the tile identically — `proseHintText` exists so a consumer never has to
+	// branch on which form the spec author chose.
+	const bare = renderTiles([
+		{ label: "Cost", metric: overallMetric("totalCost"), hint: "API-equivalent estimate" },
+	]);
+	const wrapped = renderTiles([
+		{ label: "Cost", metric: overallMetric("totalCost"), hint: { text: "API-equivalent estimate" } },
+	]);
+	expect(bare.join("\n")).toContain("hint:API-equivalent estimate");
+	expect(wrapped.join("\n")).toBe(bare.join("\n"));
+});
+
+test("a prose hint on a COST tile does not resolve the unpriced count", () => {
+	// THE SITE A NAIVE GUARD MISSES. A cost tile reads its unpriced count from a
+	// hint that NAMES one, so the narrowing here has to reject prose *before*
+	// `leafFieldOf` ever sees it: a bare string handed to `leafFieldOf` reads
+	// `ref.kind` off a primitive and comes back `""`, so the count never resolves.
+	//
+	// Not a crash — a WRONG ANSWER, which is why this is not a not-throws test.
+	// The fixture's overall carries 4,197 unpriced requests; a hint that names
+	// them puts that number beside the figure, and one that does not name them
+	// must not conjure the number out of the tile's own metric.
+	const named = renderTiles([
+	{
+			label: "API-equivalent cost",
+			metric: overallMetric("totalCost"),
+			hint: { kind: "aggregate", source: "overall", field: "unpricedRequests" },
+		},
+	]).join("\n");
+	expect(named).toMatch(/4,197 unpriced/);
+
+	const prose = renderTiles([
+		{ label: "API-equivalent cost", metric: overallMetric("totalCost"), hint: "estimated from a price table" },
+	]).join("\n");
+	expect(prose).toContain("hint:estimated from a price table");
+	expect(prose, "prose must not be read as a figure hint").not.toContain("unpriced");
+});
+
+test("a string hint on a Median duration tile is NOT prefixed with P95", () => {
+	// THE OTHER SITE A NAIVE GUARD MISSES. `P95 ` names a QUANTILE, and the tile
+	// takes it only when the hint really is the p95 figure. Prefix a prose hint
+	// and the row claims a percentile it never measured.
+	const prose = renderTiles([
+		{
+			label: "Median duration",
+			metric: overallMetric("totalRequests"),
+			hint: "single sample this range",
+		},
+	]).join("\n");
+	expect(prose).toContain("hint:single sample this range");
+	expect(prose).not.toContain("P95");
+
+	// The figure form still gets it — that is the whole point of the branch.
+	const figure = renderTiles([
+		{
+			label: "Median duration",
+			metric: overallMetric("totalRequests"),
+			hint: { kind: "aggregate", source: "overall", field: "totalCost" },
+		},
+	]).join("\n");
+	expect(figure).toMatch(/hint:P95 /);
+});
+
+/** An `overall` aggregate ref, the shape a stat tile's own metric usually takes. */
+const overallMetric = (field: string): IRStatTile["metric"] => ({
+	kind: "aggregate",
+	source: "overall",
+	field,
+});

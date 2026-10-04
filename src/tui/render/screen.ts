@@ -80,6 +80,7 @@ import type {
 	ScreenSpec,
 	StatTile as IRStatTile,
 } from "../../layout/spec";
+import { isProseHint, proseHintText } from "../../layout/spec";
 import { renderBands, type Band, type BandRenderOptions } from "../band";
 import { renderSeriesChart } from "../charts/compose";
 import { buildHeatmapLayout as heatmapLayoutFor } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
@@ -524,9 +525,22 @@ function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | 
 	// panel exists not to tell. Overview's cost tile declares exactly this shape:
 	// `metric: totalCost`, `hint: unpricedRequests`.
 	const field = leafFieldOf(tile.metric);
+	// PROSE is rejected before anything reaches `leafFieldOf`, and that ordering
+	// is the point rather than a detail. A bare string handed to `leafFieldOf`
+	// reads `ref.kind` off a primitive and comes back `""`, so a cost tile with a
+	// prose hint would print `$0.00` where its 34,870 unpriced requests belong —
+	// a wrong answer rather than a crash, which is why it needed its own test.
+	// `proseHintText` is the IR's narrowing, not one re-derived here: it knows all
+	// three legal shapes and normalises both prose spellings to one string.
+	const prose = proseHintText(tile.hint);
+	// Narrowed ONCE, here, and every use below reads through it: `isProseHint`
+	// is a type guard, so its negation leaves `MetricRef` and the compiler
+	// proves the two `leafFieldOf`/`resolveNumber` calls cannot be handed prose.
+	// Three separate `prose === null` tests would each re-narrow by hand.
+	const hintRef: IRStatTile["metric"] | undefined = isProseHint(tile.hint) ? undefined : tile.hint;
 	const costHint =
-		tile.hint !== undefined && !("text" in tile.hint) && /unpriced/i.test(leafFieldOf(tile.hint))
-			? resolveNumber(tile.hint, opts.data)
+		hintRef !== undefined && /unpriced/i.test(leafFieldOf(hintRef))
+			? resolveNumber(hintRef, opts.data)
 			: null;
 	const text =
 		typeof value === "number" && isCostField(field)
@@ -536,21 +550,28 @@ function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | 
 	// three-across grid with an empty cell reads as a rendering fault.
 	if (text === "") return null;
 
+	// Prose prints verbatim; a figure is resolved against the payload and
+	// formatted by its OWN field, which is why the hint is not formatted by the
+	// tile's axis.
 	const rawHint =
 		tile.hint === undefined
 			? undefined
-			: "text" in tile.hint
-				? tile.hint.text
-				: formatValue(tile.hint, resolveCell(tile.hint, opts.data), undefined, opts);
+			: hintRef !== undefined
+				? formatValue(hintRef, resolveCell(hintRef, opts.data), undefined, opts)
+				: (prose ?? undefined);
 	// The requests screen's median tile pairs its p95 beside it, as the web's
 	// `Median duration` stat does. The IR names the value; the prefix is
 	// presentation, so it lives here beside the value. `P95`, not `p95`: the
 	// D1 stat-tile invariant rejects any lowercase letter touching a digit
 	// (`/[a-z]\d/`), because that is the shape a jammed label makes.
+	//
+	// PROSE NEVER GETS THE PREFIX. `P95` names a QUANTILE, and the tile takes it
+	// only when the hint really is the p95 figure — prefixing a sentence would
+	// have the row claim a percentile it never measured.
 	const hint =
 		rawHint === undefined || rawHint === ""
 			? undefined
-			: tile.label === "Median duration" && tile.hint !== undefined && !("text" in tile.hint)
+			: tile.label === "Median duration" && hintRef !== undefined
 				? `P95 ${rawHint}`
 				: rawHint;
 
