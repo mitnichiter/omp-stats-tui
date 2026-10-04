@@ -221,12 +221,23 @@ test("D3: a chart block is at least two rows tall, so it reads as a column chart
 // ─── D4: one number, one computation ────────────────────────────────────────
 
 test("D4: a legend swatch is exactly ONE glyph", () => {
+	// Built from the glyph ROLES, not a hand-written character class. The class
+	// used to be the literal `/^[█#░]{2} \S/` and it went stale the moment
+	// `barEmpty` stopped being drawn in the charts: the `░` went dead while still
+	// implying a `░` could head a legend. Deriving it means no role can join the
+	// fill vocabulary without this assertion following it, and it stays honest if
+	// `barEmpty` ever comes back. `render()` takes no preset, so the class is the
+	// union over all three — every glyph that can be a swatch.
+	const swatchChars = (["unicode", "nerd", "ascii"] as const)
+		.flatMap(p => [glyph(p, "barFill"), glyph(p, "barEmpty")])
+		.join("");
+	const twoSwatches = new RegExp(`^[${swatchChars}]{2} \\S`);
 	for (const spec of SCREEN_SPECS) {
 		if (spec.deferred) continue;
 		for (const row of render(spec, 120).map(stripForTest)) {
 			// band.ts drew `barFill.repeat(2)`. One glyph is what the web's
 			// `.swatch` renders, and two read as a bar rather than a key.
-			expect(row, `${spec.id}: ${row}`).not.toMatch(/^[█#░]{2} \S/);
+			expect(row, `${spec.id}: ${row}`).not.toMatch(twoSwatches);
 		}
 	}
 });
