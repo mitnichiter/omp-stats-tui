@@ -265,7 +265,25 @@ test("clicking a topbar range segment changes the range; clicking body does noth
 	expect(__testing.debugRange(panel)).toBe("7d");
 });
 
+/**
+ * Just the nav column's cells, for every nav row of the last frame.
+ *
+ * The body cells beside them change on every scroll — that is the whole point
+ * of the test — so comparing whole body rows would prove nothing. The geometry
+ * is not guessable either: the body starts below the topbar and the nav strip,
+ * and the column is `sidebarWidth + 3` cells, the extra three being the
+ * `side + " " + gutter + " "` that separates it from the body.
+ */
+function navCells(panel: StatsPanel, width: number, frame: MouseFrame): readonly string[] {
+	const start = frame.topbarRows + frame.stripRows;
+	return panel
+		.render(width)
+		.slice(start, start + frame.sidebarRows)
+		.map(row => row.replace(ANSI, "").slice(0, frame.sidebarWidth + 3));
+}
+
 test("range hit areas survive the topbar's move to the right edge, at every width", async () => {
+
 	// The chrome pass moved the action cluster from the left of the topbar to
 	// the right (the web's `.topbar-spacer { flex: 1 }`, styles.css:453-455), so
 	// every range segment changed column. `rangeSpans` finds segments by
@@ -292,16 +310,69 @@ test("range hit areas survive the topbar's move to the right edge, at every widt
 
 test("the brand and the spacer are not clickable: only the segments own the topbar row", async () => {
 	// The wordmark and the painted spacer between it and the action cluster are
-	// chrome, not targets. A click there must not select a screen or a range —
-	// which is also why the chip's column is inert rather than a hidden range.
+	// chrome, not targets. A click there must not select a screen or a range.
+	//
+	// The inert columns are DERIVED from the frame rather than hardcoded: the
+	// spacer is bounded by the cluster's own width (chrome.ts's cap), so at
+	// width 150 it ends around column 47 and a fixed list of columns would
+	// silently start clicking the range control the moment the cap bound — which
+	// is exactly what happened when this test was written against an uncapped
+	// row.
 	const panel = await settledPanel();
-	plain(panel, 150);
+	const width = 150;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	const spans = rangeSpans(frame.topbar);
+	const firstControl = Math.min(...spans.map(span => span.start));
+	expect(firstControl, "the test needs at least one segment to bound the inert region").toBeGreaterThan(0);
 	const before = __testing.debugRange(panel);
-	for (const col of [1, 5, 20, 60]) {
+	for (let col = 0; col < firstControl; col++) {
 		panel.handleInput(sgr(CLICK, col + 2, 1 + 1));
 	}
 	await __testing.settled(panel);
 	expect(__testing.debugRange(panel)).toBe(before);
+	expect(__testing.debugScreenId(panel)).toBe("overview");
+});
+
+test("the wheel scrolls the body when it is over the NAV column, and the nav does not move", async () => {
+	// The nav is chrome that happens to sit over the body region, so a wheel
+	// report inside its column is a BODY scroll — never a nav scroll, and never
+	// a nav shift. `/settings` and `/usage` both scroll the sheet from anywhere
+	// (usage-dashboard.ts:1369-1373), and so does the panel: `#routeMouse` takes
+	// the wheel before it hit-tests anything.
+	const panel = await settledPanel({ rows: 24 });
+	const width = 100;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.sidebarWidth, "the nav column must exist for this test to mean anything").toBeGreaterThan(0);
+	const navColumn = Math.max(1, Math.floor(frame.sidebarWidth / 2));
+	const navRow = 2 + 1 + frame.topbarRows + frame.stripRows;
+	const bodyStart = frame.topbarRows + frame.stripRows;
+
+	const atRest = navCells(panel, width, frame);
+	panel.handleInput(sgr(WHEEL_DOWN, navColumn, navRow));
+	expect(__testing.debugScroll(panel)).toBeGreaterThan(0);
+	expect(navCells(panel, width, frame)).toEqual(atRest);
+	// The screen did not change either: a wheel over the nav is not a selection.
+	expect(__testing.debugScreenId(panel)).toBe("overview");
+});
+
+test("hovering the nav is unaffected by scroll: the same cell is the same row", async () => {
+	// Hover paints the frame, so a shifted nav would put the band on a
+	// different screen's row. Same coordinate, before and after scrolling.
+	const panel = await settledPanel({ rows: 24 });
+	const width = 100;
+	plain(panel, width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.sidebarWidth, "the nav column must exist for this test to mean anything").toBeGreaterThan(0);
+	const col = Math.max(1, Math.floor(frame.sidebarWidth / 2));
+	const overlayRow = 1 + frame.topbarRows + frame.stripRows + 2 + 1;
+	panel.handleInput(sgr(MOTION, col, overlayRow));
+	expect(__testing.debugHoverSidebar(panel)).toBe("models");
+	for (let i = 0; i < 4; i++) panel.handleInput(sgr(WHEEL_DOWN, col, overlayRow));
+	expect(__testing.debugScroll(panel)).toBeGreaterThan(0);
+	panel.handleInput(sgr(MOTION, col, overlayRow));
+	expect(__testing.debugHoverSidebar(panel)).toBe("models");
 });
 
 // ---------------------------------------------------------------------------

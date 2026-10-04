@@ -634,7 +634,13 @@ export class StatsPanel implements Component {
 		const body = bodyRows(rows, headerLines.length);
 		const plan = { ...planLayout(width, rows, preset), bodyRows: body };
 
-		state.source = this.#bodyLines(plan, preset, nav?.lines ?? null, sidebarWidth);
+		// The BODY is the only thing that scrolls, and it is sliced as plain
+		// full-width lines. The nav column is attached AFTER the slice
+		// (`#zipSidebar`), which is what pins it: a frame region recomputed from
+		// width and screen must never be a function of scroll. It used to be
+		// zipped in here, which put the nav inside the scrolled document and made
+		// `Usage` and `Overview` scroll off the top of the frame.
+		state.source = this.#bodyLines(plan, preset);
 		state.maxScroll = Math.max(0, state.source.length - plan.bodyRows);
 		// Clamped HERE, not in the key handler, so a terminal that shrank
 		// between two keypresses cannot leave the view scrolled past its end.
@@ -655,7 +661,8 @@ export class StatsPanel implements Component {
 		this.#panel.title = state.title;
 		this.#header.setLines(headerLines);
 		this.#header.setHeight(headerLines.length);
-		this.#body.setLines(state.source.slice(state.scroll, state.scroll + plan.bodyRows));
+		const visible = state.source.slice(state.scroll, state.scroll + plan.bodyRows);
+		this.#body.setLines(nav === null ? visible : this.#zipSidebar(visible, nav.lines, sidebarWidth, preset));
 		this.#body.setHeight(plan.bodyRows);
 		this.#footer.setLines([this.#footerLine(plan)]);
 		return this.#panel.render(width);
@@ -667,12 +674,18 @@ export class StatsPanel implements Component {
 		return state.data !== null ? "ready" : "loading";
 	}
 
-	#bodyLines(
-		plan: LayoutPlan,
-		preset: SymbolPreset,
-		sidebarLines: readonly string[] | null,
-		sidebarWidth: number,
-	): readonly string[] {
+	/**
+	 * The BODY's lines, at full width, with NO nav column attached.
+	 *
+	 * It used to take the sidebar and zip it in here (`${side} ${gutter} ${line}`),
+	 * which put the nav inside the list `render` slices by scroll — so scrolling
+	 * the body scrolled the nav with it and `Usage` / `Overview` walked off the
+	 * top of the frame. The nav is a FRAME region: it is recomputed every render
+	 * from the current width and screen, and must never be a function of scroll.
+	 * So the composition moved to {@link zipSidebar}, which runs on the SLICED
+	 * window rather than on the source.
+	 */
+	#bodyLines(plan: LayoutPlan, preset: SymbolPreset): readonly string[] {
 		const state = this.#state;
 		const phase = this.#phase();
 		state.chart = NO_ROWS;
@@ -702,19 +715,35 @@ export class StatsPanel implements Component {
 		// scaling against the REAL frame. The charts are the IR's now, so this
 		// captures what the screen drew rather than keeping a second local chart.
 		state.chart = rendered.chart;
-		if (sidebarLines === null) return rendered.lines;
-		// The sidebar zips beside the body, not above it: sidebar row first,
-		// a DIM column bar between them, body row after. The bar copies the
-		// split layout's `theme.hint("│ ")` (settings-list.ts:989): it is the
-		// one vertical in the body, and G5 bans full-width rules, not columns.
-		// DIVERGENCE (deliberate, noted): the host draws no gutters around the
-		// outer frame — OverlayPanel's `row()` already insets both sides — so
-		// only this inner column carries the bar. The mark comes from
-		// glyph(preset, "columnGap") — "│" under unicode/nerd, "|" under ascii
-		// (glyphs.ts:58,80; never theme.symbol("sep.pipe"), which measures 3
-		// cells) — so the gutter matches the frame it sits in on every preset.
+		return rendered.lines;
+	}
+
+	/**
+	 * Put the nav column beside a window of body rows: sidebar row first, a DIM
+	 * column bar between them, body row after. The bar copies the split layout's
+	 * `theme.hint("│ ")` (settings-list.ts:989): it is the one vertical in the
+	 * body, and G5 bans full-width rules, not columns.
+	 *
+	 * DIVERGENCE (deliberate, noted): the host draws no gutters around the
+	 * outer frame — OverlayPanel's `row()` already insets both sides — so only
+	 * this inner column carries the bar. The mark comes from
+	 * glyph(preset, "columnGap") — "│" under unicode/nerd, "|" under ascii
+	 * (glyphs.ts:58,80; never theme.symbol("sep.pipe"), which measures 3 cells)
+	 * — so the gutter matches the frame it sits in on every preset.
+	 *
+	 * CALLED ON THE SLICED WINDOW, never on the source. That is the whole fix:
+	 * the nav is frame chrome, so zipping it after the slice pins it, and
+	 * `index` here is the BODY's visible row rather than its document row, which
+	 * is what the nav is supposed to align with.
+	 */
+	#zipSidebar(
+		bodyRows: readonly string[],
+		sidebarLines: readonly string[],
+		sidebarWidth: number,
+		preset: SymbolPreset,
+	): readonly string[] {
 		const gutter = this.#theme.fg("dim", glyph(preset, "columnGap"));
-		return rendered.lines.map((line, index) => {
+		return bodyRows.map((line, index) => {
 			const side = index < sidebarLines.length ? sidebarLines[index]! : " ".repeat(sidebarWidth);
 			return `${side} ${gutter} ${line}`;
 		});

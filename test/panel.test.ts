@@ -410,6 +410,100 @@ test("the composed frame at width 60: the nav becomes the strip row and everythi
 	expect(plain[plain.length - 2]).toContain("close");
 });
 
+// ─── the sidebar is a FRAME region, never part of the scrolled body ───────────
+//
+// Regression: scrolling the body scrolled the sidebar with it. `#bodyLines`
+// zipped the nav column into the same list the scroll slices, so the nav was
+// literally inside the scrolled document — `Usage` and `Overview` scrolled off
+// the top of the frame and the cursor went with them.
+//
+// The invariant, stated once: the topbar, the sidebar and the footer are FRAME
+// regions, recomputed every render from the current width and screen, and never
+// from scroll. Only the body region shifts.
+
+/**
+ * The nav column of a rendered frame, as plain cells.
+ *
+ * The geometry is not guessable: the body starts below the topbar and the nav
+ * strip (`topbarRows + stripRows`), and the column itself is the sidebar's
+ * width plus the three cells of `side + " " + gutter + " "` that separates it
+ * from the body. Naming it once is what lets the sweep below compare columns
+ * rather than whole frames, so a scrolled body does not register as a changed
+ * sidebar.
+ */
+function sidebarColumn(panel: StatsPanel, width: number): readonly string[] {
+	const frame = __testing.debugFrame(panel)!;
+	const gutter = frame.sidebarWidth + 3;
+	const start = frame.topbarRows + frame.stripRows;
+	return panel
+		.render(width)
+		.slice(start, start + frame.sidebarRows)
+		.map(row => stripAnsi(row).slice(0, gutter));
+}
+
+test("the sidebar is byte-identical at EVERY scroll position, at every width and height", async () => {
+	// The whole sweep, not a sample: `maxScroll` is the full range the body can
+	// travel, and every one of those positions must paint the same nav.
+	//
+	// The `maxScroll > 0` guard is accumulated rather than asserted per config:
+	// a tall terminal holding a small fixture legitimately does not scroll, and
+	// demanding it scroll would be asserting a property of the fixture. What
+	// must hold is that the sweep as a whole exercised real scrolling — checked
+	// after the loop, so it cannot pass by testing only the cases that cannot
+	// fail.
+	let scrolledConfigs = 0;
+	for (const width of [150, 100, 60, 40]) {
+		for (const rows of [40, 24, 16]) {
+			const panel = makePanel({ data: dataFor(), rows });
+			await __testing.settled(panel);
+			panel.render(width);
+			const frame = __testing.debugFrame(panel)!;
+			if (frame.sidebarWidth === 0) continue; // no nav column at this band
+			const atRest = sidebarColumn(panel, width);
+			expect(atRest.length, `w=${width} rows=${rows}`).toBe(frame.sidebarRows);
+			// The nav must actually contain the screens, or "identical" is vacuous.
+			expect(atRest.join(""), `w=${width} rows=${rows}`).toContain("Overview");
+			const max = __testing.debugMaxScroll(panel);
+			if (max > 0) scrolledConfigs++;
+			for (let scroll = 0; scroll <= max; scroll++) {
+				panel.handleInput("\x1b[B"); // one row down, the real key path
+				expect(__testing.debugScroll(panel), `w=${width} rows=${rows} scroll=${scroll}`).toBe(Math.min(scroll + 1, max));
+				expect(sidebarColumn(panel, width), `w=${width} rows=${rows} scroll=${scroll}`).toEqual(atRest);
+			}
+		}
+	}
+	expect(scrolledConfigs, "the sweep must have exercised real scrolling somewhere").toBeGreaterThan(0);
+});
+
+test("scrolling the body does not move the sidebar's hit rows either", async () => {
+	// The paint and the hit area must agree: if the nav is pinned on screen but
+	// the router still resolves rows against the scrolled list, a click lands on
+	// the wrong screen. `mouse.ts` derives nav rows from `NAV_GROUPS`, so this
+	// holds only while the painted column does too.
+	// rows 24, not something smaller: `MIN_SIDEBAR_ROWS` is 20, so a shorter
+	// terminal hides the nav column entirely and this test would be vacuous.
+	// `#selectScreen` also resets scroll to 0, so this scrolls FIRST and clicks
+	// second, which is the order the bug appeared in.
+	const panel = makePanel({ data: dataFor(), rows: 24 });
+	await __testing.settled(panel);
+	const width = 100;
+	panel.render(width);
+	const frame = __testing.debugFrame(panel)!;
+	expect(frame.sidebarWidth, "the nav column must exist for this test to mean anything").toBeGreaterThan(0);
+	const overlayRow = (navRow: number) => 1 + frame.topbarRows + frame.stripRows + navRow + 1;
+	// Scrolled: the body moved and the nav did not.
+	for (let i = 0; i < 4; i++) panel.handleInput("\x1b[B");
+	const scrolled = __testing.debugScroll(panel);
+	expect(scrolled).toBeGreaterThan(0);
+	// The same coordinate selects the same screen before and after scrolling.
+	panel.handleInput(`\x1b[<0;3;${overlayRow(2)}M`);
+	expect(__testing.debugScreenId(panel)).toBe("models");
+	for (let i = 0; i < 3; i++) panel.handleInput("\x1b[B");
+	expect(__testing.debugScroll(panel)).toBeGreaterThan(0);
+	panel.handleInput(`\x1b[<0;3;${overlayRow(2)}M`);
+	expect(__testing.debugScreenId(panel)).toBe("models");
+});
+
 test("every selectable screen is on the number row, so no digit is a dead key", () => {
 	expect(SELECTABLE.length).toBeLessThanOrEqual(DIGIT_KEYS.length);
 	for (let index = 0; index < SELECTABLE.length; index++) {
