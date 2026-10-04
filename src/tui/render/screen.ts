@@ -1024,7 +1024,7 @@ function groupedShareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width:
 	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
 	return entries.map(entry => {
 		const share = total === 0 ? 0 : entry.value / total;
-		const readout = `${formatPercent(share)} ${entryFigure(entry, opts)}`;
+		const readout = `${formatPercent(share)} ${entryFigure(entry, chart.axis, opts)}`;
 		const label = padEndTo(entry.label, labelWidth);
 		const bar = renderShareBar(share, {
 			// BOUNDED, like the ranked list's track: a share bar is a ranked bar
@@ -1048,7 +1048,7 @@ function rankedBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: numbe
 		// It used to be built inside the primitive from `formatInteger`, which is
 		// why a burn row read `1,045,814,212` where the web's own burn legend
 		// reads `1B` (`ProvidersRoute.tsx:236`, `burnFormat`).
-		display: entryFigure(entry, opts),
+		display: entryFigure(entry, chart.axis, opts),
 	}));
 	return renderRankedBars(rows, {
 		width,
@@ -1077,20 +1077,38 @@ interface ChartEntry {
 }
 
 /**
- * A share bar's or ranked bar's trailing FIGURE, in its own metric's notation.
+ * A share bar's or ranked bar's trailing FIGURE, in the CHART's own unit.
  *
- * This is the host's `formatCompact` where the metric is a token count — which
- * is every place the web calls it: `OverviewRoute.tsx:233`,
- * `ProvidersRoute.tsx:366`, `ModelsRoute.tsx:368`, `ProjectsRoute.tsx:268`.
- * Money keeps `formatCost` and counts keep `formatInteger`, because those are
- * the forms the web prints for them and a figure the dashboard renders
- * differently is a parity break, not an improvement.
+ * Two rules, and they are not the same rule:
+ *
+ * 1. The figure is formatted through the entry's METRIC, not the chart's axis.
+ *    They differ whenever a chart plots one kind of thing: overview's Token mix
+ *    is declared `axis: "share"` — because the BARS are shares — while its four
+ *    series are token counts the web prints compact (`OverviewRoute.tsx:233`).
+ *    Formatting by axis printed `1,204,000,000` there; by metric it prints `1.2B`.
+ *
+ * 2. The UNPRICED caveat applies only to MONEY, and so only on a cost-scaled
+ *    chart. This is the fix for a unit bug found by watching width 100: a
+ *    token-scaled burn row read `$201,500,000.00 · 4,197 unpriced` — a dollar
+ *    figure for 201,500,000 tokens, because the caveat forced `costWithUnpriced`
+ *    whatever the chart measured. But "unpriced" means a price could not be
+ *    determined, and a chart of TOKENS has no price to determine. The web agrees:
+ *    `burnFormat` follows the chart's metric mode (`ProvidersRoute.tsx:141`) and
+ *    the unpriced count lives in the card description (`:194-195`), never on a
+ *    burn row.
+ *
+ * On a non-cost chart the count still rides along, in the chart's own unit —
+ * `202M · 4,197 unpriced` — because a reader still wants to know that some of
+ * that row's REQUESTS went unmeasured, and dropping the count silently would
+ * lose a caveat the cost table already states. Only the UNIT follows the chart.
  */
-function entryFigure(entry: ChartEntry, opts: ScreenRenderOptions): string {
-	// An unpriced entry's figure is `costWithUnpriced`'s — `N/A · 4,197
-	// unpriced`, never `$0.00` — and that rule lives in one place by design.
-	if (entry.unpriced > 0) return costWithUnpriced(entry.value, entry.unpriced);
-	return formatValue(entry.metric, entry.value, undefined, opts);
+function entryFigure(entry: ChartEntry, axis: ChartSpec["axis"], opts: ScreenRenderOptions): string {
+	const figure = formatValue(entry.metric, entry.value, undefined, opts);
+	if (entry.unpriced <= 0) return figure;
+	// A cost-scaled chart: `costWithUnpriced` owns the `N/A` — never `$0.00` — and
+	// the count, in one place by design.
+	if (axis === "cost") return costWithUnpriced(entry.value, entry.unpriced);
+	return `${figure} · ${formatInteger(entry.unpriced)} unpriced`;
 }
 
 /**

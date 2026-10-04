@@ -565,3 +565,54 @@ test("the providers body reads as a grid, a ranked list and an aligned table", (
 	const header = rows.find(r => r.includes("Provider") && r.includes("Tokens") && !/[█░]/.test(r));
 	expect(header, "the Provider totals header").toBeDefined();
 });
+
+// ─── the unit of a bar's figure follows the CHART, not the caveat ────────────
+
+test("D2: a TOKEN-scaled bar never prints its figure as money", () => {
+	// Found by watching width 100, which is the band where the burn chart
+	// actually has to fit. google-antigravity's row read
+	// `$201,500,000.00 · 4,197 unpriced` — a dollar figure for 201,500,000 TOKENS.
+	//
+	// Two faults in one cell. The unit is wrong (this chart is token-scaled), and
+	// the number is nonsense, because `formatCost` was handed a token count. The
+	// cause is that the unpriced caveat forced `costWithUnpriced` regardless of
+	// what the chart measures — but the unpriced rule is about COSTS. A token
+	// chart has no unmeasured SPEND to caveat, so there is nothing for that
+	// function to say.
+	//
+	// The web agrees: `burnFormat` follows the chart's own metric mode
+	// (`ProvidersRoute.tsx:141`) and the unpriced count lives in the card
+	// description (`:194-195`) — never on a burn row.
+	// Scoped to the BURN chart, not every bar-ish row: the Provider totals TABLE
+	// is cost-scaled and is supposed to print money. An earlier version of this
+	// assertion swept every row with a bar glyph and failed on the table's own
+	// Cost column — which is correct behaviour being tested as a bug.
+	const body = text(renderScreen(opts(specOf("providers"), liveData(), 100)));
+	const lines = body.split("\n");
+	const heading = lines.findIndex(l => l.includes("Burn by provider"));
+	expect(heading, "the burn chart").toBeGreaterThan(-1);
+	// From the burn heading to the next band heading — the chart and its rows.
+	const end = lines.findIndex((l, i) => i > heading && /^[⏱📊]/.test(l) && l !== lines[heading]);
+	const burn = lines.slice(heading + 1, end === -1 ? lines.length : end).filter(l => l.trim() !== "");
+	expect(burn.length, "the burn rows").toBeGreaterThan(1);
+	for (const row of burn) expect(row, JSON.stringify(row)).not.toMatch(/\$[\d,]*\d/);
+	// And the caveat is not simply dropped: it rides along in the chart's unit.
+	expect(burn.join("\n")).toMatch(/202M · 4,197 unpriced/);
+});
+
+test("D2: a COST-scaled bar still carries its unpriced count", () => {
+	// The rule that motivated the caveat is untouched: a row whose spend could
+	// not be measured must never read as a free `$0.00`, and the unpriced count
+	// must reach the reader beside the figure it qualifies. `costWithUnpriced`
+	// owns both halves; the fix for the unit bug must not silence it.
+	const rows = SCREEN_SPECS.filter(spec => !spec.deferred);
+	const costScreens = rows.filter(spec =>
+		spec.bands.some(band => band.kind === "chart" && band.chart.axis === "cost"),
+	);
+	expect(costScreens.length, "a cost-scaled chart exists to check").toBeGreaterThan(0);
+	for (const spec of costScreens) {
+		const body = text(renderScreen(opts(spec, liveData(), 150)));
+		// Wherever the fixture carries an unpriced row, the count is stated.
+		if (/unpriced/.test(body)) expect(body, spec.id).not.toMatch(/\$0\.00/);
+	}
+});
