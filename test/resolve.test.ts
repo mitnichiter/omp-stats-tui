@@ -16,6 +16,7 @@ import { emptyData, liveData } from "./fixtures/panel";
 import {
 	NEED_BY_SOURCE,
 	SCREEN_SPECS,
+	isProseHint,
 	metricRefsOf,
 	sourceOf,
 	type Band,
@@ -41,7 +42,10 @@ function refsInBand(band: Band): readonly MetricRef[] {
 		case "statRow":
 			return band.stats.flatMap(t => [
 				...metricRefsOf(t.metric),
-				...(t.hint && !("text" in t.hint) ? metricRefsOf(t.hint) : []),
+				// A PROSE hint carries no metric, so it contributes no ref. `isProseHint`
+				// rather than `"text" in t.hint`, because the `in` operator requires an
+				// object on its right and throws on the bare-string hint form.
+				...(t.hint !== undefined && !isProseHint(t.hint) ? metricRefsOf(t.hint) : []),
 				...(t.spark ? metricRefsOf(t.spark) : []),
 			]);
 		case "chart":

@@ -182,14 +182,68 @@ export function sourceOf(ref: MetricRef): MetricSource {
 export interface StatTile {
 	label: string;
 	metric: MetricRef;
-	/** A secondary figure under the primary, where the web route shows a hint. */
-	hint?: MetricRef | { text: string };
+	/**
+	 * A secondary figure under the primary, where the web route shows a hint. THREE
+	 * shapes, because a hint is three different things and the IR has to say which:
+	 *
+	 *   - `MetricRef` — a SECOND FIGURE, read against the payload and formatted by
+	 *     its own field's formatter. `hint: overall("unpricedRequests")` is the whole
+	 *     reason a cost tile can print `$0` and still not lie.
+	 *   - `string` — PROSE, printed verbatim. A caveat in words ("original size not
+	 *     recorded") is not a number and must never be run through a formatter.
+	 *   - `{ text: string }` — the same prose, spelled as an object.
+	 *
+	 * WHY BOTH PROSE FORMS. The object wrapper was the original and it is what every
+	 * spec in this file uses, but it is a shape that exists only to be mis-guessed: a
+	 * reader writing `hint: "a caveat in prose"` — the obvious reading — was not
+	 * wrong, and the IR had no way to say so. It failed at RENDER time, in a session,
+	 * as a crash in the middle of one tile, because the consumer's `"text" in hint`
+	 * guard threw on a primitive.
+	 *
+	 * The bare string is therefore legal and MEANS SOMETHING DIFFERENT from the
+	 * object. It is not an alias kept for symmetry: `{ text }` stays because it
+	 * disambiguates at a glance when a value is spread across lines. Consumers MUST
+	 * handle all three — use {@link isProseHint} rather than an `in` check, which is
+	 * what threw in the first place.
+	 */
+	hint?: MetricRef | string | { text: string };
 	/** Marks the tile a reader should land on. The renderer decides what that looks like. */
 	emphasis?: "normal" | "primary";
 	/** A trend line drawn inside the tile, as `Stat spark={…}` does in the web app. */
 	spark?: MetricRef;
 	/** The tile's size in the web grid, carried so a narrow renderer can drop the smalls first. */
 	size?: "sm" | "md";
+}
+
+/**
+ * Is this hint PROSE rather than a figure?
+ *
+ * A type guard, not a convenience, and it exists because the obvious test for it
+ * was wrong. `"text" in hint` throws a `TypeError` on a bare `string` — the `in`
+ * operator requires an object on its right — so the check that was supposed to
+ * distinguish prose from a figure instead CRASHED on one of the three legal hint
+ * shapes, at render time, in someone's session.
+ *
+ * It is exported so every consumer narrows through the same rule. A hint can now
+ * be a `MetricRef`, a `string` or `{ text: string }`, and each of those has to be
+ * told apart from the other two — a `typeof` check for the primitive, an `in`
+ * check for the object, and what is left is the ref.
+ */
+export function isProseHint(hint: StatTile["hint"]): hint is string | { text: string } {
+	return typeof hint === "string" || (typeof hint === "object" && hint !== null && "text" in hint);
+}
+
+/**
+ * The prose a prose hint carries, or `null` when the hint is a figure.
+ *
+ * Both prose forms normalise to one string, so a consumer that only wants to
+ * PRINT a hint never has to branch on which form the spec author chose — and
+ * cannot get it wrong by assuming the object form.
+ */
+export function proseHintText(hint: StatTile["hint"]): string | null {
+	if (typeof hint === "string") return hint;
+	if (typeof hint === "object" && hint !== null && "text" in hint) return hint.text;
+	return null;
 }
 
 /** One named series inside a chart band. */
