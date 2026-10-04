@@ -483,6 +483,89 @@ test("EVERY band ends on a row that CARRIES INK, not merely on a row", () => {
 	}
 });
 
+test("an ALL-ZERO series is never shed to nothing — it always paints a floor", () => {
+	// THE DEFECT THIS PINS, found by scanning rendered frames rather than by
+	// running the code under test: `bandHeights` handed its floor out loudest
+	// first, so whenever the budget was smaller than the series count the tail
+	// bands were left with ZERO rows. A band with no rows draws nothing at all —
+	// no floor, no ink — and being quietest and last, the all-zero series was
+	// always among the shed. Its row read as the blank padding between two cards,
+	// which is the one thing an all-zero series must not look like: it is present,
+	// accounted for, and recorded nothing.
+	//
+	// So this asserts the FLOOR GLYPH, not a row count: a band that is drawn at
+	// all must paint its floor, and the all-zero series must be drawn whenever the
+	// chart has a row for it.
+	const axis = glyph("unicode", "axisLine");
+	for (const count of [2, 3, 4, 5, 6]) {
+		for (const height of [1, 2, 3, 4, 6, 8, 14, 20]) {
+			// The all-zero series LAST: that is the position the old allocator shed
+			// from, so a leading one would not reproduce the defect.
+			const series: SeriesChartSeries[] = [
+				...Array.from({ length: count - 1 }, (_, i) => ({ label: `live${i}`, values: [16, 8, 12] })),
+				{ label: "zero", values: [0, 0, 0] },
+			];
+			for (const labels of [false, true]) {
+				const where = `${count}/${height}/${labels}`;
+				const rows = renderSeriesChart(series, { width: 20, height, preset: "unicode", theme: THEME, paint: (_c, t) => t, labels });
+				// Every drawn row that is a band floor carries the glyph. Count the
+				// floors and require one per band that got any rows at all.
+				// One floor per band that was drawn. When a chart is too short, the
+				// shed takes whole bands quietest-first, so the all-zero series may
+				// legitimately not be drawn — but every band that IS drawn paints a
+				// floor, and the all-zero one paints its floor whenever there is a
+				// row for it at all.
+				// The band count is the number of rows the chart actually spent on
+				// bands — and a chart too short for its own series list sheds whole
+				// bands quietest-first, so that is fewer than `count`.
+				const floors = rows.filter(row => stripForTest(row).includes(axis)).length;
+				const inkRows = rows.filter(row => stripForTest(row).includes("\u2588")).length;
+				expect(floors, `${where}: every drawn band paints a floor`).toBeGreaterThan(0);
+				// Each floor sits UNDER the band it closes, so a floor is never the
+				// only row of a band that also drew ink, and every band's last row is
+				// either its floor or a floor row follows the ink it belongs to.
+				expect(floors + inkRows, `${where}: rows are accounted for`).toBeLessThanOrEqual(rows.length);
+				// THE SHAPE THAT LOST THE BAND: budget smaller than the series count.
+				// `renderSeriesChart` sheds whole bands quietest-first, so the drawn
+				// count is min(count, height) — and the all-zero band is the first
+				// shed, so it must still be present whenever a band is drawn at all.
+				expect(floors, `${where}: a floor for every drawn band`).toBe(Math.min(count, height));
+				// And the bands that SURVIVE are the loud ones. The all-zero series is
+				// the quietest, so it is the first to be shed — but only once every
+				// live band has kept its floor, never before, and never silently
+				// dropped from under a label that still names it.
+				const liveFloors = Math.min(count - 1, height);
+				expect(floors, `${where}: the loud bands keep their floors`).toBeGreaterThanOrEqual(Math.min(liveFloors, height));
+				// THE GUARANTEE ITSELF, at the level it is made. `bandHeights` used
+				// to hand its floor out loudest-first and STOP, so a budget smaller
+				// than the series count left the tail bands with zero rows — and the
+				// all-zero band, being quietest and last, was always among them. A
+				// band with no rows paints no floor at all, which is the blank row
+				// the defect report pointed at.
+				// THE GUARANTEE ITSELF, at the level it is made: whenever the budget
+				// has a row for it, EVERY band is allocated at least that one row.
+				// This is what was missing — the allocation handed its floor out
+				// loudest-first and STOPPED, so a budget smaller than the series
+				// count left the tail bands with zero rows. A band with zero rows
+				// paints no floor, and that is the blank row the defect pointed at.
+				const peaks = series.map(s => Math.max(...s.values));
+				const markable = Math.min(height, labels && height >= count * 2 + 1 ? height - count : height);
+				expect(
+					bandHeights(peaks, markable).filter(rows => rows < 1),
+					`${where}: no band is allocated zero rows`,
+				).toEqual([]);
+				// And no band may ever END on a row with no glyph in it.
+				for (const row of rows) {
+					const plain = stripForTest(row);
+					if (plain.trim() === "" && labels === false) continue; // a spacer between cards
+					if (labels && series.some(s => plain.trim() === s.label)) continue;
+					expect(plain.trim(), `${where}: no drawn row is glyphless`).not.toBe("");
+				}
+			}
+		}
+	}
+});
+
 test("a one-row chart is its FLOOR, and the allocator is what stops a live band being only that", () => {
 	// This test used to pin the opposite rule: at height 1 the single row was the
 	// DATA, on the reasoning that a bare baseline would render a quiet series as

@@ -378,8 +378,10 @@ test("the SHARED scale is what stops a 4% failure rate reading as 100%", () => {
 	expect(bandHeights([44, 4], 8)).toEqual([6, 2]);
 	// Equal peaks get equal bands — the case the composition equalities rely on.
 	expect(bandHeights([10, 10, 10], 3)).toEqual([1, 1, 1]);
-	// A series that recorded something keeps at least one row of INK over its
-	// floor, so "drew nothing" and "recorded nothing" stay distinguishable.
+	// Equal peaks and a budget too small for ink: every band still paints its floor.
+	expect(bandHeights([16, 0], 2)).toEqual([1, 1]);
+	// A live band gets its ink row when the budget allows one over the floors, so
+	// "drew nothing" and "recorded nothing" stay distinguishable.
 	expect(bandHeights([100, 1], 4)).toEqual([2, 2]);
 	// No budget, no bands.
 	expect(bandHeights([44, 4], 0)).toEqual([0, 0]);
@@ -397,16 +399,17 @@ test("the SHARED scale is what stops a 4% failure rate reading as 100%", () => {
 			).toEqual([]);
 		}
 	}
-	// And the sum never exceeds the budget, at any series count — the property
-	// that lets a four-series chart keep the rows its bands actually drew.
-	for (const peaks of [[16, 8, 2, 1], [1, 1, 1], [9], [44, 4, 0]]) {
-		for (const budget of [0, 1, 2, 3, 8, 14, 40]) {
-			expect(
-				bandHeights(peaks, budget).reduce((sum, rows) => sum + rows, 0),
-				`${JSON.stringify(peaks)} / ${budget}`,
-			).toBeLessThanOrEqual(budget);
-		}
-	}
+	// THE SUM MAY EXCEED A BUDGET TOO SMALL FOR THE BANDS, on purpose: every band
+	// is guaranteed its floor, because a band with no rows draws nothing at all and
+	// a series the chart declares and then omits is indistinguishable from one it
+	// never declared. Clamping the sum back to a budget smaller than the series
+	// count is exactly what dropped the all-zero band off the end — quietest, last,
+	// first to be shed. The height is enforced where it is observed instead: in
+	// `renderSeriesChart`, which sheds quietest-first, and asserted on the RENDERED
+	// rows by 'no band ever claims a row the chart was not given'.
+	expect(bandHeights([16, 8, 2, 1], 1).reduce((sum, rows) => sum + rows, 0)).toBe(4);
+	// No budget at all is still no chart.
+	expect(bandHeights([16, 8, 2, 1], 0)).toEqual([0, 0, 0, 0]);
 });
 
 test("a labelled chart names every band and still holds the width", () => {

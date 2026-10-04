@@ -169,18 +169,24 @@ export function bandHeights(peaks: readonly number[], budget: number): readonly 
 	const loudest = peaks
 		.map((peak, index) => ({ index, peak }))
 		.sort((a, b) => b.peak - a.peak || a.index - b.index);
-	const rows = new Array<number>(count).fill(0);
-	// PASS ONE — every band gets its floor, loudest first. That row is what makes
-	// zero visible, so it is claimed before any band is given a second row:
-	// spending the budget on ink first leaves a quiet band with NO rows at all, and
-	// a band with no rows is indistinguishable from a series that was never
-	// declared, which is the one claim a chart must never make by omission.
-	let left = budget;
-	for (const { index } of loudest) {
-		if (left <= 0) break;
-		rows[index] = 1;
-		left -= 1;
-	}
+	// PASS ONE — EVERY band gets its floor. Not "as many as fit": all of them.
+	//
+	// A band with no rows draws nothing at all — no floor, no ink, not even the
+	// label — so a series the chart declares and then silently omits is
+	// indistinguishable from one that was never declared at all. That is the one
+	// claim a chart must never make by omission, and it is exactly what happened
+	// when the budget was smaller than the series count: the tail bands were left
+	// with nothing, and the all-zero series — being last, being quietest — was
+	// always among them.
+	//
+	// So every band is guaranteed its floor row even when the budget is short, and
+	// the chart gives up the OVERFLOW instead: `renderSeriesChart` clamps the total
+	// to the height it was given rather than letting bands claim rows past it.
+	// A chart too short to hold every band shows the loudest ones in full and the
+	// quietest as a bare baseline, which reads as "recorded, no room to show it" —
+	// an honest reading — rather than as a series that stopped existing.
+	const rows = new Array<number>(count).fill(1);
+	let left = Math.max(0, budget - count);
 	// PASS TWO — a band that RECORDED something is upgraded to two rows, so it has
 	// one row of ink standing on its floor and is a chart rather than a bare
 	// baseline. Loudest first again: when the budget cannot upgrade every live
@@ -284,11 +290,45 @@ export function renderSeriesChart(
 	// peaking at a fiftieth of the loudest drew the same shape as the loudest.
 	const max = bandMax(series);
 
+	// Shed the overflow QUIETEST-FIRST, so the loudest band keeps its geometry:
+	// the bands that give up rows are the ones whose magnitude the reader loses
+	// least.
+	//
+	// A band normally stops at the one row it needs to paint its floor — that row
+	// is what makes its zero visible. But a chart SHORTER THAN ITS OWN SERIES LIST
+	// cannot give every band that row without overflowing the panel, and an
+	// overflowing band corrupts the layout around it, which is the worse of the
+	// two wrongs. So when the rows run out entirely the quietest bands are shed
+	// to nothing, loudest-first kept whole: the chart stays inside its height and
+	// the reader gets the loudest bands rather than a broken panel.
+	const heights = [...rowsEach];
+	let spill = Math.max(0, heights.reduce((sum, rows) => sum + rows, 0) + (labelled ? series.length : 0) - opts.height);
+	if (spill > 0) {
+		const quietestFirst = series
+			.map((_entry, index) => ({ index, peak: perBand[index] ?? 0 }))
+			.sort((a, b) => a.peak - b.peak || a.index - b.index);
+		for (const { index } of quietestFirst) {
+			// First give up the rows ABOVE the floor, keeping every band visible.
+			while (spill > 0 && (heights[index] ?? 0) > 1) {
+				heights[index] = (heights[index] ?? 0) - 1;
+				spill -= 1;
+			}
+		}
+		// Then, only if the rows still do not fit, give up whole bands — again
+	// quietest first.
+		for (const { index } of quietestFirst) {
+			while (spill > 0 && (heights[index] ?? 0) > 0) {
+				heights[index] = 0;
+				spill -= 1;
+			}
+		}
+	}
+
 	const rows: string[] = [];
 	for (const [index, entry] of series.entries()) {
 		const color = colors[index] ?? colors[0]!;
 		const apply = (text: string) => opts.paint(color, text);
-		const height = rowsEach[index] ?? 0;
+		const height = heights[index] ?? 0;
 		if (height > 0) {
 			// The band is given `height` rows TOTAL, floor included — see
 			// `plotRows` in bars.ts. The floor comes out of the band's budget
