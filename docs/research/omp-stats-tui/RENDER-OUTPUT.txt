@@ -4328,12 +4328,35 @@ fetched activity: 3 route(s) in 126ms
 18) $ bun scripts/probe-frame.ts — CHROME, re-captured against the committed BODY
     b15f09d + 9e90e29. Same contract: OVERWIDE 0, exactly 1 divider, at all
     four widths. Refreshed so these frames and the body's are from one commit.
-    DELIBERATE DIVERGENCE (not drift): the web collapses grid-main-side to one
-    column below 1100px (styles.css:712-722), so its two-up layout exists only
-    at terminal width 150. Our nav column is permanent from 60 up — a terminal
-    has no pixels to collapse against, and a nav that vanished at 60 would
-    leave a screen with no discoverable way off it that digits and tab cannot
-    name.
+    THREE DELIBERATE DIVERGENCES from the web, recorded so a later diff against
+    / does not mistake them for drift. Each is a case where the web has an
+    affordance a terminal does not, or the reverse.
+
+    1. SIDEBAR PERSISTS BELOW 1100px. The web collapses `grid-main-side` to one
+       column below 1100px (styles.css:712-722), so its two-up layout exists
+       only at terminal width 150. Ours is permanent from 60 up: a terminal has
+       no pixels to collapse against, and a nav that vanished at 60 would leave
+       a screen with no discoverable way off it that neither digits nor tab can
+       name.
+
+    2. TRUNCATION INSTEAD OF A TOOLTIP. The web reveals a truncated value on
+       hover (`google-antig…` plus a tooltip carries the full string). A
+       terminal has no hover, so at width 40 the burn list truncates to a real
+       tail. The invariant it must keep is that a `…` is a truncated FIGURE,
+       never a dropped column — but it is a different affordance from the web's
+       and should not be read as one.
+
+    3. NO CARD-FLUSH INDENT (not ported, by decision). `.card[data-flush]`
+       drops the body's horizontal padding and every data table sits in a flush
+       card (styles.css:797-799), so a table card carries no indent between its
+       title and its rows while a chart card indents by 2. Correct in
+       principle and compatible with G5 (an indent is not a rule), but it
+       repoints every chart on every screen, so it is refused for now: no test
+       drives it, and nothing would catch a regression or prove it landed. A
+       reader already gets the grouping from the heading icon and the blank
+       line between bands (G1/G2/G4); the indent refines a distinction that is
+       already legible. If it lands it must be its own briefed change with
+       tests written first — not a rider on someone else's.
 ==============================================================================
   FRAME@150 — 40 rows, widest 150, 1 divider(s), OVERWIDE: 0
   FRAME@100 — 40 rows, widest 100, 1 divider(s), OVERWIDE: 0
