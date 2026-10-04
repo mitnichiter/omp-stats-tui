@@ -877,8 +877,11 @@ test("bars scale by COST, so the free-but-huge day is not the tall one", async (
 	// band's marks are the rows before the first label.
 	const first = rows.findIndex(row => row.includes("Input"));
 	expect(first, "the daily-estimate block must be labelled").toBeGreaterThan(1);
-	const block = rows.slice(0, first).filter(row => /[█░]/.test(row));
-	expect(block.length).toBeGreaterThanOrEqual(2);
+	// The FLOOR is not a row of magnitude, so it is excluded: a band's last row
+	// is the `axisLine` mark (the web's `.chart-baseline`, `Chart.tsx:304`).
+	const block = rows.slice(0, first);
+	expect(block.length, "the first band must be at least two rows").toBeGreaterThanOrEqual(2);
+	const heights = columnHeights(block.filter(row => /█/.test(row)));
 	// The rule itself, without depending on where a bucket lands: the two filled
 	// columns have DIFFERENT heights, and the taller one is the newer bucket — the
 	// day that cost $42. A token-scaled chart would give the OTHER column, the day
@@ -889,10 +892,10 @@ test("bars scale by COST, so the free-but-huge day is not the tall one", async (
 	// is taller is asserted against a real database in
 	// test/unpriced-render.test.ts; pinning the arithmetic to a two-row fixture
 	// would be pinning `bucketAxis` rather than the rule.
-	const heights = columnHeights(block);
 	expect(heights.filter(height => height > 0).length).toBe(2);
 	expect(Math.max(...heights)).toBeGreaterThan(0);
 });
+
 
 test("the cost axis is day-bucketed like the host, so a midnight row is never dropped", async () => {
 	// A `1h` window is narrower than a day, so an hourly axis would place

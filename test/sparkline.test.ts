@@ -54,9 +54,12 @@ test("an all-zero series emits width cells of level-0, never an empty string", (
 });
 
 test("a max of zero does not divide by zero", () => {
-	expect(renderSparkline([0, 0], { width: 4, max: 0 })).toBe(ramp[0].repeat(4));
-	expect(renderSparkline([5, 5], { width: 4, max: 0 })).toBe(ramp[0].repeat(4));
-	expect(renderSparkline([], { width: 4, max: 0 })).toBe(ramp[0].repeat(4));
+	// Padding is blank and measured zero is `ramp[0]`, so these two differ.
+	expect(renderSparkline([0, 0], { width: 4, max: 0 })).toBe(`  ${ramp[0]}${ramp[0]}`);
+	expect(renderSparkline([5, 5], { width: 4, max: 0 })).toBe(`  ${ramp[0]}${ramp[0]}`);
+	// An EMPTY series is all padding, and padding is blank: a cell holding no
+	// data must not wear the glyph a measured zero draws.
+	expect(renderSparkline([], { width: 4, max: 0 })).toBe("    ");
 });
 
 test("a flat series renders identical glyphs, not noise and not empty", () => {
@@ -105,7 +108,9 @@ test("a single point anchors RIGHT, so a one-column panel shows now", () => {
 	expect(renderSparkline([10], { width: 1, max: 10 })).toBe(ramp[7]);
 	// A short series right-aligns too, so "today" is always the rightmost cell.
 	// 1 / 10 * 7 = 0.7 → level 1.
-	expect(renderSparkline([1, 10], { width: 4, max: 10 })).toBe(`${ramp[0]}${ramp[0]}${ramp[1]}${ramp[7]}`);
+	// The two leading cells are PADDING and read as blanks — before the fix they
+	// repeated `ramp[0]`, so "no data yet" and "recorded nothing" were one mark.
+	expect(renderSparkline([1, 10], { width: 4, max: 10 })).toBe(`  ${ramp[1]}${ramp[7]}`);
 });
 
 // ─── Shape, ramp and width ───────────────────────────────────────────────────
@@ -147,7 +152,7 @@ test("a ranked list is one row per entry and every row fits the width", () => {
 			{ label: "gpt-5.6-terra", value: 935.72 },
 			{ label: "deepseek-v4-flash", value: 22.85 },
 		],
-		{ width: 40, accent: identity, dim: identity },
+		{ width: 40, accent: identity },
 	);
 	expect(rows).toHaveLength(2);
 	for (const r of rows) expect(Bun.stringWidth(r)).toBe(40);
@@ -160,7 +165,7 @@ test("a ranked list sorts descending by value", () => {
 			{ label: "big", value: 100 },
 			{ label: "mid", value: 50 },
 		],
-		{ width: 40, accent: identity, dim: identity },
+		{ width: 40, accent: identity },
 	);
 	expect(rows[0]).toContain("big");
 	expect(rows[1]).toContain("mid");
@@ -176,7 +181,7 @@ test("every ranked row shares ONE divisor, so the bars are directly comparable",
 			{ label: "half", value: 50 },
 			{ label: "full", value: 100 },
 		],
-		{ width: 60, accent: identity, dim: identity },
+		{ width: 60, accent: identity },
 	);
 	const filled = (row: string) => [...row].filter((c) => c === U.barFill).length;
 	// Sorted descending, so rows[0] ("full", 100) carries the longest bar and
@@ -191,7 +196,6 @@ test("a zero-valued row emits a VISIBLE cell, so it reads as measured-zero", () 
 	const rows = renderRankedBars([{ label: "quiet-model", value: 0 }], {
 		width: 40,
 		accent: identity,
-		dim: identity,
 	});
 	expect(rows).toHaveLength(1);
 	expect(Bun.stringWidth(rows[0] as string)).toBe(40);
@@ -205,7 +209,6 @@ test("an unpriced row renders as N/A with its count, never as a free $0.00", () 
 	const rows = renderRankedBars([{ label: "muse-spark-free", value: 0, unpriced: 55 }], {
 		width: 48,
 		accent: identity,
-		dim: identity,
 	});
 	expect(rows[0]).toContain("N/A");
 	expect(rows[0]).toContain("55 unpriced");
@@ -216,7 +219,6 @@ test("a row's display value can be supplied and overrides the default", () => {
 	const rows = renderRankedBars([{ label: "x", value: 5, display: "custom" }], {
 		width: 40,
 		accent: identity,
-		dim: identity,
 	});
 	expect(rows[0]).toContain("custom");
 });
@@ -227,14 +229,14 @@ test("an all-zero ranked list does not divide by zero", () => {
 			{ label: "a", value: 0 },
 			{ label: "b", value: 0 },
 		],
-		{ width: 40, accent: identity, dim: identity },
+		{ width: 40, accent: identity },
 	);
 	expect(rows).toHaveLength(2);
 	for (const r of rows) expect(Bun.stringWidth(r)).toBe(40);
 });
 
 test("an empty ranked list returns [], the one case where an empty line is right", () => {
-	expect(renderRankedBars([], { width: 40, accent: identity, dim: identity })).toEqual([]);
+	expect(renderRankedBars([], { width: 40, accent: identity })).toEqual([]);
 });
 
 test("every ranked row FITS its width, swept 10..200, with long labels", () => {
@@ -250,7 +252,7 @@ test("every ranked row FITS its width, swept 10..200, with long labels", () => {
 				{ label: "short", value: 0 },
 				{ label: "gpt-5.6-sol", value: 1292.85 },
 			],
-			{ width, accent: identity, dim: identity },
+			{ width, accent: identity },
 		);
 		for (const r of rows) expect(visibleWidth(r), `width ${width}: ${r}`).toBeLessThanOrEqual(width);
 	}
@@ -266,7 +268,7 @@ test("a ranked row's bar is bounded, so a wide panel leaves whitespace rather th
 			{ label: "alpha", value: 10 },
 			{ label: "beta", value: 5 },
 		],
-		{ width: 60, accent: identity, dim: identity },
+		{ width: 60, accent: identity },
 	);
 	for (const row of rows) {
 		expect(visibleWidth(row), row).toBeLessThanOrEqual(60);
@@ -279,14 +281,14 @@ test("a ranked row's bar is bounded, so a wide panel leaves whitespace rather th
 // ─── Share bar ───────────────────────────────────────────────────────────────
 
 test("a share bar is exactly width cells", () => {
-	const bar = renderShareBar(0.75, { width: 40 }, "75.0% cache");
+	const bar = renderShareBar(0.75, { width: 40, accent: identity }, "75.0% cache");
 	expect(Bun.stringWidth(bar)).toBe(40);
 });
 
 test("the readout is rendered FIRST, and the bar takes the remainder", () => {
 	// Transcribed from Charm's bubbles progress.ViewAs: measure the number, give
 	// the track whatever is left. At narrow widths the number wins.
-	const bar = renderShareBar(1, { width: 20 }, "100%");
+	const bar = renderShareBar(1, { width: 20, accent: identity }, "100%");
 	expect(bar.endsWith("100%")).toBe(true);
 	expect(Bun.stringWidth(bar)).toBe(20);
 	// 20 - 4 (readout) - 1 (gap) = 15 cells of track, all filled at share 1.
@@ -294,17 +296,19 @@ test("the readout is rendered FIRST, and the bar takes the remainder", () => {
 });
 
 test("a share over 1 clamps to full instead of overflowing", () => {
-	const bar = renderShareBar(1.5, { width: 20 }, "150%");
+	const bar = renderShareBar(1.5, { width: 20, accent: identity }, "150%");
 	expect(Bun.stringWidth(bar)).toBe(20);
 	expect([...bar].filter((c) => c === U.barFill).length).toBe(15);
 });
 
 test("a zero share is an all-empty track, never a division by zero", () => {
-	// width 20 − readout "0%" (2) − gap (1) = 17 track cells, all empty.
-	const bar = renderShareBar(0, { width: 20 }, "0%");
+	// width 20 − readout "0%" (2) − gap (1) = 17 track cells, and every one of
+	// them is BLANK: the web omits a zero segment outright (`ShareBar.tsx:15`)
+	// rather than filling its slot with a shade block.
+	const bar = renderShareBar(0, { width: 20, accent: identity }, "0%");
 	expect(Bun.stringWidth(bar)).toBe(20);
 	expect([...bar].filter((c) => c === U.barFill).length).toBe(0);
-	expect([...bar].filter((c) => c === U.barEmpty).length).toBe(17);
+	expect([...bar].filter((c) => c !== " " && c !== "0" && c !== "%").length).toBe(0);
 });
 
 test("the bar disappears at narrow widths but the readout still prints", () => {
@@ -312,7 +316,7 @@ test("the bar disappears at narrow widths but the readout still prints", () => {
 	// behaviour, not a failure. The readout is 5 cells in a 4-cell row, so the
 	// line is the number alone — the number is the fact and the bar is the
 	// decoration, so the fact is never truncated to protect a bar that is gone.
-	const bar = renderShareBar(0.5, { width: 4 }, "50.0%");
+	const bar = renderShareBar(0.5, { width: 4, accent: identity }, "50.0%");
 	expect(bar).toBe("50.0%");
 	expect(Bun.stringWidth(bar)).toBe(5);
 });
@@ -320,7 +324,7 @@ test("the bar disappears at narrow widths but the readout still prints", () => {
 test("a share bar never overflows, even when the readout is longer than the width", () => {
 	for (const width of [1, 2, 4, 6, 10, 20, 40]) {
 		for (const readout of ["", "5", "50.0%", "a-very-long-readout-indeed"]) {
-			const bar = renderShareBar(0.5, { width }, readout);
+			const bar = renderShareBar(0.5, { width, accent: identity }, readout);
 			expect(Bun.stringWidth(bar), `width ${width} readout ${readout}`).toBeLessThanOrEqual(
 				Math.max(width, Bun.stringWidth(readout)),
 			);
@@ -331,20 +335,20 @@ test("a share bar never overflows, even when the readout is longer than the widt
 
 test("a share bar is exactly width cells for a fitting readout, swept 10..200", () => {
 	for (let width = 10; width <= 200; width++) {
-		const bar = renderShareBar(0.37, { width }, "37%");
+		const bar = renderShareBar(0.37, { width, accent: identity }, "37%");
 		expect(Bun.stringWidth(bar), `width ${width}`).toBe(width);
 	}
 });
 
 test("an empty readout leaves the whole width for the bar", () => {
-	const bar = renderShareBar(0.5, { width: 10 }, "");
+	const bar = renderShareBar(0.5, { width: 10, accent: identity }, "");
 	expect(Bun.stringWidth(bar)).toBe(10);
 	expect([...bar].filter((c) => c === U.barFill).length).toBe(5);
 });
 
 test("the share bar's glyphs come from the glyph module, under every preset", () => {
 	for (const preset of ["unicode", "ascii"] as const) {
-		const bar = renderShareBar(0.5, { width: 20, preset }, "50%");
+		const bar = renderShareBar(0.5, { width: 20, preset, accent: identity }, "50%");
 		const set = glyphsFor(preset);
 		for (const ch of [...bar]) {
 			expect([set.barFill, set.barEmpty, ...bar.split("")]).toContain(ch);
@@ -352,7 +356,7 @@ test("the share bar's glyphs come from the glyph module, under every preset", ()
 		// ascii must differ from unicode and still be exactly 20 cells.
 		expect(Bun.stringWidth(bar)).toBe(20);
 	}
-	expect(renderShareBar(0.5, { width: 20, preset: "nerd" }, "50%")).toBe(
-		renderShareBar(0.5, { width: 20, preset: "unicode" }, "50%"),
+	expect(renderShareBar(0.5, { width: 20, preset: "nerd", accent: identity }, "50%")).toBe(
+		renderShareBar(0.5, { width: 20, preset: "unicode", accent: identity }, "50%"),
 	);
 });

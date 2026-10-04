@@ -8,7 +8,7 @@ import {
 	renderDailyBars,
 	renderModelCostBars,
 } from "../src/tui/charts/bars";
-import { glyphsFor } from "../src/tui/glyphs";
+import { glyph, glyphsFor } from "../src/tui/glyphs";
 
 const identity = (t: string) => t;
 const opts = (width: number, height = 8, preset: "unicode" | "nerd" | "ascii" = "unicode") => ({
@@ -20,7 +20,7 @@ const opts = (width: number, height = 8, preset: "unicode" | "nerd" | "ascii" = 
 });
 
 const fill = glyphsFor("unicode").barFill as string;
-const empty = glyphsFor("unicode").barEmpty as string;
+const axis = glyph("unicode", "axisLine");
 
 /**
  * Column heights recovered from the rendered rows, so tests assert on output
@@ -30,12 +30,15 @@ const empty = glyphsFor("unicode").barEmpty as string;
  * bar; its distance from the baseline (the last row) is the bar's height.
  */
 function columnHeights(rows: readonly string[], width: number): number[] {
+	// Filled CELLS per column, counted directly. The old form inferred a height
+	// from a distance to the last row, which silently counted the chart floor as
+	// a row of magnitude the moment the floor existed.
 	const heights = new Array<number>(width).fill(0);
-	rows.forEach((row, rowIndex) => {
-		for (let col = 0; col < width; col++) {
-			if ([...row][col] === fill && heights[col] === 0) heights[col] = rows.length - rowIndex;
-		}
-	});
+	for (const row of rows) {
+		[...row].forEach((ch, col) => {
+			if (ch === fill && col < width) heights[col] = (heights[col] ?? 0) + 1;
+		});
+	}
 	return heights;
 }
 
@@ -161,8 +164,9 @@ test("renderModelCostBars ranks with the host's pivotSeries, Other tail included
 		opts(2, 4),
 	);
 	expect(rows.length).toBeGreaterThan(0);
-	// Ranked first is `b` at $5, so its column must be the full height.
-	expect(columnHeights(rows, 2)[0]).toBe(4);
+	// Ranked first is `b` at $5, so its column must fill every row of magnitude.
+	// A four-row chart is three magnitude rows over the floor.
+	expect(columnHeights(rows, 2)[0]).toBe(3);
 });
 
 test("renderModelCostBars derives its totals with the host's buildCostSummary", () => {
@@ -176,7 +180,7 @@ test("renderModelCostBars derives its totals with the host's buildCostSummary", 
 	const rows = renderModelCostBars(points, opts(2, 4));
 	// The costlier model keeps the tall bar even though its bucket is one day.
 	// The cheaper one gets the one-row floor, never an empty column.
-	expect(columnHeights(rows, 2)).toEqual([4, 1]);
+	expect(columnHeights(rows, 2)).toEqual([3, 1]);
 });
 
 // ─── The chart itself ─────────────────────────────────────────────────────────
@@ -201,18 +205,23 @@ test("a zero-cost day and a high-cost day render visibly differently", () => {
 	expect(busy.join("")).toContain(fill);
 });
 
-test("an all-zero series is distinguishable from a sparse one but is not an error", () => {
+test("an all-zero series is a real chart whose floor is the only ink", () => {
+	// Not an error and not a missing chart: the buckets exist and every one
+	// measured zero. The floor is drawn and NOTHING rises off it, which is how
+	// this state stays distinct from the empty-state sentence a range with no
+	// buckets at all gets.
 	const rows = renderDailyBars([0, 0, 0], opts(3, 4));
-	expect(rows.length).toBeGreaterThan(0);
-	expect(rows.join("")).toContain(empty);
+	expect(rows.length).toBe(4);
+	expect(rows.join("")).not.toContain(fill);
+	expect(rows[3]).toBe(axis.repeat(3));
 });
 
-test("a missing day renders as an empty cell, never as a short bar", () => {
+test("a missing day renders as a gap, never as a short bar", () => {
 	// The distinction that matters: an absent bucket is "not yet built" (ADR
 	// 0003), a zero bucket is "nothing happened", and a small cost is "cheap".
-	// Both of the first two render as a FULL-height EMPTY column, so neither can
-	// be mistaken for a small spend. A real cost always gets at least one filled
-	// row, however small.
+	// The first two are now the same blank column — correctly, because the web
+	// draws nothing for either (`Chart.tsx:229`) — and both are unmistakably not
+	// a small spend, because a real cost always rises off the floor at all.
 	const missing = renderDailyBars([0, 0, 0], opts(3, 4));
 	const cheap = renderDailyBars([0, 0, 1], opts(3, 4));
 	expect(missing.join("")).not.toContain(fill);
@@ -220,7 +229,8 @@ test("a missing day renders as an empty cell, never as a short bar", () => {
 	expect(cheap.join("\n")).not.toBe(missing.join("\n"));
 
 	// And within ONE chart, a cheap day and an expensive day are distinguishable.
-	expect(columnHeights(renderDailyBars([1, 500], opts(2, 4)), 2)).toEqual([1, 4]);
+	// Four rows is three rows of magnitude over the floor.
+	expect(columnHeights(renderDailyBars([1, 500], opts(2, 4)), 2)).toEqual([1, 3]);
 });
 
 test("no rendered row ends in a newline, and no row is empty", () => {
@@ -255,17 +265,19 @@ test("the chart is height rows tall, top to bottom", () => {
 	expect(renderDailyBars([1, 2, 3], opts(3, 6)).length).toBe(6);
 });
 
-test("the tallest bar reaches the top row and the baseline is zero", () => {
+test("the tallest bar reaches the top row, and the floor is a row of its own", () => {
 	const rows = renderDailyBars([0, 5, 10], opts(3, 4));
-	expect(columnHeights(rows, 3)).toEqual([0, 2, 4]);
-	// The maximum column, and only the maximum column, touches the top row.
-	expect(rows[0]).toBe(`${empty}${empty}${fill}`);
-	// The baseline row is where the two shorter bars reach their tops.
-	expect(rows[3]).toBe(`${empty}${fill}${fill}`);
+	expect(columnHeights(rows, 3)).toEqual([0, 2, 3]);
+	// The maximum column, and only the maximum column, touches the top row. The
+	// unfilled cells are BLANK, not shade: the web draws nothing there.
+	expect(rows[0]).toBe(`  ${fill}`);
+	// Every column stands on the same floor, which is the web's
+	// `.chart-baseline` at `y(0)` (`Chart.tsx:304`) marked rather than drawn.
+	expect(rows[3]).toBe(axis.repeat(3));
 });
 
 test("equal costs get equal heights — the chart does not invent differences", () => {
-	expect(columnHeights(renderDailyBars([7, 7, 7], opts(3, 4)), 3)).toEqual([4, 4, 4]);
+	expect(columnHeights(renderDailyBars([7, 7, 7], opts(3, 4)), 3)).toEqual([3, 3, 3]);
 });
 
 test("bars scale on COST, never on token count", () => {
@@ -282,7 +294,7 @@ test("bars scale on COST, never on token count", () => {
 	// 22.85 / 935.72 rounds to zero rows, so it gets the one-row floor — a real
 	// cost must never render as an empty column, or a cheap day would be
 	// indistinguishable from an hour whose rollup was never built.
-	expect(columnHeights(renderDailyBars(byCost, opts(2, 4)), 2)).toEqual([1, 4]);
+	expect(columnHeights(renderDailyBars(byCost, opts(2, 4)), 2)).toEqual([1, 3]);
 
 	// Token volume for those same two buckets runs the OPPOSITE way: the bucket
 	// with FEWER tokens is the one that must be the taller bar.
@@ -296,8 +308,10 @@ test("bars scale on COST, never on token count", () => {
 test("the chart never uses the 8-level ramp: magnitude lives in row count", () => {
 	// If magnitude were compressed into sparkRamp levels, two bars differing by
 	// one row would be indistinguishable and the height axis would be useless.
+	// The only marks a column chart may emit are its fill, its blanks and one
+	// floor row — nothing else, on any preset.
 	for (const row of renderDailyBars([10, 5, 7, 2, 9, 3, 8, 1], opts(8, 8))) {
-		for (const ch of [...row]) expect(ch === fill || ch === empty).toBe(true);
+		for (const ch of [...row]) expect(ch === fill || ch === " " || ch === axis).toBe(true);
 	}
 });
 

@@ -29,7 +29,7 @@ import { expect, test } from "bun:test";
 import { renderDailyBars, renderModelCostBars } from "../src/tui/charts/bars";
 import { renderHeatmap } from "../src/tui/charts/heatmap";
 import { renderSparkline } from "../src/tui/charts/sparkline";
-import { bandHeights, renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
+import { bandHeights, bandMax, renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
 import { PALETTE, heatRamp, resolveSeries, stripForTest, type PaletteTheme } from "../src/tui/palette";
 import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
 import type { CostTimeSeriesPoint, DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
@@ -95,9 +95,10 @@ test("renderDailyBars scales by VALUE, and that value is cost", () => {
 			dim: paint,
 		}).filter(row => stripForTest(row)[0] === "█").length;
 
-	expect(columnHeight(PEAK)).toBe(height);
-	expect(columnHeight(PEAK / 2)).toBe(height / 2);
-	expect(columnHeight(PEAK / 4)).toBe(2);
+	// A `height`-row chart is `height - 1` magnitude rows over the floor.
+		expect(columnHeight(PEAK)).toBe(height - 1);
+	expect(columnHeight(PEAK / 2)).toBe(Math.round((height - 1) / 2));
+	expect(columnHeight(PEAK / 4)).toBe(Math.round((height - 1) / 4));
 	// Monotonic: a bigger value never draws a shorter column.
 	expect(columnHeight(3)).toBeGreaterThan(columnHeight(2));
 	// Nothing recorded draws nothing, which is what separates "no spend" from
@@ -234,7 +235,7 @@ test("renderModelCostBars ranks by COST: the 42x token spender is the shorter ba
 	});
 	const filled = (col: number) => rows.filter(row => stripForTest(row)[col] === "█").length;
 	expect(filled(0)).toBeGreaterThan(filled(1));
-	expect(filled(0)).toBe(8);
+	expect(filled(0)).toBe(7);
 });
 
 // ─── Composition: the multi-series chart IS the primitive, N times ───────────
@@ -275,11 +276,25 @@ function marks(
 	});
 }
 
-/** The primitive, called exactly as `compose` must call it. */
-function primitive(values: readonly number[], width: number, height: number, preset: SymbolPreset) {
+/**
+ * The primitive, called exactly as `compose` must call it.
+ *
+ * `max` is the SHARED peak across every series, because that is what
+ * `renderSeriesChart` hands each band — see `bandMax`. Omitting it here would
+ * compare the composition against a differently-scaled renderer, which is the
+ * one thing the equality is supposed to rule out.
+ */
+function primitive(
+	values: readonly number[],
+	width: number,
+	height: number,
+	preset: SymbolPreset,
+	max: number,
+) {
 	return renderDailyBars(values, {
 		width,
 		height,
+		max,
 		glyphs: glyphsFor(preset),
 		accent: (_text: string) => _text,
 		dim: (_text: string) => _text,
@@ -293,16 +308,17 @@ test("renderSeriesChart IS renderDailyBars called once per series", () => {
 	const series = REQUEST_SERIES;
 	const width = 20;
 	const height = 6;
-	const perSeries = Math.floor(height / series.length);
+	const perSeries = bandHeights(series.map(s => Math.max(...s.values)), Math.floor(height / series.length))[0] ?? 0;
+	const max = bandMax(series);
 
-	const handRolled = series.flatMap(s => primitive(s.values, width, perSeries, "unicode"));
+	const handRolled = series.flatMap(s => primitive(s.values, width, perSeries, "unicode", max));
 
 	expect(marks(series, width, height)).toEqual(handRolled);
 });
 
 test("renderSeriesChart of ONE series is exactly the primitive", () => {
 	const one: SeriesChartSeries[] = [{ label: "Calls", values: [4, 9, 2, 7] }];
-	expect(marks(one, 12, 3)).toEqual(primitive(one[0]!.values, 12, 3, "unicode"));
+	expect(marks(one, 12, 3)).toEqual(primitive(one[0]!.values, 12, 3, "unicode", bandMax(one)));
 });
 
 test("every series in a multi-series chart is the primitive, band by band", () => {
@@ -319,10 +335,11 @@ test("every series in a multi-series chart is the primitive, band by band", () =
 	const rows = marks(series, width, budget * series.length);
 
 	const heights = bandHeights([44, 4], budget);
+	const max = bandMax(series);
 	let offset = 0;
 	for (const [index, entry] of series.entries()) {
 		const band = rows.slice(offset, offset + (heights[index] ?? 0));
-		expect(band.slice()).toEqual([...primitive(entry.values, width, heights[index] ?? 0, "unicode")]);
+		expect(band.slice()).toEqual([...primitive(entry.values, width, heights[index] ?? 0, "unicode", max)]);
 		offset += heights[index] ?? 0;
 	}
 });
@@ -332,8 +349,9 @@ test("composition holds at every preset and every width", () => {
 	const height = 6;
 	for (const preset of PRESETS) {
 		for (const width of WIDTHS) {
-			const perSeries = Math.floor(height / series.length);
-			const expected = series.flatMap(s => primitive(s.values, width, perSeries, preset));
+			const perSeries = bandHeights(series.map(s => Math.max(...s.values)), Math.floor(height / series.length))[0] ?? 0;
+		const max = bandMax(series);
+			const expected = series.flatMap(s => primitive(s.values, width, perSeries, preset, max));
 			expect(marks(series, width, height, preset)).toEqual(expected);
 			for (const row of expected) expect(cells(row)).toBe(width);
 		}
@@ -422,6 +440,7 @@ test("renderSeriesChart drops the remainder rather than giving it to the last se
 		{ label: "c", values: [1, 1] },
 	];
 	const rows = marks(many, 10, 5);
+	void bandMax(many);
 	expect(rows.length).toBe(3);
 	for (const row of rows) expect(cells(row)).toBe(10);
 });

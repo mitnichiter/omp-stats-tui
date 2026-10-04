@@ -56,7 +56,15 @@
 import { renderDailyBars } from "./bars";
 import { glyphsFor, type SymbolPreset } from "../glyphs";
 import { resolveSeries, type PaletteTheme } from "../palette";
+import { truncateToWidth } from "@oh-my-pi/pi-tui/utils";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+
+/**
+ * What an all-zero chart says, byte-identical to the single-series primitive's
+ * own empty state. Named here rather than retyped so the two renderings of one
+ * state cannot drift apart.
+ */
+const NO_ACTIVITY = "No activity recorded in this range.";
 
 /** One series' values. Gaps are `0`: a day with no spend is a zero, not a hole. */
 export interface SeriesChartSeries {
@@ -84,6 +92,20 @@ export interface SeriesChartOptions {
 	 */
 	paint: (color: ThemeColor, text: string) => string;
 	/**
+	 * Chrome ink: the chart floor, and nothing else. Injected for the same
+	 * reason as `paint` — this module must load and test without an active theme
+	 * — and SEPARATE from `paint` because the two make different claims.
+	 *
+	 * It used to pass the series hue as `dim`, so every unfilled cell of every
+	 * band wore a DATA colour. That is how a chart of `░` read as measured
+	 * values: the web draws nothing in the unplotted part of a plot
+	 * (`Chart.tsx:229`) and keeps its floor at `--line-3`.
+	 *
+	 * Defaults to identity, so the mark-only form the equality tests compare
+	 * stays a pure comparison of geometry.
+	 */
+	dim?: (text: string) => string;
+	/**
 	 * Whether each band is labelled. Off is the pure-composition form: no labels
 	 * means the output is exactly the primitive called once per series, which is
 	 * what the equality test compares against. Narrow terminals and callers that
@@ -93,18 +115,29 @@ export interface SeriesChartOptions {
 }
 
 /**
- * Rows each series gets, given the shared maximum.
+ * Rows each series gets, from the whole chart's row budget.
  *
  * A series peaking at a tenth of the loudest gets a tenth of the rows, so band
- * height carries magnitude ACROSS series — the property that makes a stacked web
- * chart readable, and the one lost when every band is drawn full height. The
- * floor of 1 is the same one-cell minimum the renderer's `meterCell` applies: a
- * series that recorded something must not vanish, or "it drew nothing" and "it
- * recorded nothing" become indistinguishable.
+ * height carries magnitude ACROSS series. That is only half the rule, and the
+ * half that was missing is what made the two bands look identical: with peak
+ * share alone, a 4%-failure band got one row and then FILLED it, because the
+ * primitive inside the band re-scaled against that band's OWN peak. The
+ * allocation said the quiet series was quiet and the geometry said it was not,
+ * and the geometry is what a reader sees.
  *
- * Rows that do not divide evenly go to NOBODY. Handing the remainder to the last
- * series would make its apparent magnitude a function of its position in the
- * list, which is exactly the kind of quiet lie a chart must not tell.
+ * So the allocation stays AND {@link bandMax} is passed to every band as `max`
+ * beside it. Together they reproduce the web's single y-axis
+ * (`Chart.tsx:83-98`, where `leftMax` is the maximum over every stackable
+ * series): the ROW COUNT carries the cross-series magnitude, and the maximum
+ * stops a band over-filling the rows it was handed.
+ *
+ * The floor of 1 is the same one-cell minimum the renderer's `meterCell`
+ * applies: a series that recorded something must not vanish, or "it drew
+ * nothing" and "it recorded nothing" become indistinguishable.
+ *
+ * Rows that do not divide evenly go to NOBODY. Handing the remainder to the
+ * last series would make its apparent magnitude a function of its position in
+ * the list, which is exactly the kind of quiet lie a chart must not tell.
  *
  * EXPORTED so the composition tests can build the exact expected band for each
  * series. That is deliberate: a test that reimplemented this arithmetic would be
@@ -114,10 +147,22 @@ export interface SeriesChartOptions {
 export function bandHeights(peaks: readonly number[], budget: number): readonly number[] {
 	const shared = peaks.reduce((max, peak) => (peak > max ? peak : max), 0);
 	if (budget <= 0) return peaks.map(() => 0);
-	return peaks.map(peak => {
-		if (shared <= 0) return budget;
-		return Math.max(1, Math.round((peak / shared) * budget));
-	});
+	return peaks.map(peak => (shared <= 0 ? budget : Math.max(1, Math.round((peak / shared) * budget))));
+}
+
+/**
+ * The maximum a multi-series chart scales EVERY band against.
+ *
+ * The peak across all series — `leftMax` in the web's layout pass
+ * (`Chart.tsx:98`). Exported because a test asserting a band's geometry has to
+ * know the divisor, and re-deriving it in the test would be a second copy of the
+ * rule.
+ */
+export function bandMax(series: readonly SeriesChartSeries[]): number {
+	return series.reduce(
+		(shared, entry) => entry.values.reduce((peak, value) => (value > peak ? value : peak), shared),
+		0,
+	);
 }
 
 /**
@@ -134,34 +179,47 @@ export function renderSeriesChart(
 
 	const glyphs = glyphsFor(opts.preset);
 	const width = Math.max(0, Math.floor(opts.width));
+	const dim = opts.dim ?? ((text: string) => text);
+	// EVERY series measured zero. There is no peak to scale against, so each band
+	// would be a block of blank rows with a floor and nothing else — dead space
+	// that reads as a broken chart rather than as a quiet range. The primitive
+	// says this in one dim line for a single all-zero series, and the composed
+	// chart says the same, so "nothing happened" has exactly one rendering
+	// however many series declared it.
+	if (series.every(entry => entry.values.every(value => !(value > 0)))) {
+		return [dim(truncateToWidth(NO_ACTIVITY, width))];
+	}
+
 	const colors = resolveSeries(series.length, opts.theme);
 	const labelled = opts.labels !== false;
 	// With labels, each band reserves one row for its name. A chart too short to
 	// afford labels draws marks only rather than names with no marks.
 	const markable = labelled ? opts.height - series.length : opts.height;
 	const budget = markable > 0 ? Math.floor(markable / series.length) : 0;
-	const heights = bandHeights(
+	const rowsEach = bandHeights(
 		series.map(entry => entry.values.reduce((max, value) => (value > max ? value : max), 0)),
 		budget,
 	);
+	// ONE divisor for every band. This is the whole point of the module, and it
+	// used to be missing: each band re-scaled against its own peak, so a series
+	// peaking at a fiftieth of the loudest drew the same shape as the loudest.
+	const max = bandMax(series);
 
 	const rows: string[] = [];
 	for (const [index, entry] of series.entries()) {
 		const color = colors[index] ?? colors[0]!;
 		const apply = (text: string) => opts.paint(color, text);
-		const height = heights[index] ?? 0;
+		const height = rowsEach[index] ?? 0;
 		if (height > 0) {
-			// `renderDailyBars` fills every row it is given, so this band is the
-			// magnitude scale: a quiet series' columns stop short of the top.
-			rows.push(
-				...renderDailyBars(entry.values, {
-					width,
-					height,
-					glyphs,
-					accent: apply,
-					dim: apply,
-				}),
-			);
+			// The band is given `height` rows TOTAL, floor included — see
+			// `plotRows` in bars.ts. The floor comes out of the band's budget
+			// rather than on top of it, so a four-series chart cannot claim four
+			// rows more than the plan gave it.
+			//
+			// `dim` is CHROME, not this series' hue: the floor belongs to the
+			// chart, and painting it in a data colour is what made the old track
+			// fill read as measured values.
+			rows.push(...renderDailyBars(entry.values, { width, height, max, glyphs, accent: apply, dim }));
 		}
 		if (labelled) {
 			// Padded to the full width so the block stays rectangular: the primitive

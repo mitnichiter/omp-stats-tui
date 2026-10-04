@@ -46,10 +46,37 @@ import type { GlyphSet, GlyphValue } from "../glyphs";
 export interface BarsOptions {
 	/** Columns available to the chart. No rendered row may exceed it. */
 	width: number;
-	/** Rows available. This is the magnitude axis — see the note in renderDailyBars. */
+	/**
+	 * Rows the WHOLE plot occupies, floor included — see {@link compose}.
+	 *
+	 * This is the magnitude axis: one filled row is one step of the shared
+	 * scale every column in the chart is measured against.
+	 */
 	height: number;
 	glyphs: GlyphSet;
+	/**
+	 * The scale maximum, when the caller has one.
+	 *
+	 * Omit it and the series' own peak is the maximum, which is right for a
+	 * single-series chart: its tallest column fills the plot, which is what tells
+	 * the reader the range.
+	 *
+	 * A MULTI-series chart must supply the maximum across ALL its series, and
+	 * that is the whole reason this option exists. It used to be absent, so every
+	 * band silently re-scaled against its own peak and a 4%-failure band drew
+	 * exactly the same shape as the 100%-success band beside it — the quiet lie
+	 * the web's single y-axis (`Chart.tsx:83-98`) exists to prevent, reproduced in
+	 * a different shape. `renderSeriesChart` passes the shared maximum; see
+	 * `bandMax`.
+	 */
+	max?: number;
+	/** Data ink. Reaches the FILLED cells of a column and nothing else. */
 	accent: (text: string) => string;
+	/**
+	 * Chrome ink. Reaches the floor mark and the empty state, and nothing else —
+	 * the web draws both at ink-3 (`--chart-grid`, `.chart-empty`), never in a
+	 * series colour.
+	 */
 	dim: (text: string) => string;
 }
 
@@ -91,37 +118,109 @@ function mark(glyphs: GlyphSet, role: keyof GlyphSet): string {
  * glyph and lets ROW COUNT carry the magnitude, which is why `height` is the
  * resolution axis and why the ramp is not consulted.
  *
- * A zero value gets zero filled rows — rendered as a full-height EMPTY column,
- * which is how "nothing happened" and "not yet built" both read. That is
- * deliberate: they are indistinguishable to the reader but both mean "not a
- * cost", and neither may look like a small spend.
+ * A zero value gets ZERO filled rows, which now renders as a blank column over
+ * the floor rather than as a full-height block of `░`. That is what separates
+ * the three states this chart can be in, which used to collapse into one:
+ *
+ *   - a bucket that measured zero inside a live series is a GAP — the column
+ *     simply does not rise off the floor;
+ *   - a series where every bucket measured zero is a real chart whose floor is
+ *     the only ink — present, accounted for, nothing recorded;
+ *   - a range with no buckets at all is the empty-state sentence below.
+ *
+ * The web collapses the first two (`Chart.tsx:108`: `empty` is every value
+ * falsy). A terminal does not have to, because the floor gives zero somewhere
+ * to be drawn.
  */
-function heights(values: readonly number[], height: number): readonly number[] {
-	if (height <= 0) return values.map(() => 0);
-	const max = Math.max(0, ...values);
-	// An all-zero (or empty) series has no maximum to scale against, so every
-	// column stays empty rather than dividing by zero.
+function heights(values: readonly number[], rows: number, supplied?: number): readonly number[] {
+	if (rows <= 0) return values.map(() => 0);
+	// The caller's maximum when there is one, else this series' own peak. Never
+	// the series MINIMUM: min-max stretches a quiet series to fill the ramp and
+	// renders a quiet week exactly like a busy one.
+	const max = supplied ?? Math.max(0, ...values);
+	// Nothing to scale against, so every column stays empty rather than dividing
+	// by zero. (Crush's guard is `if (max === 0) max = 1`; transcribing that
+	// literally into a ramp paints a non-zero value FULL.)
 	if (max <= 0) return values.map(() => 0);
-	return values.map((v) => (v <= 0 ? 0 : Math.max(1, Math.round((v / max) * height))));
+	// THE ONE-ROW FLOOR, unconditionally. A value that rounds to no rows is drawn
+	// as one row anyway, because the alternative is a series that recorded
+	// something drawing nothing — and "it drew nothing" and "it recorded nothing"
+	// are then the same claim. That is rule 4, and it outranks the rounding error
+	// it introduces: a value a fiftieth of the scale reads as one row instead of
+	// no rows, which over-reads. An under-read is worse, because the reader
+	// concludes from a blank band that nothing happened.
+	//
+	// So a shared scale alone is NOT enough to make two bands comparable — a
+	// quiet band given one row fills that row completely. `renderSeriesChart`
+	// therefore sizes bands by PEAK SHARE as well as passing the shared maximum:
+	// the row count carries the cross-series magnitude and the maximum keeps each
+	// band from over-filling the rows it was given.
+	return values.map((v) => (v <= 0 ? 0 : Math.max(1, Math.min(rows, Math.round((v / max) * rows)))));
 }
 
-/** Rows are top to bottom, so row `r` covers heights `height - r` and below. */
-function compose(columns: readonly number[], opts: BarsOptions): readonly string[] {
-	const glyphs = opts.glyphs;
-	const fill = mark(glyphs, "barFill");
-	const blank = mark(glyphs, "barEmpty");
-	const rows: string[] = [];
+/**
+ * Rows of magnitude a plot of `height` rows has, once the floor is taken.
+ *
+ * THE FLOOR IS INSIDE THE BUDGET, deliberately. A band allocated
+ * `renderDailyBars(values, {height})` must not grow by a row per call, or a
+ * four-series chart would claim four rows more than the plan gave it and the
+ * body would overflow — and `renderSeriesChart` splits one `height` between its
+ * series, so an extra row per band would silently halve the resolution.
+ *
+ * At `height` 1 there is no room for both a bar and a floor, so the single row
+ * is DATA. `bandHeights` floors a series that recorded something at one row,
+ * and a bare floor would render that series as having recorded nothing.
+ */
+function plotRows(height: number): number {
+	return height >= 2 ? height - 1 : height;
+}
 
-	for (let r = 0; r < opts.height; r++) {
-		// Cells at or above this row's threshold are filled; the rest are empty.
-		const threshold = opts.height - r;
-		const line = columns
-			.map((h) => (h >= threshold ? opts.accent(fill) : opts.dim(blank)))
-			.join("");
-		rows.push(line);
+/**
+ * The rows a column chart is made of: magnitude rows, then the floor.
+ *
+ * Rows come top to bottom, so row `r` covers column heights `rows - r` and
+ * below; every column therefore rises off the SAME bottom row, which is what
+ * makes the chart zero-baselined. `test/chart-ink.test.ts` asserts the
+ * contiguity directly, because a bar with a gap under it claims a non-zero
+ * baseline and inflates every magnitude on the chart.
+ *
+ * ── A blank cell is a blank cell ────────────────────────────────────────────
+ * The unplotted part of a column is a SPACE. It used to be `dim(barEmpty)`, a
+ * wall of U+2591 that encoded nothing, and at `innerWidth` 96 × `barHeight` 14
+ * that was 1,344 glyphs of texture per chart — the whole complaint. The web
+ * draws nothing there either: `Chart.tsx:229` is `{!v ? return null : …}` and
+ * the plot's background is the card's own colour, while the only track on the
+ * page is `.meter`'s `rgba(255,255,255,0.06)` (`styles.css:1380`), which is a
+ * background and not a glyph.
+ *
+ * DIVERGENCE (deliberate, noted): the web strokes `.chart-baseline` at `y(0)`
+ * in `--line-3` (`Chart.tsx:304`). G5 and `/usage`'s zero-rules body forbid a
+ * full-width rule inside a band, so we MARK the floor with a width-1 glyph
+ * instead of drawing one. A mark is the better terminal translation anyway: it
+ * cannot be mistaken for a section separator, and it costs one row instead of
+ * one line in the middle of the plot.
+ */
+function compose(columnHeights: readonly number[], rows: number, opts: BarsOptions): readonly string[] {
+	const fill = mark(opts.glyphs, "barFill");
+	const out: string[] = [];
+
+	for (let r = 0; r < rows; r++) {
+		const threshold = rows - r;
+		out.push(columnHeights.map(h => (h >= threshold ? opts.accent(fill) : " ")).join(""));
 	}
-	return rows;
+	if (rows < opts.height) {
+		const width = Math.max(0, Math.floor(opts.width));
+		out.push(opts.dim(mark(opts.glyphs, "axisLine").repeat(width)));
+	}
+	return out;
 }
+
+/**
+ * What a range with no buckets says. Named once so the two entry points below
+ * cannot drift into two different sentences for the same state.
+ */
+const NO_ACTIVITY = "No activity recorded in this range.";
+
 /**
  * Truncate to `width` cells, measured rather than counted.
  *
@@ -150,24 +249,28 @@ function clamp(text: string, width: number): string {
  * padding maths that `Bun.stringWidth` would then have to absorb.
  */
 export function renderDailyBars(values: readonly number[], opts: BarsOptions): readonly string[] {
-	// An empty range is a real state, not an error and not "zero everywhere":
-	// a wall of empty columns reads as "you did nothing", when in truth the
-	// range has no data at all. Review Focus line 3.
-	// Clamped to the width like every other line: a 35-character message in a
-	// 20-column panel is an overflow, and an empty-state line that overflows
-	// corrupts the panel exactly as a wide bar row would.
-	if (values.length === 0) return [clamp("No activity recorded in this range.", Math.max(0, Math.floor(opts.width)))];
+	// ABSENT — no buckets at all. A real state, not an error and not "zero
+	// everywhere": the web draws its centred `.chart-empty` for exactly this
+	// (`Chart.tsx:320`), and a chart of blank columns would read as "you did
+	// nothing", when in truth the range was never populated. Clamped to the
+	// width like every other line: a 35-character message in a 20-column panel
+	// is an overflow, and an empty-state line that overflows corrupts the panel
+	// exactly as a wide bar row would.
+	if (values.length === 0) {
+		return [opts.dim(clamp(NO_ACTIVITY, Math.max(0, Math.floor(opts.width))))];
+	}
 
 	const width = Math.max(0, Math.floor(opts.width));
 	// Exactly `width` columns: densify pads when there is less data than width,
-	// and we would rather show trailing empty columns than a row narrower than
+	// and we would rather show trailing blank columns than a row narrower than
 	// the panel it sits in.
 	const columns = values.length === width ? values : costsForBuckets(
 		values.map((cost, i) => ({ timestamp: i, cost })),
 		Array.from({ length: width }, (_, i) => i),
 	);
 
-	return compose(heights(columns, opts.height), { ...opts, width });
+	const rows = plotRows(opts.height);
+	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }
 
 /**
@@ -182,7 +285,7 @@ export function renderModelCostBars(
 	points: readonly CostTimeSeriesPoint[],
 	opts: BarsOptions & { limit?: number },
 ): readonly string[] {
-	if (points.length === 0) return ["No activity recorded in this range."];
+	if (points.length === 0) return [opts.dim(clamp(NO_ACTIVITY, Math.max(0, Math.floor(opts.width))))];
 
 	const width = Math.max(0, Math.floor(opts.width));
 	const summary = buildCostSummary(points);
@@ -214,5 +317,6 @@ export function renderModelCostBars(
 					Array.from({ length: width }, (_, i) => i),
 				);
 
-	return compose(heights(columns, opts.height), { ...opts, width });
+	const rows = plotRows(opts.height);
+	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }

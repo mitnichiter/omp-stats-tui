@@ -96,7 +96,7 @@ import {
 } from "../format";
 import { glyph, glyphsFor, type GlyphSet, type SymbolPreset } from "../glyphs";
 import type { LayoutPlan } from "../layout";
-import { PALETTE, heatRamp, type PaletteTheme } from "../palette";
+import { PALETTE, SERIES_COLORS, heatRamp, type PaletteTheme } from "../palette";
 
 /** Bucket width of `costSeries`, in ms. DAY for every range — see `bucketedValues`. */
 const COST_BUCKET_MS = 24 * 60 * 60 * 1000;
@@ -662,12 +662,12 @@ export function renderScreenWith(opts: ScreenRenderOptions): {
 	// would blame the reader's quiet month for a missing route.
 	if (opts.spec.deferred) {
 		return {
-			lines: [opts.fg(PALETTE.muted, opts.spec.deferredReason ?? "This screen is deferred.")],
+			lines: [opts.fg(PALETTE.dim, opts.spec.deferredReason ?? "This screen is deferred.")],
 			chart: [],
 		};
 	}
 	if (!bands.some(band => band.kind !== "note")) {
-		return { lines: [opts.fg(PALETTE.muted, "No usage recorded in this range.")], chart: [] };
+		return { lines: [opts.fg(PALETTE.dim, "No usage recorded in this range.")], chart: [] };
 	}
 	const chart = bands
 		.filter((band): band is Extract<Band, { kind: "chart" }> => band.kind === "chart")
@@ -696,6 +696,19 @@ function bandOptions(opts: ScreenRenderOptions): BandRenderOptions {
 }
 
 // ─── Charts ──────────────────────────────────────────────────────────────────
+
+/**
+ * The Nth series' hue — the SAME resolution `band.ts` gives a legend swatch.
+ *
+ * Written out rather than imported so the bar above a legend key and the key
+ * itself cannot disagree: they read the same `seriesColorFor`, fall back to the
+ * same `SERIES_COLORS` slot, and so a reader who learns "cyan is Cache read"
+ * from one gets it from the other. That agreement is the whole point of a
+ * shared palette — a private list here is how a share bar and its legend drift
+ * into two different colour languages.
+ */
+const seriesHue = (opts: ScreenRenderOptions, index: number): ThemeColor =>
+	opts.seriesColorFor?.(index) ?? SERIES_COLORS[index % SERIES_COLORS.length];
 
 /**
  * One chart band, or `null` when there is nothing honest to draw.
@@ -818,6 +831,9 @@ function barRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): re
 			preset: opts.preset,
 			theme: opts.palette,
 			paint: (color, text) => opts.fg(color, text),
+			// The floor is CHROME: the web keeps its baseline at `--line-3` and
+			// its gridlines at 5.5% white, never in a series hue.
+			dim: text => opts.fg(PALETTE.dim, text),
 		},
 	);
 }
@@ -963,6 +979,39 @@ function chartShares(chart: ChartSpec, data: PanelData): ReadonlyMap<string, num
 }
 
 /**
+ * A share row's three parts, budgeted so the row always FITS.
+ *
+ * THE DEFECT THIS FIXES. The label column was `min(widestLabel, width / 2)` and
+ * the label was then `padEndTo`'d into it — but `padEndTo` only PADS. A folder
+ * path is 31 cells where the column was 22, so the row came out 53 cells wide in
+ * a 44-cell panel and `clampLine` truncated the tail off. That was invisible
+ * while the bar's track was a run of `░`: the truncation landed on a shade block
+ * and read as a clipped bar. With a blank track the same overflow ends in a
+ * floating `…`, which is the failure D4 exists to forbid — so the label is now
+ * ELLIPSIZED to its column, exactly as `renderRankedBars` does.
+ *
+ * The order of sacrifice is the ranked list's, and it is not a taste call: the
+ * FIGURE is the measurement and is never touched, the BAR shortens first, and
+ * the LABEL — the only part that can be read without losing a quantity — goes
+ * last.
+ */
+function shareRowLayout(
+	labels: readonly string[],
+	readouts: readonly string[],
+	width: number,
+): { labelWidth: number; barWidth: number } {
+	const readoutWidth = Math.max(0, ...readouts.map(visibleWidth));
+	const widestLabel = Math.max(0, ...labels.map(visibleWidth));
+	// Never more than half the row: a label that eats the bar leaves a
+	// magnitude with nothing to compare it against.
+	const labelWidth = Math.max(1, Math.min(widestLabel, Math.floor(width / 2)));
+	// Whatever is left after the label and the figure, and never a full-bleed
+	// bar — see `BAR_TRACK_MAX`.
+	const barWidth = Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - readoutWidth - 2));
+	return { labelWidth, barWidth };
+}
+
+/**
  * One share bar per series: label, bar, and the share the chart published.
  *
  * An item the chart does not publish falls back to its own metric group, so the
@@ -986,8 +1035,7 @@ function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number
 	const fallback = sharesOf(
 		entries.map(entry => ({ label: entry.label, metric: chart.series[entries.indexOf(entry)].metric, value: entry.value })),
 	);
-	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
-	return entries.map(entry => {
+	const resolved = entries.map(entry => {
 		const series = chart.series.find(candidate => candidate.label === entry.label);
 		const share = (series ? published.get(groupKeyOf(series.metric)) : undefined) ??
 			fallback.find(candidate => candidate.label === entry.label)?.share ??
@@ -998,16 +1046,30 @@ function shareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number
 		// formatter printed `1,204,000,000` beside `97.3%` where the web prints
 		// `1.2B` (`OverviewRoute.tsx:233`). `formatValue` routes each series
 		// through `FIELD_FORMAT`, which already knows a token total is compact.
-		const readout = `${formatPercent(share)} ${series ? formatValue(series.metric, entry.value, undefined, opts) : formatInteger(entry.value)}`;
-		const label = padEndTo(entry.label, labelWidth);
-		const bar = renderShareBar(share, {
-			// BOUNDED, like the ranked list's track. `renderShareBar` is a
-			// single-row bar, and a full-bleed one is the same solid block the
-			// ranked chart had.
-			width: Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - visibleWidth(readout) - 2)),
+		return {
+			label: entry.label,
+			share,
+			readout: `${formatPercent(share)} ${series ? formatValue(series.metric, entry.value, undefined, opts) : formatInteger(entry.value)}`,
+		};
+	});
+	const { labelWidth, barWidth } = shareRowLayout(
+		resolved.map(row => row.label),
+		resolved.map(row => row.readout),
+		width,
+	);
+	return resolved.map((row, index) => {
+		const label = `${padEndTo(truncateToWidth(row.label, labelWidth), labelWidth)} `;
+		const bar = renderShareBar(row.share, {
+			width: barWidth,
 			preset: opts.preset,
+			// The web colours every share segment from the series palette
+			// (`ShareBar.tsx:19`, `background: s.color`) and the legend directly
+			// below paints its swatches from the same list. Ours emitted the bar
+			// with NO colour at all, so a key below it wore a hue the bar above it
+			// did not — the legend was describing something the chart never drew.
+			accent: text => opts.fg(seriesHue(opts, index), text),
 		});
-		return clampLine(`${label} ${bar} ${readout}`, width);
+		return clampLine(`${label}${bar} ${row.readout}`, width);
 	});
 }
 
@@ -1021,18 +1083,28 @@ function groupedShareBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width:
 	const entries = foldTo(chart.foldTo, groupedEntries(chart, opts));
 	if (entries.length === 0) return [];
 	const total = entries.reduce((sum, entry) => sum + entry.value, 0);
-	const labelWidth = Math.min(Math.max(...entries.map(entry => entry.label.length)), Math.max(1, Math.floor(width / 2)));
-	return entries.map(entry => {
+	const resolved = entries.map(entry => {
 		const share = total === 0 ? 0 : entry.value / total;
-		const readout = `${formatPercent(share)} ${entryFigure(entry, chart.axis, opts)}`;
-		const label = padEndTo(entry.label, labelWidth);
-		const bar = renderShareBar(share, {
-			// BOUNDED, like the ranked list's track: a share bar is a ranked bar
-			// with one row, and a full-bleed one is the same solid block.
-			width: Math.max(0, Math.min(BAR_TRACK_MAX, width - labelWidth - visibleWidth(readout) - 2)),
+		return { label: entry.label, share, readout: `${formatPercent(share)} ${entryFigure(entry, chart.axis, opts)}` };
+	});
+	const { labelWidth, barWidth } = shareRowLayout(
+		resolved.map(row => row.label),
+		resolved.map(row => row.readout),
+		width,
+	);
+	return resolved.map((row, index) => {
+		// A folder path is 31 cells where the column may be 22, so the label is
+		// ellipsized to its column — see `shareRowLayout`.
+		const label = `${padEndTo(truncateToWidth(row.label, labelWidth), labelWidth)} `;
+		const bar = renderShareBar(row.share, {
+			width: barWidth,
 			preset: opts.preset,
+			// Ranked by value, which is exactly what the web's `buildColorLookup`
+			// does — a hue is assigned by descending weight so the same key keeps
+			// the same hue wherever it appears (`data/colors.ts:42-45`).
+			accent: text => opts.fg(seriesHue(opts, index), text),
 		});
-		return clampLine(`${label} ${bar} ${readout}`, width);
+		return clampLine(`${label}${bar} ${row.readout}`, width);
 	});
 }
 
@@ -1053,8 +1125,12 @@ function rankedBarRows(chart: ChartSpec, opts: ScreenRenderOptions, width: numbe
 	return renderRankedBars(rows, {
 		width,
 		preset: opts.preset,
+		// ONE hue for the whole list, deliberately. `BarList`'s default colour is
+		// `--chart-primary` and its callers pass one colour for every row
+		// (`ProjectsRoute.tsx:133`), because a ranked list compares MAGNITUDES:
+		// a different hue per row would spend the reader's colour attention on
+		// rank, which the bar's own length already states.
 		accent: text => opts.fg(PALETTE.primary, text),
-		dim: text => opts.fg(PALETTE.dim, text),
 	});
 }
 

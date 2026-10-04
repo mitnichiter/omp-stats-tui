@@ -105,10 +105,15 @@ export function renderSparkline(values: readonly number[], opts: SparklineOption
 		max <= 0 ? 0 : Math.max(0, Math.min(7, Math.round((Math.max(0, v) / max) * 7)));
 
 	const preset = opts.preset ?? "unicode";
-	return (
-		glyph(preset, "sparkRamp", 0).repeat(padding) +
-		newest.map((v) => glyph(preset, "sparkRamp", level(v))).join("")
-	);
+	// THE PADDING IS BLANK, NOT THE ZERO RUNG. It used to repeat
+	// `sparkRamp[0]`, which is the very glyph a measured zero draws — so a cell
+	// holding no data and a cell that recorded nothing were the same mark, which
+	// is the exact conflation rule 4 exists to prevent. In the tools table this
+	// read `▁▁▁▂▅▆…`, where nothing said the first three days were absent rather
+	// than quiet. The web's in-cell `Sparkline` has no padding concept at all:
+	// it draws `n` points and the container is whatever width it is
+	// (`Sparkline.tsx:20-38`).
+	return " ".repeat(padding) + newest.map((v) => glyph(preset, "sparkRamp", level(v))).join("");
 }
 
 // ─── Ranked bar list ─────────────────────────────────────────────────────────
@@ -131,8 +136,8 @@ export interface RankedBarsOptions {
 	 */
 	max?: number;
 	preset?: SymbolPreset;
+	/** Data ink: the bar only. The web's BarList paints its fill and nothing else. */
 	accent: (text: string) => string;
-	dim: (text: string) => string;
 }
 
 /**
@@ -194,7 +199,6 @@ export function renderRankedBars(rows: readonly RankedRow[], opts: RankedBarsOpt
 	const width = Math.max(0, Math.floor(opts.width));
 	const preset = opts.preset ?? "unicode";
 	const fill = glyph(preset, "barFill");
-	const blank = glyph(preset, "barEmpty");
 
 	// Descending by rank. An unpriced row ranks by its unpriced REQUEST count
 	// rather than by its zero cost, so a heavily-used model whose spend could not
@@ -253,10 +257,18 @@ export function renderRankedBars(rows: readonly RankedRow[], opts: RankedBarsOpt
 		// and was truncated — the `…` at the right of the burn chart.
 		const readout = padStartTo(readoutFor(row), readoutWidth);
 		const label = keepLabel ? `${padEndTo(ellipsize(row.label, labelWidth), labelWidth)} ` : "";
+		// THE TRACK IS BLANK, NOT A SHADE BLOCK. `dim(barEmpty)` used to fill it,
+		// so a ranked list read `████░░░░░░░░░░░` — a field of texture whose
+		// unfilled part is louder than its filled part. The web's `BarList` has no
+		// track at all: `span.bar-list-fill` is `width: pct%` with no sibling
+		// behind it (`BarList.tsx:26-36`), and the one track on the page is
+		// `.meter`'s `rgba(255,255,255,0.06)` — a background, not a glyph.
+		// The cells are still RESERVED, so the figures stay in one column down
+		// the list and the bars remain directly comparable.
 		const bar =
 			track === 0
 				? ""
-				: `${opts.accent(fill.repeat(filled))}${opts.dim(blank.repeat(track - filled))}${keepLabel ? " " : ""}`;
+				: `${opts.accent(fill.repeat(filled))}${" ".repeat(track - filled)}${keepLabel ? " " : ""}`;
 
 		// One row, clamped to the width it was given. Every part above was
 		// budgeted against the same `width`, so this is a guard rather than a
@@ -281,6 +293,18 @@ function readoutFor(row: RankedRow): string {
 export interface ShareBarOptions {
 	width: number;
 	preset?: SymbolPreset;
+	/**
+	 * Data ink, and it is REQUIRED rather than optional: the web colours every
+	 * share segment from the series palette (`ShareBar.tsx:19`,
+	 * `background: s.color`), and the legend directly beneath this bar paints
+	 * its swatches from the same list (`band.ts`'s `seriesToken`). A share bar
+	 * with no colour was a bar whose key wore a hue the bar itself did not.
+	 *
+	 * It must resolve through `resolveSeries`, never a private list — the two
+	 * have to agree by construction, which is the whole point of a shared
+	 * `SERIES_COLORS`.
+	 */
+	accent: (text: string) => string;
 }
 
 /**
@@ -299,12 +323,21 @@ export interface ShareBarOptions {
  *
  * No eighth-block ramp here: one cell is 1/track of the scale, which is plenty
  * for a share, and eighths would imply resolution this does not have.
+ *
+ * The unfilled track is BLANK. It used to be `barEmpty`, and with the fill
+ * painted in a series colour a 0.0% row read as a solid field of texture that
+ * was louder than the 96.9% row above it. The web's share bar is a set of
+ * segments on `.share-bar`'s `rgba(255,255,255,0.06)` background — a
+ * background, not a glyph — and a zero segment is omitted outright
+ * (`ShareBar.tsx:15`).
  */
 export function renderShareBar(share: number, opts: ShareBarOptions, readout = ""): string {
 	const width = Math.max(0, Math.floor(opts.width));
 	const preset = opts.preset ?? "unicode";
+	// NOTE: `barEmpty` is deliberately NOT fetched here. The floor is a blank
+	// cell, so naming the shade glyph would leave a reader to work out why it
+	// is looked up and discarded // see the divergence note below.
 	const fill = glyph(preset, "barFill");
-	const blank = glyph(preset, "barEmpty");
 
 	// Render the number FIRST, then give the bar what is left. The gap is
 	// reserved and then EMITTED, so the line is exactly `width` cells whenever
@@ -323,5 +356,5 @@ export function renderShareBar(share: number, opts: ShareBarOptions, readout = "
 	// bar has already yielded completely (track === 0) and the number is the
 	// fact — truncating the fact to fit a row that has no bar left to protect
 	// would trade the thing that matters for the thing that does not.
-	return fill.repeat(filled) + blank.repeat(track - filled) + " ".repeat(gap) + readout;
+	return `${opts.accent(fill.repeat(filled))}${" ".repeat(track - filled)}${" ".repeat(gap)}${readout}`;
 }

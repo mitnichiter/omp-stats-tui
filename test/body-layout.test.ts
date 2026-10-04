@@ -210,7 +210,7 @@ test("D2: a ranked bar's track is bounded, so a dominant row is a bar not a wall
 			{ label: "opencode-go", value: 1_045_814_212 },
 			{ label: "google-antigravity", value: 602 },
 		],
-		{ width: 146, accent: t => t, dim: t => t },
+		{ width: 146, accent: t => t },
 	);
 	const widest = Math.max(...rows.map(r => visibleWidth(r)));
 	expect(widest).toBeLessThan(146);
@@ -223,7 +223,7 @@ test("D2: a ranked row carries a label, a bar and exactly one figure", () => {
 			{ label: "opencode-go", value: 1_045_814_212 },
 			{ label: "google-antigravity", value: 602 },
 		],
-		{ width: 146, accent: t => t, dim: t => t },
+		{ width: 146, accent: t => t },
 	);
 	// Each row carries ITS OWN label — the renderer's label column is one width
 	// for the whole list, so every label is padded (or ellipsized) to it — plus a
@@ -248,7 +248,7 @@ test("D2: a ranked list drops its LABEL rather than reducing it to a bare `…`"
 			{ label: "opencode-go", value: 1_045_814_212 },
 			{ label: "google-antigravity", value: 602 },
 		],
-		{ width: 22, accent: t => t, dim: t => t },
+		{ width: 22, accent: t => t },
 	);
 	for (const row of rows) {
 		const stripped = plain(row as string);
@@ -269,7 +269,6 @@ test("D2: ANSI in a bar is not counted as width, so the row is not truncated", (
 		{
 			width: 100,
 			accent: t => `\x1b[38;2;180;120;255m${t}\x1b[39m`,
-			dim: t => `\x1b[38;2;90;90;90m${t}\x1b[39m`,
 		},
 	);
 	for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(100);
@@ -284,7 +283,7 @@ test("D2: every ranked row fits its width, swept 10..200", () => {
 				{ label: "short", value: 0 },
 				{ label: "gpt-5.6-sol", value: 1292.85 },
 			],
-			{ width, accent: t => t, dim: t => t },
+			{ width, accent: t => t },
 		);
 		for (const row of rows) expect(visibleWidth(row), `width ${width}: ${row}`).toBeLessThanOrEqual(width);
 	}
