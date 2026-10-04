@@ -28,6 +28,7 @@ import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { TAB_SHORT, buildTabs, tabBarTheme } from "../src/tui/tabs";
+import { TAB_INK } from "../src/tui/palette";
 import { __testing, panelAction, type PanelAction } from "../src/tui/panel";
 import { MIN_PANEL_ROWS, TAB_ROWS } from "../src/tui/frame";
 import { footerHints, hintsFor, type PanelHint } from "../src/tui/footer";
@@ -42,6 +43,15 @@ const PRESETS: SymbolPreset[] = ["unicode", "nerd", "ascii"];
 
 /** The strip the panel actually builds, reused wherever a width is measured. */
 const TABS = buildTabs("unicode", theme, "overview");
+
+const ESC = String.fromCharCode(27);
+/**
+ * The SGR that OPENS a background run, reset dropped. `theme.bg(c, "")` is
+ * exactly that prefix plus `\x1b[49m`. Compared by prefix because the adapter
+ * wraps the fill INSIDE the foreground, so `bg("selectedBg", "x")` has a reset
+ * between the escape and the x and is not a substring of anything.
+ */
+const band = theme.bg("selectedBg", "").replace(`${ESC}[49m`, "");
 const THEME = tabBarTheme(theme);
 
 // ─── the strip itself ───────────────────────────────────────────────────────
@@ -113,26 +123,47 @@ test("the strip's active tab follows panelAction, and handleInput is never consu
 	}
 });
 
-test("the active tab is a LUMINANCE step, not a hue step", () => {
+test("the strip is a three-level control: quiet options, bright hover, filled active", () => {
 	const style = tabBarTheme(theme);
-	// `selectedBg` + bold against `muted` foreground is a CONTRAST change, which
-	// survives every theme and every colour-blind mode. A hue step between
-	// `accent` and `warning` does not (F23 §1.2).
-	// The active tab must carry the selectedBg escape. Compared by PREFIX: the
-	// adapter wraps the bg INSIDE the fg, so the full bg("selectedBg","x") string
-	// has a reset between the bg and the x and is not a substring.
-	expect(style.activeTab("x")).toContain(theme.bg("selectedBg", "").split("x")[0].replace(/\[49m$/, ""));
-	// `bold` is asserted structurally, not by its output: THIS theme renders no
-	// bold (theme.bold("x") === "x"), so comparing against it would prove nothing.
-	// The contract is that the callback APPLIES it, which is what the source of
-	// tabBarTheme states and what the D-column colour tests in band.test.ts pin.
-	expect(style.inactiveTab("x")).toBe(theme.fg("muted", "x"));
+	// `.segmented-option` is `--ink-3` (styles.css:1083-1096), `:hover` is
+	// `--ink-1` (:1097-1099) and `[data-active]` is `--ink-1` on the `--raised`
+	// thumb (:1101-1103, :1069-1081). Ours drew every inactive segment at
+	// `--ink-2`, which put the whole strip at the same strength as the nav
+	// labels beside it — so twelve tabs read as more body text rather than as
+	// one object with a position in it.
+	expect(style.inactiveTab("x")).toBe(theme.fg(TAB_INK.inactive, "x"));
+	expect(style.hoverTab?.("x")).toBe(theme.fg(TAB_INK.hover, "x"));
+	expect(TAB_INK.inactive).not.toBe(TAB_INK.hover);
+	// The active segment carries the fill. Compared by PREFIX: the adapter wraps
+	// the bg INSIDE the fg, so the full bg("selectedBg","x") string has a reset
+	// between the bg and the x and is not a substring.
+	expect(style.activeTab("x")).toContain(band);
+	// …at `--ink-1`, which is the DEFAULT foreground and therefore emits no
+	// colour escape of its own. Asserted structurally rather than by scanning for
+	// one: there is nothing to scan for, and that is the correct rendering.
+	expect(style.activeTab("x")).toBe(theme.bold(theme.bg("selectedBg", theme.fg(TAB_INK.active, "x"))));
+	// Exactly one segment is filled, which is what makes it a THUMB rather than
+	// a highlight: the three levels must not be three ways of saying "selected".
+	expect(style.inactiveTab("x")).not.toContain(theme.bg("selectedBg", ""));
+	expect(style.hoverTab?.("x")).not.toContain(theme.bg("selectedBg", ""));
+	// …and they are three different strings, not one string with a fill.
+	expect(new Set([style.inactiveTab("x"), style.hoverTab?.("x"), style.activeTab("x")]).size).toBe(3);
 });
 
-test("a muted tab never takes the active highlight", () => {
+test("a muted tab is de-emphasised, not merely dimmed, and never takes the active fill", () => {
 	const style = tabBarTheme(theme);
-	expect(style.mutedTab?.("x")).toBe(theme.fg("dim", "x"));
+	// A muted tab is one the reader should skip, so it sits BELOW the inactive
+	// options rather than beside them — the same ink-4 rung the sidebar's jump
+	// hint uses. A "skipped" tab as loud as an ordinary one communicates nothing.
+	expect(style.mutedTab?.("x")).toBe(theme.fg(TAB_INK.muted, "x"));
+	expect(style.mutedTab?.("x")).not.toBe(style.inactiveTab("x"));
 	expect(style.mutedTab?.("x")).not.toContain(theme.bg("selectedBg", ""));
+});
+
+test("the strip's cycle hint is the faintest run in the control", () => {
+	const style = tabBarTheme(theme);
+	expect(style.hint("x")).toBe(theme.fg(TAB_INK.hint, "x"));
+	expect(style.hint("x")).not.toBe(style.inactiveTab("x"));
 });
 
 // ─── the frame budget ───────────────────────────────────────────────────────
@@ -186,7 +217,7 @@ test("the footer names the keys the panel ACTUALLY binds, and nothing else", () 
 	const cases: readonly (readonly [PanelHint, string])[] = [
 		[{ keys: ["left", "right"], label: "screen" }, "\x1b[D"],
 		[{ keys: ["up", "down"], label: "scroll" }, "\x1b[A"],
-		[{ keys: ["r"], label: "range" }, "r"],
+		[{ keys: ["r", "shift+r"], label: "range" }, "R"],
 		[{ keys: ["s"], label: "sync" }, "s"],
 		[{ keys: ["escape", "q"], label: "close" }, "\x1b"],
 		[{ keys: ["pageUp", "pageDown"], label: "page" }, "\x1b[5~"],

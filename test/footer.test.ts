@@ -53,6 +53,7 @@ const SEQUENCES: Readonly<Record<string, string>> = {
 	tab: "\t",
 	"shift+tab": `${ESC}[Z`,
 	escape: ESC,
+	"shift+r": "R",
 };
 
 /** The plain text one hint contributes to the row. */
@@ -60,21 +61,24 @@ const hintText = (hint: PanelHint): string => `${formatKeyHints(hint.keys)} ${hi
 
 // ─── the hint SET ───────────────────────────────────────────────────────────
 
-test("the primary screen switch is tab, and the arrows are NOT it", () => {
-	// The panel draws a visible tab strip, so the hint row must name the same
-	// verb the strip advertises. Arrows-for-screens would contradict the strip
-	// sitting directly above it.
+test("the primary screen switch is the arrows, because that is what a hand expects", () => {
+	// Defect 2. `tab` switched screens while the footer advertised `←/→`; making
+	// `tab` primary fixed the disagreement in the wrong direction and the user
+	// asked for the arrows back. So the hint names the arrows — and `tab` stays
+	// bound as an alias, because a redundant key is free and a dead one is not.
 	const screen = hintsFor("idle").find(hint => hint.label === "screen");
 	expect(screen).toBeDefined();
-	expect(screen!.keys).toEqual(["tab", "shift+tab"]);
-	expect(screen!.keys).not.toContain("left");
-	expect(screen!.keys).not.toContain("right");
+	expect(screen!.keys).toEqual(["left", "right"]);
 });
 
-test("left/right are the RANGE hint, because the range is the horizontal axis", () => {
+test("the range hint names `r`/`R`, the keys that are literally called range", () => {
+	// With the arrows back on screens, nothing is left over to carry the range —
+	// so it keeps the one pair whose letters already say what they do.
 	const range = hintsFor("idle").find(hint => hint.label === "range");
 	expect(range).toBeDefined();
-	expect(range!.keys).toEqual(["left", "right"]);
+	expect(range!.keys).toEqual(["r", "shift+r"]);
+	expect(range!.keys).not.toContain("left");
+	expect(range!.keys).not.toContain("right");
 });
 
 test("every key any hint names in ANY mode maps to a non-null panelAction", () => {
@@ -135,7 +139,7 @@ test("hintsFor is pure and deterministic, with no shared mutable state", () => {
 	first[0]!.label = "mutated";
 	(first[0]!.keys as string[]).push("f5");
 	expect(hintsFor("idle").map(h => h.label)).toEqual(["screen", "range", "sync", "close"]);
-	expect(hintsFor("idle")[0]!.keys).toEqual(["tab", "shift+tab"]);
+	expect(hintsFor("idle")[0]!.keys).toEqual(["left", "right"]);
 });
 
 // ─── the STYLE ──────────────────────────────────────────────────────────────

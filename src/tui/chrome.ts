@@ -22,7 +22,7 @@
  * the web separates them with `flex: 1` (styles.css:453-455) rather than with
  * a gap. The chip is an enclosed surface (`.live-chip`'s fill, styles.css:1597)
  * and the range control is one container with a single thumb
- * (`.segmented`, styles.css:1062-1081).
+ * (`.segmented`, styles.css:1056-1080).
  *
  * MODES come from `framePolicy` (responsive.ts), never a local width table:
  * wide shows the full grouped sidebar + full topbar, medium/narrow show the
@@ -44,6 +44,7 @@ import { describeSyncProgress, type SyncEvent } from "../sync/client";
 import { formatInteger } from "./format";
 import type { SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
+import { SIDEBAR_INK } from "./palette";
 import { HORIZONTAL_INSET } from "./layout";
 import { framePolicy } from "./responsive";
 import { TAB_ICON, TAB_SHORT, tabBarTheme } from "./tabs";
@@ -83,7 +84,7 @@ function pad(text: string, width: number): string {
  * selected, two spaces otherwise — settings-list.ts:939-940), NOT a leading
  * indent choice; it is what keeps the hover band flush with the text.
  *
- * `SIDEBAR_GAP` is `.nav-row`'s `gap: 10px` (styles.css:526) between the label
+ * `SIDEBAR_GAP` is `.nav-row`'s `gap: 10px` (styles.css:525) between the label
  * column and the jump key — the two cells the web puts between `.nav-row-label`
  * and `kbd` before the key is pushed to the row end.
  *
@@ -262,27 +263,53 @@ export interface Sidebar {
  * returns whatever the active preset binds and that is not always the table
  * entry — `icons.ts` is explicit that the two can disagree.
  *
- * THE JUMP KEY IS THE FAINTEST INK. `.nav-row kbd` is `--ink-4` at 10.5px
- * (styles.css:565-570), one step below even the segment labels, so the hint
- * never competes with the label it annotates. Ours paints it `dim` while the
- * label stays `muted`.
+ * THE LADDER, AND WHERE IT CAME FROM. Every ink below is a NAMED level from
+ * `SIDEBAR_INK` rather than a token chosen here, because choosing at the call
+ * site is how the three headings ended up the same colour: there was no list to
+ * choose FROM. The ladder is `--ink-4` (jump hint) → `--ink-3` (heading, row
+ * icon) → `--ink-2` (row label) → `--ink-1` (selected), with `--accent` on the
+ * active row's ICON — which is exactly the web's own set: `.nav-heading` ink-3
+ * (styles.css:515-520), `.nav-row svg` ink-3 (:552-555), `.nav-row` ink-2
+ * (:522-536), `.nav-row:hover` and `[data-active]` ink-1 (:538-541, :547-550),
+ * `.nav-row[data-active] svg` `--accent` (:557-559), `.nav-row kbd` ink-4
+ * (:565-570). `test/palette.test.ts` pins the ORDER against a real theme,
+ * because two levels one step apart that happen to resolve to the same hex is
+ * the failure mode a token list hides.
  *
- * Host parity, unchanged and still argued here: rows carry the host's 2-column
- * prefix slot (`cursor + space` active, two spaces otherwise —
- * settings-list.ts:939-940); the ACTIVE row is accent text under the cursor,
- * never a selectedBg pill, because the pill belongs to the range control and
- * the tab strip (chrome/shared.ts:21) and a second pill here is a second active
- * style; hover paints the host's `hoverTab` band on a NON-active row and never
- * moves the cursor (settings-list.ts:778, 792-796).
+ * THE ACTIVE ROW IS A FILLED ROW. `.nav-row[data-active="true"]` is
+ * `background: var(--selected); color: var(--ink-1)` (styles.css:547-550) —
+ * the web fills the selected nav row and keeps its label at ink-1. Ours painted
+ * accent TEXT on no fill, which is why the nav read as a list of coloured words
+ * and not as a control with a position in it. The 2-cell cursor prefix stays
+ * (settings-list.ts:939-940): the web separates the two states with background
+ * ALPHA, which a terminal cannot render, so it needs a cue that survives a
+ * monochrome theme.
  *
- * DIVERGENCE (deliberate, unchanged): headings track the ACTIVE GROUP rather
- * than the settings-list dim wash, and headings are padded to the same width as
- * the rows so the whole block is one rectangle. The host dims off-section ROWS
- * in a split pane where rows stay selectable; a dim nav row here reads as
- * disabled, so the group cue lives in the heading instead.
+ * HOVER AND ACTIVE SHARE THE BAND AND THE INK, AND THAT IS FAITHFUL. The web
+ * separates them by background alpha alone — `--hover` at 0.035 against
+ * `--selected` at 0.075 (styles.css:17, :19) — over the same `--ink-1` label.
+ * A terminal has one background token and no alpha, so the terminal has to
+ * spend the distinction somewhere else, and the three cues it uses are the ones
+ * the web already has: the ACCENT ICON, the cursor, and weight. All three are
+ * absent from a hover row (settings-list.ts:778, 792-796), so hover can never
+ * be mistaken for the keyboard position.
+ *
+ * THE ACCENT IS SPENT ONCE, ON THE ICON. css-tokens.md:104 restricts `--accent`
+ * to "the active sidebar item's icon" and the value flash, and the CSS agrees: the
+ * active row's `color` is ink-1 and only its `svg` takes the accent
+ * (styles.css:557-559). The group headings do NOT wear it, and that is the
+ * whole of the reported complaint — when the active heading wore the same hue
+ * as the active row, the heading and the selection were one colour and the
+ * group structure disappeared into it. The active heading steps up to ink-1
+ * instead, which is the web's own selection rule applied to the structure that
+ * contains the selection.
+ *
+ * Off-section ROWS stay at ink-2 rather than being dimmed. The host dims
+ * off-section rows in a split pane where rows stay selectable; here a dimmed
+ * row reads as DISABLED, and the group cue lives in the heading where it can be
+ * read without disabling anything.
  */
 export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, hoveredId?: string | null): Sidebar {
-	const bar = tabBarTheme(theme);
 	const activeGroup = NAV_GROUPS.find(group => group.items.some(item => item.id === activeId));
 	const items = NAV_GROUPS.flatMap(group => group.items);
 	// Measured, not assumed: the preset's icon width is data ink and the host
@@ -293,11 +320,16 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 	const keyWidth = visibleWidth(JUMP_KEY_PREFIX) + 1;
 	const width = PREFIX_WIDTH + iconWidth + 1 + labelWidth + SIDEBAR_GAP + keyWidth;
 
+	/** The `G O` run, always at ink-4 — one step below the label it annotates. */
+	const jump = (key: string): string => theme.fg(SIDEBAR_INK.jumpKey, key);
 	const lines: string[] = [];
 	const tail = " ".repeat(SIDEBAR_GAP);
 	for (const group of NAV_GROUPS) {
-		const head = group === activeGroup ? theme.bold(theme.fg("accent", group.heading)) : theme.fg("muted", group.heading);
-		lines.push(pad(`  ${head}`, width));
+		const heading =
+			group === activeGroup
+				? theme.bold(theme.fg(SIDEBAR_INK.headingActive, group.heading))
+				: theme.fg(SIDEBAR_INK.headingInactive, group.heading);
+		lines.push(pad(`  ${heading}`, width));
 		for (const item of group.items) {
 			// `.nav-row-label { flex: 1 }` ported as a fixed label column plus a
 			// fixed trailing gap, which is what puts all eight jump keys in one
@@ -307,19 +339,38 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 			const key = `${JUMP_KEY_PREFIX}${item.hotkey.toUpperCase()}`;
 			if (item.id === activeId) {
 				// The cursor slot IS the 2-column prefix (settings-list.ts:939-940),
-				// so the active row spends no more prefix than any other row.
+				// so the active row spends no more prefix than any other row. The
+				// `--selected` band is the web's own selected-nav-row fill
+				// (styles.css:547-551), and the jump hint stays INSIDE it because
+				// `.nav-row kbd` is a child of the row (styles.css:565-570).
 				lines.push(
-					theme.fg("accent", `${theme.nav.cursor} `) +
-						theme.fg("accent", theme.bold(`${icon} ${label}`)) +
-						theme.fg("dim", tail + key),
+					theme.bg(
+						"selectedBg",
+						theme.fg(SIDEBAR_INK.rowActive, `${theme.nav.cursor} `) +
+							theme.fg(SIDEBAR_INK.iconActive, theme.bold(icon)) +
+							" " +
+							theme.fg(SIDEBAR_INK.rowActive, theme.bold(label)) +
+							tail +
+							jump(key),
+					),
 				);
 				continue;
 			}
 			if (item.id === hoveredId) {
-				lines.push((bar.hoverTab ?? bar.inactiveTab)(`  ${icon} ${label}${tail}${key}`));
+				// Hover stays unbold and unaccented so it cannot impersonate the
+				// keyboard cursor, and shares the active row's band — see the note
+				// above on how the two states are told apart without alpha.
+				lines.push(
+					theme.bg(
+						"selectedBg",
+						`  ${theme.fg(SIDEBAR_INK.iconInactive, icon)} ${theme.fg(SIDEBAR_INK.rowHover, label)}${tail}${jump(key)}`,
+					),
+				);
 				continue;
 			}
-			lines.push(theme.fg("muted", `  ${icon} ${label}`) + theme.fg("dim", tail + key));
+			lines.push(
+				`  ${theme.fg(SIDEBAR_INK.iconInactive, icon)} ${theme.fg(SIDEBAR_INK.rowInactive, label)}${tail}${jump(key)}`,
+			);
 		}
 	}
 	return { width, lines };
@@ -353,8 +404,8 @@ export interface TopbarOptions {
  *
  * TWO ENCLOSURES, NOT TWO SENTENCES. The scout read off the web's own rule for
  * what makes a control read as a control: `.live-chip` is a filled, bordered,
- * full-pill-radius box (styles.css:1596-1598) and `.segmented` is a filled,
- * bordered box (styles.css:1064-1065), while `.topbar-brand` is naked text
+ * full-pill-radius box (styles.css:1595-1597) and `.segmented` is a filled,
+ * bordered box (styles.css:1063), while `.topbar-brand` is naked text
  * with no enclosure at all. The terminal has no border-radius, so the faithful
  * form of "this is a surface" is a BACKGROUND. Hence: the chip gets
  * `selectedBg`, and the range control's active segment gets the host TabBar's
@@ -362,8 +413,8 @@ export interface TopbarOptions {
  * the same three-way read the web gets.
  *
  * THE RANGE CONTROL IS ONE CONTROL. `.segmented` is a single container with
- * `gap: 0` (styles.css:1062) holding six flush options and one absolutely
- * positioned thumb (styles.css:1069-1081, positioned from `Segmented.tsx:26-44`).
+ * `gap: 0` (styles.css:1061) holding six flush options and one absolutely
+ * positioned thumb (styles.css:1068-1080, positioned from `Segmented.tsx:26-44`).
  * The terminal port keeps the two things that survive without geometry: a
  * uniform inactive style on every segment (`inactiveTab`, chrome/shared.ts:22)
  * and exactly one `activeTab` pill, with the segments packed flush so the run

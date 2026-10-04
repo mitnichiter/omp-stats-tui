@@ -213,8 +213,8 @@ test("every key the panel advertises maps to an action, and nothing else does", 
 		[PGDN, { type: "scroll", viewport: 1 }],
 		[HOME, { type: "scrollTo", edge: "top" }],
 		[END, { type: "scrollTo", edge: "bottom" }],
-		[LEFT, { type: "range", by: -1 }],
-		[RIGHT, { type: "range", by: 1 }],
+		[LEFT, { type: "screen", by: -1 }],
+		[RIGHT, { type: "screen", by: 1 }],
 		[TAB, { type: "screen", by: 1 }],
 		[SHIFT_TAB, { type: "screen", by: -1 }],
 		["1", { type: "screenIndex", index: 0 }],
@@ -248,42 +248,44 @@ test("tab switches screens everywhere — the fallthrough rule is closed as cont
 	expect(panelAction(SHIFT_TAB)).toEqual({ type: "screen", by: -1 });
 });
 
-test("tab is THE screen switch; the arrows belong to the horizontal range control", () => {
-	// Defect 1, decided once.
+test("the arrows are THE screen switch; `tab` is the alias and `r`/`R` keeps the range", () => {
+	// Defect 2, decided twice, and the second decision is this one.
 	//
-	// `tab` already switched screens, but the footer advertised `←/→`, so the
-	// advertised key and the idiomatic key disagreed — and the arrows collided
-	// with horizontal-scroll expectation on a panel whose body scrolls
-	// vertically only.
+	// `tab` was already switching screens while the footer advertised `←/→`. The
+	// first fix made `tab` primary and handed the arrows to the range control, on
+	// the reasoning that the arrows "belong to the horizontal thing". The user read
+	// the result and asked for the arrows back — and they are right. This is a
+	// SCREEN-SWITCHING panel, `←/→` is what a reader's hand already does on every
+	// dashboard they have ever used, and the range is reachable by a key named
+	// after it. A keymap that makes someone learn where `tab` went is not more
+	// correct than the one they came from.
 	//
-	// So: `tab`/`shift+tab` is the primary, advertised screen switch (it is what
-	// every host overlay uses for "next tab" — settings-selector.ts:122, :138).
-	// The arrows are NOT dropped, because a dead key is worse than a repurposed
-	// one; they take the one genuinely horizontal thing on screen, the range
-	// control, which is drawn horizontally in the topbar. That makes the arrows
-	// mean what a user pressing them expects of a horizontal control, and it
-	// frees `tab` to be unambiguous.
-	expect(panelAction(TAB)).toEqual({ type: "screen", by: 1 });
-	expect(panelAction(SHIFT_TAB)).toEqual({ type: "screen", by: -1 });
-	expect(panelAction(LEFT)).toEqual({ type: "range", by: -1 });
-	expect(panelAction(RIGHT)).toEqual({ type: "range", by: 1 });
-	// The arrows and `r`/`R` are ALIASES for one target, exactly as digits and
-	// `g`-letters already are for screens (see chrome.ts's KEYMAP DECISION).
-	expect(panelAction(RIGHT)).toEqual(panelAction("r"));
-	expect(panelAction(LEFT)).toEqual(panelAction("R"));
+	// So: `←`/`→` switch screens, `tab`/`shift+tab` stay as an ALIAS (a dead key is
+	// worse than a redundant one), and the range keeps `r`/`R`.
+	expect(panelAction(LEFT)).toEqual({ type: "screen", by: -1 });
+	expect(panelAction(RIGHT)).toEqual({ type: "screen", by: 1 });
+	// `tab` is an alias for the same target, not a second verb — exactly the
+	// relationship digits and `g`-letters already have for screens.
+	expect(panelAction(TAB)).toEqual(panelAction(RIGHT));
+	expect(panelAction(SHIFT_TAB)).toEqual(panelAction(LEFT));
+	// The range is on the key that names it, and ONLY there: no arrow is left
+	// over to carry it, so no key in the map means two different things.
+	expect(panelAction("r")).toEqual({ type: "range", by: 1 });
+	expect(panelAction("R")).toEqual({ type: "range", by: -1 });
 });
 
-test("the footer names the real primary switch, so it never implies the arrows switch screens", async () => {
-	// The brief's acceptance in one assertion: the hint row must name `tab` as
-	// the screen switch and must NOT pair the arrows with "screen". A footer
-	// that advertised the arrows while tab was the real switch IS the defect.
+test("the footer advertises the arrows for screens, because that is what they do", async () => {
+	// The brief's acceptance in one assertion: the hint row must pair `←/→` with
+	// "screen". A footer that advertises arrows while they change the range is
+	// the defect this revert removes.
 	const panel = makePanel({ data: dataFor() });
 	await __testing.settled(panel);
 	const frame = panel.render(100);
 	const footer = stripAnsi(frame[frame.length - 2]!);
 	expect(footer).toContain("screen");
 	expect(footer).toContain("range");
-	expect(footer).not.toMatch(/←\/→\s*screen/);
+	expect(footer).toMatch(/←\/→\s*screen/);
+	expect(footer).not.toMatch(/←\/→\s*range/);
 	// Every key the footer prints is bound: round-trip each hint key through
 	// the panel's own keymap so a hint can never name a dead key.
 	for (const hint of hintsFor("idle")) {
@@ -306,6 +308,7 @@ function rawKeySequence(key: string): string {
 		end: END,
 		escape: "\x1b",
 		tab: TAB,
+		"shift+r": "R",
 		"shift+tab": SHIFT_TAB,
 	};
 	return sequences[key] ?? key;

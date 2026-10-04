@@ -36,6 +36,7 @@ export type PaletteRole =
 	| "meta"
 	| "muted"
 	| "dim"
+	| "faint"
 	| "heat0"
 	| "heat1"
 	| "heat2"
@@ -43,64 +44,112 @@ export type PaletteRole =
 /**
  * Role → theme token.
  *
- * Each entry cites the colour role it stands in for, taken from the omp stats
- * web dashboard's own CSS custom properties (`client/styles.css`:
- * `--accent`, `--ok`, `--warn`, and its error colour) or from the equivalent
- * role in the TUI's `/usage` dashboard.
+ * Every role here stands in for a colour the web dashboard ACTUALLY paints, and
+ * {@link PALETTE_TOKENS} names the CSS custom property and the line it was
+ * declared on. That table is not documentation — `test/palette.test.ts` fails if
+ * a role has no citation or if a citation names neither a `--token` nor a
+ * `file:line`, because a role nobody can trace to a web rule is one that can
+ * never be re-derived when the web moves.
  */
 export const PALETTE = {
 	/**
-	 * `accent` — the one number a screen is about. Matches `--accent` in the web
-	 * dashboard, and `theme.fg("accent", …)` in `/usage`'s Activity heading
-	 * (`usage-dashboard.ts:847`), so the TUI and web views agree on what the
-	 * important number looks like.
+	 * `accent` — the one number a screen is about. `--accent`
+	 * (styles.css:36). Reserved: css-tokens.md:104 restricts it to "the active
+	 * sidebar item's icon" and the value flash, and says in as many words that a
+	 * terminal must not use it as "the chart colour". It is spent sparingly here
+	 * for the same reason — an accent on everything is an accent on nothing.
 	 */
 	primary: "accent",
 
 	/**
-	 * `error` — errors, failures and unpriced rows. The web dashboard paints
-	 * failures with its error colour; omp already routes tool failures and error
-	 * text through `theme.fg("error", …)`, so a failed request looks the same here
-	 * as it does in a transcript.
+	 * `error` — errors, failures and unpriced rows. `--bad` (styles.css:47).
+	 * omp already routes tool failures through `theme.fg("error", …)`, so a
+	 * failed request looks the same here as it does in a transcript.
 	 */
 	negative: "error",
 
 	/**
-	 * `success` — savings and successes. The web dashboard's `--ok`
-	 * (`#3ecf8e` dark / `#12a36b` light). Distinct from `warning`, so a saving
-	 * never reads as a caution.
+	 * `success` — savings and successes. `--ok` (styles.css:43). Distinct from
+	 * `warning`, so a saving never reads as a caution.
 	 */
 	positive: "success",
 
 	/**
-	 * `warning` — the pressured state: a meter pinned at its column maximum,
-	 * a quota near exhaustion. `/usage`'s `#statusColor` returns `warning`
-	 * for exactly this state (usage-dashboard.ts:617-621); naming it keeps
-	 * tables from hardcoding the token.
+	 * `warning` — the pressured state: a meter pinned at its column maximum, a
+	 * quota near exhaustion. `--warn` (styles.css:45); `/usage`'s `#statusColor`
+	 * returns `warning` for exactly this state (usage-dashboard.ts:617-621).
 	 */
 	caution: "warning",
 
-	/** `mdHeading` — screen titles. Matches markdown headings in chat, so a
-	 * titled stats screen reads as a heading by the same visual rule. */
-	heading: "mdHeading",
+	/**
+	 * `text` — screen and band TITLES. FIXED: this was `mdHeading`, which in
+	 * omp's default dark theme resolves to `#febc38` — byte-identical to
+	 * `accent` — so every title wore the hue css-tokens.md:104 reserves for the
+	 * one number a screen is about, and a title stopped reading as a title.
+	 *
+	 * The web's headings are body ink, not a colour. `.page-title` declares
+	 * 22px @600 and NO colour (styles.css:678-683) and `.card-title` declares
+	 * 14px @550 and no colour (styles.css:770-777): both INHERIT `--ink-1` from
+	 * `body` (styles.css:160). WEIGHT carries the emphasis, and the ink is
+	 * simply the top of the ramp. A terminal's weight is a binary, so the INK has
+	 * to carry the rank too — and ink-1 is that top rung.
+	 */
+	heading: "text",
 
-	/** `text` — ordinary labels beside values. The default body colour, so a
-	 * label is never dimmer than the number it describes. */
+	/**
+	 * `text` — the value ink: the number a stat is about. `.stat-value`
+	 * (styles.css:848-857) declares 24px @550 and no colour, inheriting
+	 * `--ink-1` from `body` (styles.css:160).
+	 *
+	 * Same token as `heading`, on purpose. `.card-title` and `.stat-value` are
+	 * both `--ink-1` on the web; they are told apart by SIZE, and a terminal row
+	 * already tells them apart by position. Inventing a fifth ink here to make
+	 * the map look busier would break the correspondence it exists to keep.
+	 */
 	label: "text",
 
-	/** `muted` — secondary metadata: timestamps, "since", units. Present but
-	 * deliberately not competing with the data. */
-	meta: "muted",
+	/**
+	 * `dim` — secondary metadata: timestamps, "since", units, a table's meta
+	 * column. FIXED: this was `muted` (`--ink-2`), one step TOO STRONG.
+	 *
+	 * Every piece of web metadata is `--ink-3`: `.stat-foot` (styles.css:867-874),
+	 * `.table th` (styles.css:1269-1282), `.micro` (styles.css:267-273) and
+	 * `.cell-secondary` (css-tokens.md:71, which lists them as the `ink-3`
+	 * workhorses). Metadata drawn at label strength is metadata the eye reads as
+	 * content — which is the whole reason the web keeps a separate rung for it.
+	 */
+	meta: "dim",
 
-	/** `muted` — chrome that should recede entirely (empty states, separators).
-	 * Same token as `meta` on purpose: the distinction a designer would draw here
-	 * is not one a user can see at terminal font sizes, and two names for one
-	 * colour invites them to drift apart. */
+	/**
+	 * `muted` — the label ink: a stat's label beside its value, a legend, muted
+	 * secondary text. `--ink-2` (styles.css:28), which css-tokens.md:77 records
+	 * as "stat labels, legends, muted secondary".
+	 *
+	 * This is the INK-2 rung and no more. The earlier comment here claimed it was
+	 * "chrome that should recede entirely", which was not true of `--ink-2` and
+	 * was the reason the nav looked flat: an off-section row dimmed to ink-3
+	 * reads as DISABLED, so the group cue had nowhere to live but the heading.
+	 */
 	muted: "muted",
 
-	/** `dim` — the quietest ink: hints, "no data", axis labels. Below `muted` so a
-	 * hint is never mistaken for content. */
+	/**
+	 * `dim` — structure and hints: table headings, empty states, axis labels.
+	 * `--ink-3` (styles.css:29), and `--chart-axis` is `#5c5c64`, dimmer still
+	 * (styles.css:53).
+	 */
 	dim: "dim",
+
+	/**
+	 * `borderMuted` — the FAINTEST ink, one full step below `dim`. ADDED.
+	 *
+	 * The web has four inks and this ladder had three, so "the faintest thing on
+	 * screen" had no name and every caller reached for `dim` instead. The
+	 * consumer that needed it is `.nav-row kbd` (styles.css:565-570): a jump
+	 * hint at `--ink-4` against a `--ink-2` label. `borderMuted` resolves to
+	 * `#3d424a` in omp's default theme, one step under `dim`'s `#5f6673` — the
+	 * same relative step the web takes from `#6c6c74` to `#46464c`.
+	 */
+	faint: "borderMuted",
 
 	/**
 	 * Heatmap ladder, `heat0` (least) → `heat3` (most). These tokens are the
@@ -109,12 +158,221 @@ export const PALETTE = {
 	 * `/usage` does. They exist so a level always resolves to a valid token even
 	 * on a theme where the ramp collapses, and so screens can name a level
 	 * without hardcoding an index.
+	 *
+	 * FIXED: `heat1` was `borderAccent` and `heat2` was `mdLink`, two different
+	 * tokens that BOTH resolve to `#0088fa` in omp's default theme — so levels 1
+	 * and 2 painted the identical colour and the middle of the ramp was
+	 * invisible. The ladder is now monotonic in luma and roughly geometric
+	 * (`#3d424a` → `#5f6673` → `#178fb9` → `#febc38`, luma .06/.13/.30/.62),
+	 * mirroring the geometric alpha ladder the web uses for its hairlines
+	 * (css-tokens.md:65: 0.06 / 0.09 / 0.14 / 0.22).
 	 */
 	heat0: "borderMuted",
-	heat1: "borderAccent",
-	heat2: "mdLink",
+	heat1: "dim",
+	heat2: "border",
 	heat3: "accent",
 } as const satisfies Record<PaletteRole, ThemeColor>;
+
+/**
+ * What each {@link PaletteRole} matches in the web dashboard, as `--token` plus
+ * the declaration site it was read from.
+ *
+ * Machine-checked by `test/palette.test.ts`: every role needs an entry, and
+ * every entry must name a CSS custom property AND a `file:line`. This is the
+ * acceptance criterion "each palette change cites the web token it now matches"
+ * turned into something that fails rather than something that is promised.
+ */
+export const PALETTE_TOKENS = {
+	primary: "--accent · `styles.css:36`",
+	negative: "--bad · `styles.css:47`",
+	positive: "--ok · `styles.css:43`",
+	caution: "--warn · `styles.css:45`",
+	// `heading` and `label` cite `body` (styles.css:160), not `.page-title` or
+	// `.stat-value`: neither of those rules declares a colour at all, both
+	// INHERIT ink-1. Citing the rules that do not declare the colour is how a
+	// citation stops meaning anything.
+	heading: "--ink-1 · `styles.css:160`",
+	label: "--ink-1 · `styles.css:160`",
+	meta: "--ink-3 · `styles.css:867`",
+	muted: "--ink-2 · `styles.css:28`",
+	dim: "--ink-3 · `styles.css:29`",
+	faint: "--ink-4 · `styles.css:30`",
+	// The web has NO heatmap — the ramp is `/usage`'s (usage-dashboard.ts:812).
+	// So these four name the web INK each rung is nearest to, not a rule it was
+	// lifted from: a hairline, the axis ink (dimmer than ink-3, and our `dim`
+	// resolves within three points of it), the chart primary, and the accent.
+	heat0: "--line-1 · `styles.css:22`",
+	heat1: "--chart-axis · `styles.css:53`",
+	heat2: "--accent-a · `styles.css:34`",
+	heat3: "--accent · `styles.css:36`",
+} as const satisfies Record<PaletteRole, string>;
+
+// ---------------------------------------------------------------------------
+// THE NAVIGATION LADDER
+
+/**
+ * Every ink the sidebar and the tab strip draw with, as a NAMED level rather
+ * than as a token chosen at the call site.
+ *
+ * The reported defect was "the group headings are all the same colour", and
+ * the cause was not one bad pick — it was that there was no LADDER to pick
+ * from. `chrome.ts` reached for `accent`, `muted` and `dim` directly, so the
+ * heading, the active row, the inactive row and the jump hint all landed inside
+ * one ink step and the block read as a list of words rather than a control.
+ *
+ * Naming the levels makes the ladder a thing tests can assert on, and makes the
+ * four levels distinguishable by COLOUR rather than only by cursor glyph and
+ * bold — which is the only way the hierarchy survives a terminal that renders
+ * no bold at all.
+ */
+export type SidebarInkRole =
+	| "headingActive"
+	| "headingInactive"
+	| "rowActive"
+	| "rowHover"
+	| "rowInactive"
+	| "iconActive"
+	| "iconInactive"
+	| "jumpKey";
+
+export const SIDEBAR_INK = {
+	/**
+	 * `text` (`--ink-1`) — the heading of the group you are IN.
+	 *
+	 * `.nav-heading` is `--ink-3` @500 for EVERY group (styles.css:515-520); the
+	 * web has no "active group". Stepping the containing heading up one ink is
+	 * OURS, and it borrows the web's own rule for selection rather than
+	 * inventing one — `.nav-row` goes `--ink-2` → `--ink-1` when selected
+	 * (styles.css:522-536, :547-551).
+	 *
+	 * It is deliberately NOT `accent`. That was the previous behaviour, and it
+	 * is what made the nav flat: the active heading and the active ROW then wore
+	 * the same hue, so the heading stopped being structure and became a second
+	 * selection marker.
+	 */
+	headingActive: "text",
+
+/** `dim` (`--ink-3`) — every other group's heading. `.nav-heading` (styles.css:515-520). */
+	headingInactive: "dim",
+
+	/**
+	 * `text` (`--ink-1`) — the active row's label. `.nav-row[data-active="true"]`
+	 * is `background: var(--selected); color: var(--ink-1)`
+	 * (styles.css:547-550).
+	 *
+	 * CORRECTED. This was `accent`, on a reading of the css-tokens.md:97 table cell,
+	 * which says `--accent` is "the active nav item's icon and text accent". That
+	 * cell is wrong about the web — the doc's own prose at css-tokens.md:104 says
+	 * "the active sidebar item's ICON and the value flash animation", and the
+	 * CSS agrees — the active row's `color` is ink-1 and the accent appears only
+	 * on `svg` (styles.css:557-559). So the accent is spent in exactly ONE place
+	 * in the whole sidebar, the active row's icon, and the label is ink-1 like
+	 * every other thing the reader has selected.
+	 */
+	rowActive: "text",
+
+	/**
+	 * `text` (`--ink-1`) — a hovered row. `.nav-row:hover` is
+	 * `background: var(--hover); color: var(--ink-1)` (styles.css:538-541).
+	 *
+	 * Hover and active share this ink AND the same band, because the web spends
+	 * `--hover` (0.035 alpha) versus `--selected` (0.075) on the BACKGROUND to
+	 * separate two states that are otherwise both ink-1, and a terminal has one
+	 * background token and no alpha. The two are told apart by the accent icon,
+	 * the cursor and the weight instead — and every one of those survives a theme
+	 * that renders no bold, because the icon does.
+	 */
+	rowHover: "text",
+
+	/** `muted` (`--ink-2`) — an ordinary row. `.nav-row` (styles.css:522-536). */
+	rowInactive: "muted",
+
+	/** `accent` (`--accent`) — the active row's icon. `.nav-row[data-active] svg` (styles.css:557-559). */
+	iconActive: "accent",
+
+	/**
+	 * `dim` (`--ink-3`) — every other row's icon. `.nav-row svg` (styles.css:552-555).
+	 * One step below its own label, so the icon reads as chrome FOR the label
+	 * rather than as a second label.
+	 */
+	iconInactive: "dim",
+
+	/**
+	 * `borderMuted` (`--ink-4`) — the `G O` jump hint. `.nav-row kbd` is
+	 * `--ink-4` at 10.5px against a `--ink-2` row (styles.css:565-570): one full
+	 * ink below its label, and the faintest thing in the nav.
+	 */
+	jumpKey: "borderMuted",
+} as const satisfies Record<SidebarInkRole, ThemeColor>;
+
+export type TabInkRole = "active" | "hover" | "inactive" | "muted" | "hint";
+
+/**
+ * The tab strip's inks, mirroring `.segmented` — the web's own treatment of
+ * "a row of options with one of them selected".
+ *
+ * This matters because the strip is the panel's largest piece of chrome: at
+ * twelve tabs it is more line than any band. Drawing every inactive segment at
+ * `--ink-2` put the strip at the same strength as the nav labels beside it, and
+ * a strip that reads as body text is not a control. At `--ink-3` options against
+ * one `--ink-1` thumb it reads as ONE object with a position in it.
+ */
+export const TAB_INK = {
+	/** `text` (`--ink-1`) — the selected segment, on the `--raised` thumb. `.segmented-option[data-active]` (styles.css:1100-1102, :1068-1080). */
+	active: "text",
+	/** `text` (`--ink-1`) — a hovered segment. `.segmented-option:hover` (styles.css:1096-1098). */
+	hover: "text",
+	/** `dim` (`--ink-3`) — every ordinary segment. `.segmented-option` (styles.css:1082-1094). */
+	inactive: "dim",
+	/**
+	 * `borderMuted` (`--ink-4`) — a segment the reader should skip. There is no
+	 * web equivalent: `.segmented` has no disabled state, and the dashboard's
+	 * only "disabled" styling is an `opacity` on `.btn` (styles.css:936-938).
+	 * So this is the web's FAINTEST INK (`--ink-4`, styles.css:30 — the rung
+	 * css-tokens.md:79 assigns to disabled text and placeholders) used for the
+	 * same reason. A "skipped" tab as loud as an ordinary one says nothing.
+	 */
+	muted: "borderMuted",
+	/**
+	 * `borderMuted` (`--ink-4`) — the strip's own cycle hint. Also OURS: the
+	 * web has no cycle hint, because a browser tab strip has no keyboard. It is
+	 * the faintest ink so it never competes with the twelve options it describes.
+	 */
+	hint: "borderMuted",
+} as const satisfies Record<TabInkRole, ThemeColor>;
+
+/**
+ * What each nav level matches in the web dashboard. Same contract as
+ * {@link PALETTE_TOKENS} — a level with no web rule behind it is a level that
+ * will drift.
+ */
+export const NAV_TOKENS = {
+	// The active group's heading has NO web rule — `.nav-heading` is ink-3 for
+	// every group and there is no `[data-active]` variant. The step up to ink-1
+	// is ours, borrowing the web's own "you are here = ink-1" from
+	// `.nav-row[data-active]` (styles.css:547-550), and it is cited there
+	// rather than to `.nav-heading` so the table does not imply a rule that
+	// does not exist.
+	headingActive: "--ink-1 · `styles.css:547`",
+	headingInactive: "--ink-3 · `styles.css:515`",
+	rowActive: "--ink-1 · `styles.css:547`",
+	rowHover: "--ink-1 · `styles.css:538`",
+	rowInactive: "--ink-2 · `styles.css:522`",
+	iconActive: "--accent · `styles.css:557`",
+	iconInactive: "--ink-3 · `styles.css:552`",
+	jumpKey: "--ink-4 · `styles.css:565`",
+} as const satisfies Record<SidebarInkRole, string>;
+
+export const TAB_TOKENS = {
+	active: "--ink-1 · `styles.css:1100`",
+	hover: "--ink-1 · `styles.css:1096`",
+	inactive: "--ink-3 · `styles.css:1082`",
+	// `muted` and `hint` are OURS — `.segmented` has no disabled state and the
+	// dashboard has no cycle hint — so they cite the INK they use, not a rule
+	// they were lifted from. See the two JSDoc blocks on TAB_INK.
+	muted: "--ink-4 · `styles.css:30`",
+	hint: "--ink-4 · `styles.css:30`",
+} as const satisfies Record<TabInkRole, string>;
 
 /**
  * Categorical series colours, in preference order.

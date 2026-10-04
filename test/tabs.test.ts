@@ -20,6 +20,7 @@ import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { STATS_ICONS } from "../src/tui/icons";
 import { TAB_BAR_INDENT, TAB_SHORT, buildTabs, tabBarTheme } from "../src/tui/tabs";
+import { TAB_INK } from "../src/tui/palette";
 
 const PRESETS: readonly SymbolPreset[] = ["unicode", "nerd", "ascii"];
 
@@ -185,14 +186,16 @@ describe("strip geometry", () => {
 });
 
 describe("tabBarTheme", () => {
-	test("closes over the injected theme: bg for active, fg(muted) for inactive", () => {
+	test("closes over the injected theme: bg for active, fg(TAB_INK.inactive) for inactive", () => {
 		const { calls, theme } = stubTheme();
 		const bar = tabBarTheme(theme);
 		bar.activeTab("x");
 		bar.inactiveTab("y");
 		expect(calls.some(c => c.fn === "bg")).toBe(true);
 		expect(calls.filter(c => c.fn === "bg")[0]!.token).toBe("selectedBg");
-		expect(calls.filter(c => c.fn === "fg" && c.token === "muted")).toHaveLength(1);
+		// The token, not a literal: an inactive segment is `--ink-3` in the web
+		// (styles.css:1083-1096), which is `dim` in this theme.
+		expect(calls.filter(c => c.fn === "fg" && c.token === TAB_INK.inactive)).toHaveLength(1);
 	});
 
 	test("active tab differs from inactive by a LUMINANCE step, not a hue step", () => {

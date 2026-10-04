@@ -228,34 +228,43 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
 /**
- * THE KEYMAP DECISION, stated once so it never goes ambiguous again.
+ * THE KEYMAP DECISION, stated once so it never goes ambiguous again — INCLUDING
+ * the time it was got wrong, because a silent revert teaches the next reader
+ * nothing.
  *
- * `tab` was already switching screens, but the FOOTER advertised `←/→` for it.
- * So the advertised key and the idiomatic key disagreed, and the arrows
- * collided with horizontal-scroll expectation on a panel whose body scrolls
- * vertically only. A footer that teaches the wrong key is worse than no footer.
+ * THE ARROWS SWITCH SCREENS. That is the decision. It has been made twice and
+ * this is the second time.
  *
- * `tab` switches screens everywhere. F23 §1.4 argued `tab` should fall through
- * only when a screen had ≤ 1 band, reserving it for landmark jumping; F23's
- * own key table in the same section lists `tab` → "next screen" in BOTH rows,
- * and closer to the point, this panel has no landmark-focus model at all: no
- * `landmark` action, no section-focus state, no jump to reserve `tab` for. A
- * key "reserved" for a jump that does not exist is a dead key. `tab` is also
- * what every host overlay already uses for "next tab"
- * (settings-selector.ts:122, :138), so it is the advertised primary.
+ * FIRST DECISION (reverted). `tab` was already switching screens while the
+ * FOOTER advertised `←/→`, so the advertised key and the idiomatic key
+ * disagreed. That was fixed by making `tab` the advertised primary and handing
+ * the arrows to the range control, on the reasoning that "the arrows belong to
+ * the one genuinely horizontal thing on screen".
  *
- * THE ARROWS ARE NOT DROPPED — a dead key is worse than a repurposed one. They
- * take the one genuinely HORIZONTAL thing on screen: the range control, which
- * is drawn left-to-right in the topbar (`Shell.tsx:78`, `.segmented` at
- * styles.css:1057). `→` steps toward the wider window and `←` toward the
- * narrower one, matching the visual order of the segments and matching the
- * web's own range ordering. They are ALIASES for `r`/`R`, exactly as digits
- * and `g`-letters are aliases for each other, so nothing that worked before
- * stops working — only the meaning of two keys changed, and it changed to the
- * one thing on screen that is horizontal.
+ * WHY THAT WAS WRONG. The reasoning was sound and the conclusion was not. This
+ * panel is a SCREEN-SWITCHING panel: a tab strip runs across the top, a nav
+ * column runs down the side, and the one thing a reader does here is move
+ * between screens. `←/→` is what a hand already does on every dashboard anyone
+ * has ever used, and the cost of the swap was that someone arriving at this
+ * panel had to LEARN where `tab` went. Trading a key every reader already knows
+ * for one they have to be told about is not a net gain, whatever the argument
+ * for it was. The user read the result and asked for the arrows back.
  *
- * Should a real landmark model ever land, THAT is the commit that reclaims
- * `tab`, and it reclaims it by adding an action, not by re-reading this mapping.
+ * SO: `←`/`→` are the primary, advertised screen switch. `tab`/`shift+tab` stay
+ * bound as an ALIAS, because a redundant key costs nothing and a dead key costs
+ * the reader a keystroke — the same relationship digits and `g`-letters already
+ * have for screens (see chrome.ts's KEYMAP DECISION). No key in this map means
+ * two different things.
+ *
+ * THE RANGE KEEPS `r`/`R`. Nothing is left over to carry it, so it keeps the
+ * pair whose letters already say what they do — and that was true before the
+ * revert as well, which is the other half of why the revert costs nothing.
+ *
+ * WHAT WOULD CHANGE THIS AGAIN. A landmark-focus model would give `tab` a
+ * second job, and that is the commit that reclaims it — by ADDING an action, not
+ * by re-reading this mapping. Until such a model exists there is nothing for
+ * `tab` to be reserved FOR, and a key reserved for a jump that does not exist
+ * is a dead key.
  */
 
 
@@ -282,15 +291,17 @@ export function panelAction(data: string, jumpArmed = false): PanelAction | null
 	}
 	if (matchesSelectCancel(data) || matchesKey(data, "q")) return { type: "close" };
 	if (data === "g" || data === "G") return { type: "armJump" };
-	// The RANGE cluster: `←`/`→` drive the horizontal range control in the
-	// topbar, and `r`/`R` are the mnemonic aliases for the same two steps. See
-	// THE KEYMAP DECISION above for why the arrows left the screen switch.
-	if (matchesKey(data, "left") || matchesKey(data, "shift+r")) return { type: "range", by: -1 };
-	if (matchesKey(data, "right") || matchesKey(data, "r")) return { type: "range", by: 1 };
+	// The SCREEN switch: arrows first, because that is what the footer
+	// advertises and what a reader's hand already does. `tab`/`shift+tab` are
+	// an alias for the same target, not a second verb. See THE KEYMAP DECISION.
+	if (matchesKey(data, "left") || matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
+	if (matchesKey(data, "right") || matchesKey(data, "tab")) return { type: "screen", by: 1 };
+	// The RANGE cluster, on the keys that are called range. Nothing is left over
+	// to carry it after the arrows went back to screens, which is the point: no
+	// key in this map means two things.
+	if (matchesKey(data, "shift+r")) return { type: "range", by: -1 };
+	if (matchesKey(data, "r")) return { type: "range", by: 1 };
 	if (matchesKey(data, "s")) return { type: "sync" };
-	// The SCREEN switch, tab first because it is what the footer advertises.
-	if (matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
-	if (matchesKey(data, "tab")) return { type: "screen", by: 1 };
 	const digit = DIGITS.indexOf(data);
 	if (digit !== -1) return { type: "screenIndex", index: digit };
 	if (matchesSelectUp(data)) return { type: "scroll", rows: -1 };

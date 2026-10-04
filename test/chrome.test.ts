@@ -43,6 +43,7 @@ import {
 	sidebar,
 	topbar,
 } from "../src/tui/chrome";
+import { SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
 import { __testing } from "../src/tui/panel";
 import type { SyncEvent } from "../src/sync/client";
 import { liveData } from "./fixtures/panel";
@@ -54,6 +55,65 @@ const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const _bg = theme.bg("selectedBg", "").split("x")[0] ?? "";
 const ESC = String.fromCharCode(27);
 const ACTIVE_BG = _bg.endsWith(ESC + "[49m") ? _bg.slice(0, -(ESC + "[49m").length) : _bg;
+
+const SGR = /\x1b\[([0-9;]*)m/g;
+const DEFAULT_FG = theme.getColorHex("text").toLowerCase();
+
+/**
+ * The EFFECTIVE foreground colour of every visible run in `line`, in order,
+ * resolved the way a terminal resolves it rather than by scanning for the
+ * escapes we happened to write.
+ *
+ * This exists because the escape-based approach cannot see the `text` token at
+ * all: `text` IS the terminal's default foreground, so `theme.fg("text", …)`
+ * emits NO colour SGR at all. A test looking for `\x1b[38;2;…` would therefore
+ * report the ink-1 heading as "has no colour", which is exactly backwards — and
+ * it is why `SIDEBAR_INK.headingActive` is `text`: the web's `--ink-1` IS the
+ * default text colour, so the faithful terminal rendering of it is no escape.
+ *
+ * Each SGR is applied to a running foreground state; the gaps between SGRs that
+ * contain visible characters become entries. Background and weight sequences
+ * leave the foreground alone.
+ */
+const inksIn = (line: string): string[] => {
+	const runs: string[] = [];
+	let current = DEFAULT_FG;
+	let cursor = 0;
+	for (const match of line.matchAll(SGR)) {
+		if (line.slice(cursor, match.index).trim() !== "") runs.push(current);
+		const params = match[1] ?? "";
+		if (params === "39") current = DEFAULT_FG;
+		else if (params.startsWith("38;2;")) {
+			// `"38;2;"` is FIVE characters — slice(6) silently drops the red
+			// channel's first digit and every colour comes back wrong.
+			const [r, g, b] = params.slice(5).split(";").map(Number);
+			current = `#${[r, g, b].map(v => (v ?? 0).toString(16).padStart(2, "0")).join("")}`;
+		}
+		cursor = match.index + match[0].length;
+	}
+	if (line.slice(cursor).trim() !== "") runs.push(current);
+	return runs;
+};
+
+
+/**
+ * The hex a run of `colour` ACTUALLY renders as on this terminal.
+ *
+ * Not `getColorHex`. Under `256color` the host quantises on the way out, so
+ * `getColorHex("dim")` says `#5f6673` while the escape on the wire carries
+ * `#056673` — and a test comparing the two fails on every level at once while
+ * saying nothing about the palette. This reads the quantised value back out of
+ * a real escape, which is the only number a reader's terminal ever sees.
+ *
+ * `text` emits NO colour SGR at all, because it IS the default foreground, so
+ * it resolves to the same default {@link inksIn} starts from.
+ */
+const hexOf = (colour: Parameters<typeof theme.fg>[0]): string => {
+	const sgr = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(theme.fg(colour, ""));
+	if (!sgr) return DEFAULT_FG;
+	const [, r, g, b] = sgr;
+	return `#${[r, g, b].map(v => Number(v).toString(16).padStart(2, "0")).join("")}`;
+};
 
 const idle = (over: Record<string, unknown> = {}) => ({
 	syncing: false,
@@ -139,48 +199,148 @@ test("sidebar has one row per screen under its group heading, with a G-letter hi
 	expect(width).toBeLessThanOrEqual(26);
 });
 
-test("the active sidebar row is host section style: accent text plus cursor, never a pill", () => {
-	// /settings marks selection with cursor + accent and reserves the
-	// selectedBg pill for the tab strip (tui-adapters.ts:336-350,
-	// chrome/shared.ts:18-27). A pill in the sidebar is a second active style.
+test("the active sidebar row wears the web's selected fill, with the accent ONLY on its icon", () => {
+	// `.nav-row[data-active="true"]` is `background: var(--selected); color:
+	// var(--ink-1)` (styles.css:547-550) and only its `svg` takes the accent
+	// (:557-559). So the ACTIVE NAV ROW IS A FILLED ROW with an ink-1 label —
+	// ours painted accent TEXT on no fill, which is why the nav read as a list of
+	// coloured words instead of a control with a position in it.
+	//
+	// The 2-cell cursor prefix stays (settings-list.ts:939-940): the web tells
+	// active from hover with background ALPHA, which no terminal can render.
 	const { lines } = sidebar(theme, "unicode", "costs");
 	const active = lines.find(l => strip(l).includes("Costs"));
 	expect(active).toBeDefined();
 	expect(strip(active!)).toStartWith(`${theme.nav.cursor} `);
-	// The cursor slot is accent-tinted (settings-list.ts:939, tui-adapters.ts:344).
-	expect(active!).toContain(theme.fg("accent", `${theme.nav.cursor} `));
+	expect(active!).toContain(ACTIVE_BG);
+	// Exactly ONE accent run on the row: the icon. Label and cursor are ink-1,
+	// and the jump hint is ink-4 — the web's own three rungs for that row.
+	expect(inksIn(active!).filter(hex => hex === hexOf(SIDEBAR_INK.iconActive))).toHaveLength(1);
+	expect(inksIn(active!)).toContain(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(active!).at(-1)).toBe(hexOf(SIDEBAR_INK.jumpKey));
+	// No other row gets the fill: one selected row per panel.
 	for (const line of lines) {
 		if (line === active) continue;
 		expect(line).not.toContain(ACTIVE_BG);
 	}
-	expect(active!).not.toContain(ACTIVE_BG);
 });
 
-test("sidebar headings follow the host section style: active group accent+bold, rest muted", () => {
-	// getSettingsListTheme().section: active accent+bold, inactive muted
-	// (tui-adapters.ts:348-349). Headings are group names, not rows: no cursor.
+test("the group headings are two different levels, not one colour repeated three times", () => {
+	// THE REPORTED DEFECT: "the sidebar group headings are all the same colour".
+	// Two of the three were `muted`, so the only heading that differed was the
+	// one in the active group — and it differed by HUE, the same hue the active
+	// ROW's icon uses, so the heading stopped being structure and became another
+	// selection marker.
+	//
+	// `.nav-heading` is `--ink-3` @500 (styles.css:515-520) for every group and
+	// the web has NO active-group variant. The active group's heading stepping up
+	// one ink is OURS, and it borrows the web's own selection rule — `.nav-row`
+	// ink-2 → `[data-active]` ink-1 (styles.css:547-550) — rather than inventing
+	// one.
 	const { lines } = sidebar(theme, "unicode", "overview");
-	const usage = lines[0]!;
-	expect(strip(usage).trim()).toBe("Usage");
-	expect(usage).toContain(theme.bold(theme.fg("accent", "Usage")));
-	const activity = lines[4]!;
-	expect(strip(activity).trim()).toBe("Activity");
-	expect(activity).toContain(theme.fg("muted", "Activity"));
-	expect(activity).not.toContain(theme.nav.cursor);
+	expect(strip(lines[0]!).trim()).toBe("Usage");
+	expect(strip(lines[4]!).trim()).toBe("Activity");
+	expect(inksIn(lines[0]!)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
+	expect(inksIn(lines[4]!)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
+	// Two different colours, not merely different weights.
+	expect(hexOf(SIDEBAR_INK.headingActive)).not.toBe(hexOf(SIDEBAR_INK.headingInactive));
+	expect(lines[0]!).not.toBe(lines[4]!);
+	// A heading is never a row: no cursor, no jump key.
+	expect(lines[4]!).not.toContain(theme.nav.cursor);
+	expect(strip(lines[4]!)).not.toMatch(/G [A-Z]/);
 });
 
-test("sidebar hover paints the host hover band on a non-active row only", () => {
-	// settings-list.ts:778,792-796: hover is a full-row selectedBg band behind
-	// the row; the keyboard cursor stays where it is.
+test("the four sidebar levels are four different renderings, each tied to its own token", () => {
+	// The acceptance test for the hierarchy. Four levels — heading-active,
+	// heading-inactive, active row, inactive row — that must not be textually
+	// identical and must each paint with the token its role names.
+	const { lines } = sidebar(theme, "unicode", "overview");
+	const headingActive = lines[0]!; // "Usage"
+	const rowActive = lines[1]!; // Overview
+	const rowInactive = lines[2]!; // Models
+	const headingInactive = lines[4]!; // "Activity"
+	const four = [headingActive, headingInactive, rowActive, rowInactive];
+	expect(new Set(four).size, "two sidebar levels rendered byte-identically").toBe(4);
+
+	expect(inksIn(headingActive)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
+	expect(inksIn(headingInactive)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
+	// An inactive row is exactly three runs: icon, label, jump hint — one level
+	// each, which is the whole claim that a row is not a flat line of text.
+	expect(inksIn(rowInactive)).toEqual([
+		hexOf(SIDEBAR_INK.iconInactive),
+		hexOf(SIDEBAR_INK.rowInactive),
+		hexOf(SIDEBAR_INK.jumpKey),
+	]);
+	// The active row is the same three runs with the icon stepped to the accent,
+	// plus the cursor in the label's ink — so no heading level leaks into it.
+	expect(inksIn(rowActive)).toEqual([
+		hexOf(SIDEBAR_INK.rowActive),
+		hexOf(SIDEBAR_INK.iconActive),
+		hexOf(SIDEBAR_INK.rowActive),
+		hexOf(SIDEBAR_INK.jumpKey),
+	]);
+});
+
+test("a row's jump hint is the faintest run on that row", () => {
+	// `.nav-row kbd` is `--ink-4` (styles.css:565-570) against a `--ink-2` label:
+	// one full ink step below, so the hint never competes with what it annotates.
+	// Ours painted it `dim`, which is the heading's ink, so the hint and the
+	// structure above it were the same colour.
+	for (const id of ["overview", "models", "costs"]) {
+		const { lines } = sidebar(theme, "unicode", id);
+		const rows = lines.filter(l => /G [A-Z]$/.test(strip(l)));
+		expect(rows.length).toBe(8);
+		for (const line of rows) {
+			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(hexOf(SIDEBAR_INK.jumpKey));
+		}
+	}
+});
+
+test("the row icon is a level of its own, quieter than its label", () => {
+	// `.nav-row svg { color: var(--ink-3) }` against a `--ink-2` label
+	// (styles.css:552-555): the icon is chrome for the label, not more label.
+	// Ours painted icon and label the same colour, so each row was one flat run.
+	const inactive = sidebar(theme, "unicode", "models").lines.find(l => strip(l).includes("Costs"))!;
+	expect(inksIn(inactive).slice(0, 2)).toEqual([
+		hexOf(SIDEBAR_INK.iconInactive),
+		hexOf(SIDEBAR_INK.rowInactive),
+	]);
+	expect(SIDEBAR_INK.iconInactive).not.toBe(SIDEBAR_INK.rowInactive);
+	// The ACTIVE row's icon is the ONE accent on the row (styles.css:557-559),
+	// and its LABEL is not: the active row is ink-1 with an accent glyph.
+	const active = sidebar(theme, "unicode", "costs").lines.find(l => strip(l).includes("Costs"))!;
+	expect(inksIn(active)[1]).toBe(hexOf(SIDEBAR_INK.iconActive));
+	expect(inksIn(active)[0]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(SIDEBAR_INK.iconActive).not.toBe(SIDEBAR_INK.rowActive);
+});
+
+test("hover and active share the band and the label ink, and differ by the three cues the web has", () => {
+	// `.nav-row:hover` is `background: var(--hover); color: var(--ink-1)`
+	// (styles.css:538-541); `[data-active]` is `background: var(--selected);
+	// color: var(--ink-1)` (:547-550). The web separates those two states by
+	// background ALPHA ALONE — 0.035 against 0.075 — and a terminal has one
+	// background token and no alpha, so the terminal has to spend the difference
+	// elsewhere. It spends it on the three cues the web already owns and which a
+	// hover row never gets: the accent icon, the cursor, and the weight.
 	const { lines } = sidebar(theme, "unicode", "overview", "models");
-	const hovered = lines.find(l => strip(l).includes("Models"));
-	const active = lines.find(l => strip(l).includes("Overview"));
-	expect(hovered).toBeDefined();
-	expect(hovered!).toContain(ACTIVE_BG);
-	expect(hovered!).not.toContain("\x1b[1m");
-	expect(active!).not.toContain(ACTIVE_BG);
+	const hovered = lines.find(l => strip(l).includes("Models"))!;
+	const active = lines.find(l => strip(l).includes("Overview"))!;
+	// Same band, same label ink — exactly the web's ink-1.
+	expect(hovered).toContain(ACTIVE_BG);
+	expect(inksIn(hovered)[1]).toBe(hexOf(SIDEBAR_INK.rowHover));
+	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	// And three differences, none of them the fill.
+	expect(inksIn(hovered)[0]).not.toBe(inksIn(active)[1]); // icon: ink-3, not accent
+	expect(strip(hovered)).not.toStartWith(theme.nav.cursor); // no cursor
+	expect(hovered).not.toContain("\x1b[1m"); // no weight
+	expect(hovered).not.toBe(active);
+	// A hovered ID that names a group HEADING paints nothing special: the
+	// heading is structure, not a target, so hovering it must not band it. The
+	// active row still carries its own band, so only the heading row is checked.
 	const { lines: plain } = sidebar(theme, "unicode", "overview", "Usage");
-	for (const line of plain) expect(line).not.toContain(ACTIVE_BG);
+	expect(plain[0]).toBe(lines[0]);
+	expect(plain[0]).not.toContain(ACTIVE_BG);
 });
 
 test("an omitted hover id paints byte-identical output to the 3-arg call", () => {
@@ -497,7 +657,7 @@ test("the range control reads as ONE control: uniform inactive styling and a sin
 	expect(pills).toBe(1);
 	// Every inactive segment is styled identically — one style, applied to all
 	// five, never a per-segment special case.
-	const inactive = ["1h", "7d", "30d", "90d", "All"].map(label => theme.fg("muted", ` ${label} `));
+	const inactive = ["1h", "7d", "30d", "90d", "All"].map(label => theme.fg(TAB_INK.inactive, ` ${label} `));
 	for (const styled of inactive) expect(bare, styled).toContain(styled);
 	// The active one is the pill, and it carries its label.
 	expect(plain).toContain(" 24h ");

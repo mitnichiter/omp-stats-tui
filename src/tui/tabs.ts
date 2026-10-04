@@ -26,16 +26,39 @@
  * folder / chart / tools / host, and are asserted 1 cell by test rather than by
  * eye.
  *
- * WHY THE ACTIVE TAB IS A LUMINANCE STEP
+ * WHY THE ACTIVE TAB IS A FILL AND A LUMINANCE STEP
  *
- * `selectedBg` + bold against `muted` foreground is a CONTRAST change
- * (`chrome/shared.ts:18-27`). A hue step between `accent` and `warning` is
- * not: they are close in some themes and in colour-blind modes.
+ * The strip is the panel's largest piece of chrome — at twelve tabs it is more
+ * line than any band — so what it is NOT allowed to be is more body text. Ours
+ * drew every inactive segment at `muted`, which put the strip at the same
+ * strength as the nav labels beside it, and a strip that reads as content is
+ * not a control.
+ *
+ * So this adapter mirrors `.segmented`, the web's own treatment of "a row of
+ * options with one selected" (styles.css:1056-1102): every option is
+ * `--ink-3` (:1083-1096), `:hover` is `--ink-1` (:1097-1099), and
+ * `[data-active]` is `--ink-1` on the `--raised` thumb (:1100-1102, :1068-1080).
+ * `selectedBg` is the terminal's stand-in for that thumb — a terminal has no
+ * border-radius, so a filled background IS "an enclosed surface", which is the
+ * same rule `.live-chip` obeys (styles.css:1595-1597).
+ *
+ * `hoverTab` deliberately takes NO fill. The active segment already owns the
+ * band, so if hover took it too the two states would be told apart by bold
+ * alone — which a theme that renders no bold cannot express. Instead hover is
+ * ink-1 on no fill and active is ink-1 on the fill: one background, two inks,
+ * and the distinction survives a monochrome theme.
+ *
+ * `label` is the bar's own LEADING LABEL, not a tab style — `TabBar` renders it
+ * once, before the first tab (components/tab-bar.ts:191, :240-243), and the
+ * panel passes an empty label. It is kept for host parity and is deliberately
+ * NOT the accent: the accent is spent on the active row of the nav and the one
+ * number a screen is about (css-tokens.md:104), not on a prefix we never draw.
  */
 
 import type { SymbolPreset, Tab, TabBarTheme, Theme } from "@oh-my-pi/pi-tui";
 import { SCREEN_SPECS, type ScreenSpec } from "../layout/spec";
 import { STATS_ICONS, statsIcon, type IconRole } from "./icons";
+import { TAB_INK } from "./palette";
 
 export type ScreenId = ScreenSpec["id"];
 
@@ -105,22 +128,27 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 };
 
 /**
- * The `TabBarTheme` adapter. Token-for-token identical to the host's
- * `getTabBarTheme()` (`chrome/shared.ts:18-27`), but closed over the `Theme`
- * the mount hands us — that function hardcodes the `theme` singleton, which
- * would ignore ours entirely.
+ * The `TabBarTheme` adapter. Host-shaped — the same six callbacks
+ * `getTabBarTheme()` exposes (chrome/shared.ts:18-27) — but closed over the
+ * `Theme` the mount hands us, because that function hardcodes the `theme`
+ * singleton and would ignore ours entirely.
  *
- * `hoverTab` is unreachable while `mouseTracking` is false; it is supplied
- * anyway so enabling the mouse later is a one-line change, not a re-derivation.
+ * Every ink comes from {@link TAB_INK}, which is the web's `.segmented` ladder
+ * with a `styles.css` line on each rung. `mutedTab` and `hoverTab` are supplied
+ * explicitly rather than left to the host's `?? inactiveTab` fallback
+ * (declared optional with that fallback documented at components/tab-bar.ts:42
+ * and :44; applied at :251 and :255), because a fallback that silently reverted
+ * to the previous ink is exactly the drift this table exists to prevent.
  */
 export function tabBarTheme(theme: Theme): TabBarTheme {
 	return {
-		label: (text: string) => theme.bold(theme.fg("accent", text)), // chrome/shared.ts:20
-		activeTab: (text: string) => theme.bold(theme.bg("selectedBg", theme.fg("text", text))), // :21
-		inactiveTab: (text: string) => theme.fg("muted", text), // :22
-		mutedTab: (text: string) => theme.fg("dim", text), // :23
-		hoverTab: (text: string) => theme.bg("selectedBg", theme.fg("text", text)), // :24
-		hint: (text: string) => theme.fg("dim", text), // :25
+		label: (text: string) => theme.bold(theme.fg(TAB_INK.active, text)),
+		activeTab: (text: string) => theme.bold(theme.bg("selectedBg", theme.fg(TAB_INK.active, text))),
+		inactiveTab: (text: string) => theme.fg(TAB_INK.inactive, text),
+		mutedTab: (text: string) => theme.fg(TAB_INK.muted, text),
+		// No fill: see the header note on why hover must not share the thumb.
+		hoverTab: (text: string) => theme.fg(TAB_INK.hover, text),
+		hint: (text: string) => theme.fg(TAB_INK.hint, text),
 	};
 }
 

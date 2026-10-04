@@ -17,11 +17,14 @@
  * is a chrome line nobody reads. Keycaps and labels are therefore the same
  * weight, and the only thing that separates two hints is the separator.
  *
- * `tab` IS THE SCREEN SWITCH. The panel has a visible tab strip, so the hint row
- * names the same verb the strip advertises: `tab`/`shift+tab` for screens, and
- * `left`/`right` for the horizontal RANGE axis (`panelAction`: `left`/`right`
- * step the range, `tab`/`shift+tab` change screen — `src/tui/panel.ts:275-277`).
- * Arrows-for-screens would contradict the strip sitting directly above.
+ * `←/→` IS THE SCREEN SWITCH. The panel's primary verb is moving between
+ * screens, and the arrows are what the footer names for it — see THE KEYMAP
+ * DECISION in `panel.ts`, which records the two decisions this mapping has had
+ * and why the second one is the one that shipped. `tab`/`shift+tab` remain
+ * bound as an alias and are deliberately absent from the hint row: the row
+ * names the key a reader reaches for first, and listing both teaches the
+ * slower one. The RANGE is on `r`/`R` (`panelAction`: `r` steps the range
+ * forward, `R` back), so the two hints never share a key.
  *
  * WHY THE HINTS ARE DATA. A footer built by concatenating strings is a footer
  * that drifts from the keymap: a key gets rebound, the hint does not, and the
@@ -72,8 +75,12 @@ export type HintMode = "idle" | "scrollable" | "syncing" | "error";
  */
 export function hintsFor(mode: HintMode): readonly PanelHint[] {
 	const scroll: PanelHint = { keys: ["up", "down"], label: "scroll" };
-	const screen: PanelHint = { keys: ["tab", "shift+tab"], label: "screen" };
-	const range: PanelHint = { keys: ["left", "right"], label: "range" };
+	// The ARROWS are the advertised screen switch, and `tab` is deliberately NOT
+	// listed: the row names the key a reader would reach for first, and a hint
+	// set that lists both teaches the slower one. `tab` stays bound in
+	// `panelAction` — an alias nobody is told about beats a dead key.
+	const screen: PanelHint = { keys: ["left", "right"], label: "screen" };
+	const range: PanelHint = { keys: ["r", "shift+r"], label: "range" };
 	const sync: PanelHint = { keys: ["s"], label: "sync" };
 	const close: PanelHint = { keys: ["escape", "q"], label: "close" };
 
