@@ -9,6 +9,9 @@ import {
 	matchesSelectUp,
 } from "@oh-my-pi/pi-tui/keybinding-matchers";
 import { ensureThemeSync, theme as activeTheme, type Theme, type ThemeColor } from "@oh-my-pi/pi-tui/theme";
+import { node, text } from "@oh-my-pi/pi-tui/native/describe";
+import { overlayCard } from "@oh-my-pi/pi-tui/native/overlay";
+import { leafKey, type DescribeContext, type NativeNode, type NativeUiEvent } from "@oh-my-pi/pi-tui/native/node";
 import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
 
 import { fetchFor, type DataNeed, type PanelData } from "../data/api";
@@ -320,6 +323,14 @@ const STATE = new WeakMap<StatsPanel, PanelState>();
 // ---------------------------------------------------------------------------
 
 export class StatsPanel implements Component {
+	/**
+	 * TERN PROBE (F2 experiment, scratch — additive only). The terminal draws
+	 * the sheet: a large glass overlay titled Stats. `render()` is untouched
+	 * and stays the universal path; these methods only speak when a TSP
+	 * terminal is listening.
+	 */
+	readonly nativeOverlay = { role: "omp.overlay.stats", size: "lg", anchor: "center", head: "Stats" } as const;
+
 	readonly #options: StatsPanelOptions;
 	readonly #tui: TUI;
 	readonly #theme: Theme;
@@ -721,6 +732,37 @@ export class StatsPanel implements Component {
 						: "idle";
 		const [row] = footerHints(hintsFor(mode), this.#theme, plan.innerWidth);
 		return row ?? "";
+	}
+
+	// --- tern probe (F2 experiment, scratch) -----------------------------------
+
+	/**
+	 * The probe description: the screen strip as a `tabs` node inside the
+	 * overlay card, plus one `text` leaf proving the mount. Screen switches
+	 * reuse `#selectScreen` — never a second keymap. `render()` output is
+	 * untouched; see the probe-render parity check.
+	 */
+	describe(_cx: DescribeContext): NativeNode {
+		return overlayCard("omp.overlay.stats", "Stats", [
+			node(
+				"tabs",
+				{
+					items: SELECTABLE_SCREENS.map(screen => ({ id: screen.id, label: screen.label })),
+					active: this.#state.screenId,
+				},
+				undefined,
+				"tabs",
+			),
+			text("probe"),
+		]);
+	}
+
+	/** Tab select/activate routes to the same screen index path as the keys. */
+	handleNativeEvent(event: NativeUiEvent): void {
+		if (event.type !== "select" && event.type !== "activate") return;
+		if (leafKey(event.key) !== "tabs") return;
+		const index = SELECTABLE_SCREENS.findIndex(screen => screen.id === event.item);
+		if (index !== -1) this.#selectScreen(index);
 	}
 
 	// --- input ---------------------------------------------------------------
