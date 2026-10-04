@@ -11,9 +11,18 @@
  * digits (`1`-`9`/`0`) and `g`-letters are ALIASES for the same target
  * (screen). The web's digits-as-range half is deliberately NOT mirrored:
  * our digits already select screens and a digit cannot pick both a range and
- * a screen. Range stays on `r`/`R` cycle. While the `g` prefix is armed the
+ * a screen. Range stays on `r`/`R` — and now also on `←`/`→`, which are
+ * aliases for the same range step rather than a second way to change screens
+ * (see panel.ts, which owns the keymap). While the `g` prefix is armed the
  * next letter is consumed even on no match (web parity); a stale prefix
  * (>1200 ms) falls through (web parity: timestamp check, no timer).
+ *
+ * TOPBAR GEOMETRY, decided once and cited above `topbar()`: the wordmark and
+ * the action cluster are TWO regions separated by a painted spacer, because
+ * the web separates them with `flex: 1` (styles.css:453-455) rather than with
+ * a gap. The chip is an enclosed surface (`.live-chip`'s fill, styles.css:1597)
+ * and the range control is one container with a single thumb
+ * (`.segmented`, styles.css:1062-1081).
  *
  * MODES come from `framePolicy` (responsive.ts), never a local width table:
  * wide shows the full grouped sidebar + full topbar, medium/narrow show the
@@ -42,6 +51,50 @@ import { TAB_ICON, TAB_SHORT, tabBarTheme } from "./tabs";
 /** The web's `pendingG` window (Shell.tsx: `Date.now() - pendingG < 1200`). */
 export const JUMP_TIMEOUT_MS = 1200;
 
+
+/**
+ * The two topbar gaps, and they are not the same size.
+ *
+ * `TOPBAR_CLUSTER_GAP` is `.topbar-actions { gap: 8px }` (styles.css:460) —
+ * the gap BETWEEN the chip and the range control, inside the action cluster.
+ *
+ * `TOPBAR_SPACER_MIN` is the FLOOR of `.topbar-spacer { flex: 1 }`
+ * (styles.css:453-455) rather than a measurement: the browser's spacer is every
+ * cell the viewport has left, and only the leftover has to be non-zero for the
+ * brand to read as its own object. Three cells is the terminal equivalent of
+ * the web's 12px topbar gap (styles.css:414) and is asserted by test/chrome.
+ */
+export const TOPBAR_CLUSTER_GAP = "  ";
+export const TOPBAR_SPACER_MIN = 3;
+
+/** The wordmark the SVG gradient mark stands in for (`Shell.tsx:59-71`). */
+const BRAND = "omp/stats";
+
+/** Pad `text` to `width` terminal cells. Labels here are ASCII, but width is measured, never assumed. */
+function pad(text: string, width: number): string {
+	const short = width - visibleWidth(text);
+	return short > 0 ? `${text}${" ".repeat(short)}` : text;
+}
+
+/**
+ * The sidebar's three columns, sized from the web's `.nav-row` (styles.css:522).
+ *
+ * `PREFIX_WIDTH` is the host's 2-column row prefix slot (`cursor + space` when
+ * selected, two spaces otherwise — settings-list.ts:939-940), NOT a leading
+ * indent choice; it is what keeps the hover band flush with the text.
+ *
+ * `SIDEBAR_GAP` is `.nav-row`'s `gap: 10px` (styles.css:526) between the label
+ * column and the jump key — the two cells the web puts between `.nav-row-label`
+ * and `kbd` before the key is pushed to the row end.
+ *
+ * `JUMP_KEY_PREFIX` is the `G ` of the web's `<kbd>G {HOTKEY}</kbd>`
+ * (Shell.tsx:108). It is one constant rather than a template so the key column's
+ * width is derived from the same string that is painted — a key that grew a
+ * character would widen the column instead of colliding with the trailing edge.
+ */
+export const PREFIX_WIDTH = 2;
+export const SIDEBAR_GAP = 2;
+export const JUMP_KEY_PREFIX = "G ";
 /** Dirty hours above which the web calls the backlog worth showing (LiveChip.tsx: `INDEXING_VISIBLE_HOURS = 24`). */
 const INDEXING_VISIBLE_HOURS = 24;
 
@@ -190,47 +243,86 @@ export interface Sidebar {
 }
 
 /**
- * The full grouped sidebar: one heading row per group, one row per screen
- * (`cursor + icon + label + G <letter>`, mirroring the web's icon + label + kbd).
+ * THE FULL GROUPED SIDEBAR, ALIGNED AS A COLUMN.
  *
- * Host parity (settings-selector.ts + settings-list.ts:914-996,
- * theme/tui-adapters.ts:336-350): rows carry the host's 2-column prefix slot
- * (`cursor + space` for the active row, two spaces otherwise); the ACTIVE row
- * is accent text under the cursor (the `section` style), never the tab strip's
- * selectedBg pill — the pill belongs to the topbar segment and the strip
- * (chrome/shared.ts:18-27), and a second pill here is a second active style.
- * Group headings are `section` styled by ACTIVE GROUP (accent+bold for the
- * group holding the active screen, muted otherwise); hover paints the host's
- * `hoverTab` band on a non-active row and never moves the cursor
- * (settings-list.ts:778,792-796). Rows are padded to a common width so the
- * hover band fills the column.
+ * `.nav-row` in the web is a flex row: icon, `.nav-row-label { flex: 1 }`, then
+ * `kbd` (styles.css:522-574, Shell.tsx:106-108). The label's `flex: 1` is the
+ * load-bearing part — it eats all free width, so the jump hint is pushed to the
+ * row's TRAILING EDGE and the eight hints form a right-hand column instead of
+ * a ragged staircase hanging off eight different label lengths.
  *
- * DIVERGENCE (deliberate, noted): headings track the active group rather than
- * the settings-list dim wash. The host dims off-section ROWS in a split pane
- * where rows stay selectable; our sidebar rows are never dimmed because a dim
- * nav row reads as disabled, and the group cue has to live somewhere — so it
- * lives in the heading.
+ * Ours appended `G <letter>` immediately after the label, so every row's hint
+ * started at a different column and the block read as prose. That is defect 4.
+ * The port reproduces the geometry with three measured columns:
+ *
+ *   [2-cell prefix slot] [icon gutter] [label column] [gap] [jump key]
+ *
+ * ICON GUTTER is measured from the icons this nav actually draws rather than
+ * read from `ICON_GUTTER`, because the host registry (`theme.symbol("icon.*")`)
+ * returns whatever the active preset binds and that is not always the table
+ * entry — `icons.ts` is explicit that the two can disagree.
+ *
+ * THE JUMP KEY IS THE FAINTEST INK. `.nav-row kbd` is `--ink-4` at 10.5px
+ * (styles.css:565-570), one step below even the segment labels, so the hint
+ * never competes with the label it annotates. Ours paints it `dim` while the
+ * label stays `muted`.
+ *
+ * Host parity, unchanged and still argued here: rows carry the host's 2-column
+ * prefix slot (`cursor + space` active, two spaces otherwise —
+ * settings-list.ts:939-940); the ACTIVE row is accent text under the cursor,
+ * never a selectedBg pill, because the pill belongs to the range control and
+ * the tab strip (chrome/shared.ts:21) and a second pill here is a second active
+ * style; hover paints the host's `hoverTab` band on a NON-active row and never
+ * moves the cursor (settings-list.ts:778, 792-796).
+ *
+ * DIVERGENCE (deliberate, unchanged): headings track the ACTIVE GROUP rather
+ * than the settings-list dim wash, and headings are padded to the same width as
+ * the rows so the whole block is one rectangle. The host dims off-section ROWS
+ * in a split pane where rows stay selectable; a dim nav row here reads as
+ * disabled, so the group cue lives in the heading instead.
  */
 export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, hoveredId?: string | null): Sidebar {
 	const bar = tabBarTheme(theme);
 	const activeGroup = NAV_GROUPS.find(group => group.items.some(item => item.id === activeId));
+	const items = NAV_GROUPS.flatMap(group => group.items);
+	// Measured, not assumed: the preset's icon width is data ink and the host
+	// registry does not always agree with `STATS_ICONS`.
+	const iconWidth = Math.max(...items.map(item => visibleWidth(statsIcon(preset, TAB_ICON[item.id], theme))));
+	const labelWidth = Math.max(...items.map(item => visibleWidth(item.label)));
+	// `G <letter>` is a closed shape, so its width is a constant of the format.
+	const keyWidth = visibleWidth(JUMP_KEY_PREFIX) + 1;
+	const width = PREFIX_WIDTH + iconWidth + 1 + labelWidth + SIDEBAR_GAP + keyWidth;
+
 	const lines: string[] = [];
+	const tail = " ".repeat(SIDEBAR_GAP);
 	for (const group of NAV_GROUPS) {
 		const head = group === activeGroup ? theme.bold(theme.fg("accent", group.heading)) : theme.fg("muted", group.heading);
-		lines.push(`  ${head}`);
+		lines.push(pad(`  ${head}`, width));
 		for (const item of group.items) {
-			const text = `${statsIcon(preset, TAB_ICON[item.id], theme)} ${item.label}  G ${item.hotkey.toUpperCase()}`;
+			// `.nav-row-label { flex: 1 }` ported as a fixed label column plus a
+			// fixed trailing gap, which is what puts all eight jump keys in one
+			// column at the row's trailing edge.
+			const icon = pad(statsIcon(preset, TAB_ICON[item.id], theme), iconWidth);
+			const label = pad(item.label, labelWidth);
+			const key = `${JUMP_KEY_PREFIX}${item.hotkey.toUpperCase()}`;
 			if (item.id === activeId) {
-				lines.push(`${theme.fg("accent", `${theme.nav.cursor} `)}${theme.fg("accent", theme.bold(text))}`);
-			} else if (item.id === hoveredId) {
-				lines.push((bar.hoverTab ?? bar.inactiveTab)(`  ${text}`));
-			} else {
-				lines.push(theme.fg("muted", `  ${text}`));
+				// The cursor slot IS the 2-column prefix (settings-list.ts:939-940),
+				// so the active row spends no more prefix than any other row.
+				lines.push(
+					theme.fg("accent", `${theme.nav.cursor} `) +
+						theme.fg("accent", theme.bold(`${icon} ${label}`)) +
+						theme.fg("dim", tail + key),
+				);
+				continue;
 			}
+			if (item.id === hoveredId) {
+				lines.push((bar.hoverTab ?? bar.inactiveTab)(`  ${icon} ${label}${tail}${key}`));
+				continue;
+			}
+			lines.push(theme.fg("muted", `  ${icon} ${label}`) + theme.fg("dim", tail + key));
 		}
 	}
-	const width = Math.max(...lines.map(line => visibleWidth(line)));
-	return { width, lines: lines.map(line => (visibleWidth(line) < width ? line + " ".repeat(width - visibleWidth(line)) : line)) };
+	return { width, lines };
 }
 
 export interface TopbarOptions {
@@ -242,40 +334,96 @@ export interface TopbarOptions {
 }
 
 /**
- * The topbar row: `omp/stats` brand (the SVG mark has no terminal form; the
- * wordmark carries it) + live chip + range segment + freshness.
- * The segment mirrors the web's `Segmented` (all six TIME_RANGES labels in
- * order, active pill highlighted); interaction stays on `r`/`R` cycling since
- * digits select screens. Full mode keeps everything; condensed drops the chip
- * (mirroring `topbar-hide-narrow`); minimal keeps brand + active range. A drop
- * cascade plus a final hard truncate guarantee the row never exceeds its width.
+ * THE TOPBAR IS THREE REGIONS, NOT ONE SENTENCE.
+ *
+ * `Shell.tsx:47-90` renders `<header class="topbar">` as `[brand] [spacer]
+ * [actions]`, where the spacer is `.topbar-spacer { flex: 1 }`
+ * (styles.css:453-455) and `.topbar-actions` holds the LiveChip, the
+ * `Segmented` range control and the ThemeToggle (Shell.tsx:74-80). The
+ * separation between the wordmark and the controls is therefore NOT a gap
+ * value — it is every cell the browser has left over, and on a 1440px viewport
+ * that is roughly 850px against 8px between the chip and the control
+ * (styles.css:460).
+ *
+ * A terminal has no viewport and therefore no `flex: 1`. The separation has to
+ * be PAINTED, and that is the whole fix for "the chip sits jammed next to
+ * `omp/stats` and reads as part of the wordmark": the brand is laid down at
+ * column 0 and the action cluster is laid down at the right edge, so the cells
+ * between them are the port of the spacer.
+ *
+ * TWO ENCLOSURES, NOT TWO SENTENCES. The scout read off the web's own rule for
+ * what makes a control read as a control: `.live-chip` is a filled, bordered,
+ * full-pill-radius box (styles.css:1596-1598) and `.segmented` is a filled,
+ * bordered box (styles.css:1064-1065), while `.topbar-brand` is naked text
+ * with no enclosure at all. The terminal has no border-radius, so the faithful
+ * form of "this is a surface" is a BACKGROUND. Hence: the chip gets
+ * `selectedBg`, and the range control's active segment gets the host TabBar's
+ * `activeTab` pill (chrome/shared.ts:21). Two enclosed objects, brand naked —
+ * the same three-way read the web gets.
+ *
+ * THE RANGE CONTROL IS ONE CONTROL. `.segmented` is a single container with
+ * `gap: 0` (styles.css:1062) holding six flush options and one absolutely
+ * positioned thumb (styles.css:1069-1081, positioned from `Segmented.tsx:26-44`).
+ * The terminal port keeps the two things that survive without geometry: a
+ * uniform inactive style on every segment (`inactiveTab`, chrome/shared.ts:22)
+ * and exactly one `activeTab` pill, with the segments packed flush so the run
+ * reads as one object. `gap: 0` is why the join is `""` and not `" "`: the
+ * segment's own single-cell padding IS the gutter, exactly as the web's 10px
+ * option padding is.
+ *
+ * ORDER OF SACRIFICE is fixed, not incidental: freshness, then the chip, then
+ * the segment run, then the segment run collapses to its active member. The
+ * chip goes first of the controls because the web wraps exactly it in
+ * `.topbar-hide-narrow` (Shell.tsx:75-77, styles.css:655-657) while the range
+ * control always survives — the range IS the window you are looking at.
  */
 export function topbar(theme: Theme, opts: TopbarOptions): string {
-	const mode = framePolicy(Math.max(0, opts.innerWidth + HORIZONTAL_INSET)).topbar;
+	const innerWidth = Math.max(0, opts.innerWidth);
+	const mode = framePolicy(innerWidth + HORIZONTAL_INSET).topbar;
 	const bar = tabBarTheme(theme);
-	const brand = theme.bold(theme.fg("accent", "omp/stats"));
-	const segment = (ids: readonly Range[]): string =>
+	// `.topbar-brand` is weight 600 over a dim `--ink-4` slash (styles.css:432,
+	// :441-445): the slash is the faintest ink in the bar, so the wordmark reads
+	// as one mark rather than as a path. Only the slash is dimmed — the mark is
+	// the brightest thing on the row, which is the web's ink hierarchy
+	// (brand `--ink-1`, chip `--ink-2`, chip count and segment labels `--ink-3`).
+	const brand =
+		theme.bold(theme.fg("accent", "omp")) + theme.fg("dim", "/") + theme.bold(theme.fg("accent", "stats"));
+	/** The chip as an enclosed object, the port of `.live-chip`'s fill+border. */
+	const chip = opts.chip === "" ? "" : theme.bg("selectedBg", ` ${opts.chip} `);
+	/** `.segmented`: flush options, one `activeTab` thumb among uniform inactives. */
+	const tray = (ids: readonly Range[]): string =>
 		ids
 			.map(id => {
-				const text = ` ${rangeMeta(id).label} `;
-				return id === opts.range ? bar.activeTab(text) : bar.inactiveTab(text);
+				const cell = ` ${rangeMeta(id).label} `;
+				return id === opts.range ? bar.activeTab(cell) : bar.inactiveTab(cell);
 			})
-			.join(" ");
-	const join = (parts: readonly string[]): string => parts.filter(part => part !== "").join("  ");
-	const fullRanges = segment(RANGES);
-	const narrow = join([brand, segment([opts.range])]);
-	let row: string;
-	if (mode === "full") {
-		row = join([brand, opts.chip, fullRanges, opts.freshness]);
-		if (visibleWidth(row) > opts.innerWidth) row = join([brand, opts.chip, fullRanges, opts.freshness]);
-		if (visibleWidth(row) > opts.innerWidth) row = join([brand, opts.chip, fullRanges]);
-	} else if (mode === "condensed") {
-		row = join([brand, fullRanges, opts.freshness]);
-		if (visibleWidth(row) > opts.innerWidth) row = join([brand, fullRanges]);
-	} else {
-		row = narrow;
+			.join("");
+	const fullTray = tray(RANGES);
+	const oneTray = tray([opts.range]);
+
+	// The cluster's own gap is the web's `.topbar-actions { gap: 8px }`; the
+	// brand↔cluster gap is the spacer and is unbounded below.
+	const cluster = (parts: readonly string[]): string => parts.filter(part => part !== "").join(TOPBAR_CLUSTER_GAP);
+	const layouts: readonly (readonly string[])[] =
+		mode === "full"
+			? [[chip, opts.freshness, fullTray], [chip, fullTray], [chip, oneTray], [fullTray], [oneTray]]
+			: mode === "condensed"
+				? [[opts.freshness, fullTray], [fullTray], [oneTray]]
+				: [[oneTray]];
+
+	const brandWidth = visibleWidth(brand);
+	for (const layout of layouts) {
+		const actions = cluster(layout);
+		const used = brandWidth + TOPBAR_SPACER_MIN + visibleWidth(actions);
+		if (used > innerWidth) continue;
+		// The spacer: every cell the row has left over, which is what `flex: 1`
+		// resolves to in a browser.
+		const spacer = innerWidth - used;
+		return `${brand}${" ".repeat(TOPBAR_SPACER_MIN + spacer)}${actions}`;
 	}
-	if (visibleWidth(row) > opts.innerWidth) row = narrow;
-	if (visibleWidth(row) > opts.innerWidth) row = truncateToWidth(row, Math.max(0, opts.innerWidth));
-	return row;
+	// Below even the narrowest layout, the brand and the active range still have
+	// to fit; anything longer is clipped rather than allowed to overflow, since
+	// `OverlayPanel.row` would tear the row on the right instead.
+	const last = `${brand}${" ".repeat(TOPBAR_SPACER_MIN)}${oneTray}`;
+	return visibleWidth(last) > innerWidth ? truncateToWidth(last, innerWidth) : last;
 }

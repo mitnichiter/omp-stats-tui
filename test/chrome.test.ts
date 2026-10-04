@@ -187,6 +187,69 @@ test("an omitted hover id paints byte-identical output to the 3-arg call", () =>
 	expect(sidebar(theme, "unicode", "overview")).toEqual(sidebar(theme, "unicode", "overview", null));
 });
 
+test("sidebar columns align: icon gutter, label column, and a right-aligned jump-key column", () => {
+	// Defect 4. The web's `.nav-row` is `display: flex` with
+	// `.nav-row-label { flex: 1 }` and the `kbd` after it
+	// (styles.css:522-573) — so the jump hint is pushed to the ROW'S TRAILING
+	// EDGE, right-aligned across every row. Ours appended `G <letter>` right
+	// after a variable-length label, so the hints formed a ragged staircase and
+	// the rows read as prose. These assertions pin the column geometry.
+	const { width, lines } = sidebar(theme, "unicode", "overview");
+	const plain = lines.map(strip);
+	const bodyRows = plain.filter(row => /G [A-Z]$/.test(row));
+	expect(bodyRows).toHaveLength(8);
+
+	// Every jump key ends in the SAME cell — the trailing edge, as in the web
+	// where `.nav-row-label { flex: 1 }` pushes the `kbd` to the row's end.
+	expect(bodyRows.every(row => visibleWidth(row) === width)).toBe(true);
+
+	// The ICON occupies one fixed gutter cell on every row, so every label
+	// starts in one column regardless of which icon the preset drew. Scoped to
+	// body rows because `Activity` is BOTH a group heading and a screen label —
+	// a collision the web's own nav shares (nav.ts: `Usage`/`Activity`/`Insights`
+	// headings with an `Activity` item in the second).
+	// Measured in CELLS, not UTF-16 units: the emoji icons are surrogate pairs,
+	// so `String.indexOf` reports different offsets for rows whose labels sit
+	// in the same terminal column.
+	const labelColumn = (label: string): number => {
+		const row = bodyRows.find(candidate => candidate.includes(label))!;
+		return visibleWidth(row.slice(0, row.indexOf(label)));
+	};
+	const labels = ["Overview", "Models", "Costs", "Activity", "Requests", "Errors", "Tools", "Projects"];
+	const columns = labels.map(labelColumn);
+	expect(new Set(columns).size).toBe(1);
+
+	// Group headings carry no jump key, so structure never reads as content —
+	// the web's `.nav-heading` is a plain 12px label (styles.css:515-520).
+	const headings = plain.filter(row => /^\s*(Usage|Activity|Insights)\s*$/.test(row));
+	expect(headings).toHaveLength(3);
+	for (const heading of headings) expect(heading).not.toMatch(/G [A-Z]/);
+});
+
+test("sidebar rows stay within one cell of each other, so the column has no ragged edge", () => {
+	// A ragged right edge is what made the block read as text rather than as a
+	// control. Every body row is padded to the block's common width, and the
+	// heading rows are padded to the same width, so the whole sidebar is one
+	// rectangle.
+	const { width, lines } = sidebar(theme, "unicode", "overview");
+	for (const line of lines) expect(visibleWidth(line)).toBe(width);
+	expect(width).toBeLessThanOrEqual(26);
+});
+
+test("sidebar rows are one rectangle on every preset, even though the block width follows the icon gutter", () => {
+	// The gutter is data ink, so the block width legitimately tracks the
+	// preset's icon width (1 cell nerd, 2 unicode, up to 4 ascii). What must
+	// hold on every preset is INTERNAL consistency: all rows, headings
+	// included, are padded to one common width, so the sidebar never reads as a
+	// ragged block of text.
+	for (const preset of ["unicode", "nerd", "ascii"] as const) {
+		const { width, lines } = sidebar(theme, preset, "costs");
+		expect(width, preset).toBeGreaterThan(0);
+		expect(width, preset).toBeLessThanOrEqual(26);
+		for (const line of lines) expect(visibleWidth(line), preset).toBe(width);
+	}
+});
+
 test("the sidebar gutter is the dim column bar, settings split-layout parity", () => {
 	// settings-list.ts:989: the split column separator is theme.hint("│ ").
 	// panel.ts zips sidebar and body with the same dim bar between them.
@@ -275,30 +338,146 @@ test("progress line is hidden for settled states and always fits", () => {
 	}
 });
 
-// ─── topbar: brand + chip + range segment in one row ──────────────────────────
+// ─── topbar: the web's three-region topbar ────────────────────────────────────
+//
+// Shell.tsx's `<header class="topbar">` is THREE regions, not one run of
+// words: `.topbar-brand`, a `flex: 1` `.topbar-spacer`, then
+// `.topbar-actions` holding the LiveChip and the `Segmented` range control.
+// The spacer is the whole mechanism — it is what stops the chip reading as
+// part of the wordmark. In a terminal there is no flexbox, so the spacer has
+// to be PAINTED: the brand sits left, the action cluster sits right, and the
+// gap between them is what separates the two. Every test below is about that
+// gap and about the cluster reading as two widgets rather than one sentence.
 
-test("topbar at 100 holds brand, live chip and all six ranges in one row", () => {
+test("topbar at 96 paints the brand left and the action cluster right, with a real gap between", () => {
+	// The bug this fixes: `omp/stats  ● Live   1h  24h …` — one left-aligned
+	// run, so the chip reads as the tail of the wordmark. The web separates them
+	// with `flex: 1` (styles.css:453-455); the terminal has to spend real cells
+	// on the same gap.
 	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 96 });
 	const plain = strip(row);
 	expect(plain).toContain("omp/stats");
 	expect(plain).toContain("Live");
 	for (const label of ["1h", "24h", "7d", "30d", "90d", "All"]) expect(plain).toContain(label);
+	// Brand flush left, and the chip is nowhere near it: the gap between the
+	// wordmark and the cluster is at least three cells, which is what the web's
+	// 12px topbar gap buys on screen.
+	expect(plain.startsWith("omp/stats")).toBe(true);
+	const gap = visibleWidth(plain.slice(plain.indexOf("omp/stats") + "omp/stats".length).split("●")[0] ?? "");
+	expect(gap).toBeGreaterThanOrEqual(3);
 	expect(visibleWidth(row)).toBeLessThanOrEqual(96);
-	expect(row).toContain(ACTIVE_BG);
 });
 
-test("topbar at 60 keeps brand and range but drops the chip, mirroring topbar-hide-narrow", () => {
-	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 56 });
+test("the action cluster is right-aligned, so it ends at the row's right edge", () => {
+	// `topbar-actions` is the last child of a flex row, so in the web it hugs
+	// the right edge and the spacer eats everything left over. Without this the
+	// row could drift back to a single left-aligned sentence.
+	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 96 });
 	const plain = strip(row);
-	expect(plain).toContain("omp/stats");
-	expect(plain).toContain("24h");
-	expect(plain).not.toContain("Live");
-	expect(visibleWidth(row)).toBeLessThanOrEqual(56);
+	// The row fills its width exactly, and the only slack left at the trailing
+	// edge is the range control's own one-cell segment padding — never a gap
+	// that would mean the cluster is floating in the middle of the bar.
+	expect(visibleWidth(row)).toBe(96);
+	expect(plain.length).toBe(96);
+	expect(96 - plain.trimEnd().length).toBeLessThanOrEqual(1);
 });
 
-test("topbar carries the dirty-hour freshness on the right when it fits", () => {
-	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "3 dirty hours", innerWidth: 96 });
-	expect(strip(row)).toMatch(/3 dirty hours/);
+test("the live chip is an enclosed surface and the brand is naked text", () => {
+	// The web's own rule for what makes a control read as a control: the brand
+	// has NO enclosure, while `.live-chip` is filled + bordered + full-pill
+	// radius (styles.css:1596-1598). A terminal has no border-radius, so the
+	// faithful form of "this is a surface" is a BACKGROUND. Before the fix both
+	// were plain foreground runs, which is exactly why the chip read as the
+	// tail of the wordmark.
+	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 96 });
+	const chipBg = row.indexOf("\x1b[48;");
+	expect(chipBg).toBeGreaterThan(-1);
+	// Everything before the chip's surface is the wordmark and its spacer, and
+	// carries no background at all.
+	expect(row.slice(0, chipBg)).not.toContain("\x1b[48;");
+	expect(strip(row.slice(0, chipBg))).toMatch(/^omp\/stats\s+$/);
+	// The chip's surface is the chip's OWN padding, so it is a box rather than a
+	// coloured word: one cell of background on each side of the label.
+	expect(row).toContain(theme.bg("selectedBg", ` ${chipFor(theme, idle())} `));
+	// And the wordmark itself is the brightest thing on the bar, with only the
+	// slash dropped a step (styles.css:432, :441-445).
+	expect(row).toContain(theme.bold(theme.fg("accent", "omp")));
+	expect(row).toContain(theme.fg("dim", "/"));
+	expect(row).toContain(theme.bold(theme.fg("accent", "stats")));
+});
+
+test("the range control reads as ONE control: uniform inactive styling and a single active pill", () => {
+	// Defect 3. Before: the active pill was the only thing that looked
+	// different, so the six labels read as five words plus one button. The
+	// web's `Segmented` (styles.css:1057-1103) is a container with a shared
+	// background and one raised thumb — in a terminal, the honest equivalent is
+	// a uniform inactive style on every segment plus exactly one filled pill,
+	// with the segments packed tight enough to read as a group.
+	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 96 });
+	const plain = strip(row);
+	// Exactly one selectedBg pill belongs to the RANGE control. The chip has its
+	// own surface now, so the pill count is asserted against the segment run
+	// alone by asking for the row with no chip.
+	const bare = topbar(theme, { range: "24h", chip: "", freshness: "", innerWidth: 96 });
+	const pills = bare.split(ACTIVE_BG).length - 1;
+	expect(pills).toBe(1);
+	// Every inactive segment is styled identically — one style, applied to all
+	// five, never a per-segment special case.
+	const inactive = ["1h", "7d", "30d", "90d", "All"].map(label => theme.fg("muted", ` ${label} `));
+	for (const styled of inactive) expect(bare, styled).toContain(styled);
+	// The active one is the pill, and it carries its label.
+	expect(plain).toContain(" 24h ");
+	// Tight packing: the six segments are one run, not six space-separated
+	// words. A single space separates them and nothing else.
+	expect(plain).toMatch(/ 1h\s+24h\s+7d\s+30d\s+90d\s+All /);
+});
+
+test("the chip drops before the range control when width runs out, mirroring topbar-hide-narrow", () => {
+	// The web hides `.live-chip` (styles.css:455 wraps it in
+	// `.topbar-hide-narrow`) but keeps the range control, because the range IS
+	// the window you are looking at. Order of sacrifice is therefore fixed:
+	// freshness, then chip, then segments — never the reverse.
+	const full = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "3 dirty hours", innerWidth: 96 });
+	expect(strip(full)).toMatch(/3 dirty hours/);
+	expect(strip(full)).toMatch(/Live/);
+	// Squeeze until the chip cannot fit: the range control survives.
+	for (const width of [70, 60, 56, 50, 44, 40]) {
+		const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: width });
+		const plain = strip(row);
+		expect(visibleWidth(row), `w=${width}`).toBeLessThanOrEqual(width);
+		expect(plain, `w=${width}`).toContain("omp/stats");
+		expect(plain, `w=${width}`).toMatch(/1h|24h|7d|30d|90d|All/);
+	}
+	// And at 56 the chip is gone while the brand and the control remain.
+	const narrow = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 56 });
+	expect(strip(narrow)).not.toContain("Live");
+	expect(strip(narrow)).toContain("24h");
+	expect(strip(narrow)).toContain("omp/stats");
+});
+
+test("the topbar never clips at any width from 1 to 200", async () => {
+	// The acceptance criterion, stated as a sweep rather than four samples: a
+	// row that overflows is torn by `OverlayPanel.row`'s padToWidth and the
+	// right-hand control is the thing that disappears.
+	for (let width = 1; width <= 200; width++) {
+		for (const range of ["1h", "24h", "7d", "30d", "90d", "all"] as const) {
+			for (const chip of [chipFor(theme, idle()), chipFor(theme, idle({ syncing: true, current: 25, total: 100, determinate: true })), ""]) {
+				for (const freshness of ["", "96 dirty hours"]) {
+					const row = topbar(theme, { range, chip, freshness, innerWidth: width });
+					expect(visibleWidth(row), `w=${width} range=${range}`).toBeLessThanOrEqual(width);
+				}
+			}
+		}
+	}
+	// The real frame at the four widths the brief names, with a chip, a sync in
+	// flight, and a large freshness string all at once.
+	for (const width of [40, 60, 100, 150]) {
+		const panel = __testing.makePanel({ data: liveData(), rows: 40 });
+		await __testing.settled(panel);
+		for (const row of panel.render(width)) {
+			expect(visibleWidth(row), `w=${width}`).toBeLessThanOrEqual(width);
+		}
+	}
 });
 
 // ─── frame: sidebar + topbar + body + footer, one divider ─────────────────────
