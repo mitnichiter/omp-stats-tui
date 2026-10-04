@@ -135,3 +135,58 @@ export function glyph(preset: SymbolPreset, role: GlyphRole, level = 0): string 
 	const clamped = Math.max(0, Math.min(value.length - 1, Math.round(level)));
 	return value[clamped] ?? value[0];
 }
+
+const ALL_PRESETS: readonly SymbolPreset[] = ["unicode", "nerd", "ascii"];
+
+/**
+ * A regex character class matching every glyph the given roles can render, on
+ * every preset — for tests that must recognise data ink by SHAPE rather than by
+ * a hand-typed list.
+ *
+ * This exists because seventeen of those hand-typed lists existed across six
+ * test files, and they drift the moment a role changes. The clearest instance:
+ * `/^[█#░]{2} \S/` kept listing `░` after the charts stopped drawing `barEmpty`
+ * as a track fill, so the class asserted something that could no longer happen
+ * while implying something else still could. A class built from the roles
+ * cannot be wrong that way — it is right by construction, in both directions.
+ *
+ * Union over ALL presets, because these classes are used against rendered output
+ * whose preset the caller usually does not know. Returns a bare class BODY, so
+ * callers write `new RegExp(`^[${glyphClass(...)}]+`)` and keep control of their
+ * own anchors.
+ */
+export function glyphClass(...roles: readonly GlyphRole[]): string {
+	const glyphs = new Set<string>();
+	for (const preset of ALL_PRESETS) {
+		for (const role of roles) {
+			const value = glyphsFor(preset)[role];
+			// `-` is escaped as well as the usual three: inside a class it would
+			// otherwise read as a RANGE, and the ascii set is full of `.` `*` `+`
+			// `#` `|`, any of which would change what the class matches.
+			for (const g of typeof value === "string" ? [value] : value) {
+				glyphs.add(g.replace(/[\\\]^-]/g, "\\$&"));
+			}
+		}
+	}
+	return [...glyphs].join("");
+}
+
+/**
+ * Every glyph this module can render, on every preset. For detectors that mean
+ * "this row contains ANY data ink" rather than "this row contains bars" — the
+ * question that a per-chart-shape list answers incorrectly the moment a chart
+ * adopts a new mark.
+ */
+export const ALL_GLYPH_CLASS = glyphClass(
+	"barFill",
+	"barEmpty",
+	"sparkRamp",
+	"heatCell",
+	"heatEmpty",
+	"heatMarker",
+	"columnGap",
+	"axisLine",
+	"trendUp",
+	"trendFlat",
+	"trendDown",
+);

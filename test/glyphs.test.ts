@@ -4,6 +4,8 @@ import { SYMBOL_PRESETS } from "@oh-my-pi/pi-tui/theme/symbols";
 import {
 	type GlyphSet,
 	type GlyphRole,
+	glyphClass,
+	ALL_GLYPH_CLASS,
 	glyph,
 	glyphsFor,
 	HEAT_LEVELS,
@@ -81,6 +83,30 @@ test("axisLine is `_` on every preset, and distinct from every other role's glyp
 		expect(others, `${preset} axisLine collides with another role`).not.toContain("_");
 		// Never a blank, under any preset.
 		expect(glyph(preset, "axisLine")).not.toBe(" ");
+	}
+});
+
+test("glyphClass matches exactly the roles it is given, and nothing else", () => {
+	// The whole point of deriving it: a class built from the roles cannot go
+	// stale the way `/^[█#░]{2} \S/` did when `barEmpty` stopped being drawn.
+	for (const preset of PRESETS) {
+		const fill = new RegExp(`[${glyphClass("barFill")}]`);
+		expect(fill.test(glyph(preset, "barFill")), `${preset} barFill`).toBe(true);
+		expect(fill.test(glyph(preset, "barEmpty")), `${preset} barEmpty is not a fill`).toBe(false);
+		expect(fill.test(glyph(preset, "heatCell")), `${preset} heatCell is not a fill`).toBe(false);
+		// And the ascii metacharacters in the set did not escape into a range or a
+		// quantifier: `.` must match a dot, not "any character".
+		const all = new RegExp(`^[${ALL_GLYPH_CLASS}]+$`);
+		expect(all.test(glyph(preset, "sparkRamp", 0))).toBe(true);
+		expect(all.test("xyz"), "the class must not match arbitrary letters").toBe(false);
+	}
+	// Every role the module can render is in ALL_GLYPH_CLASS — including the
+	// ones added later, which is what makes the union safe to rely on.
+	const every = new RegExp(`^[${ALL_GLYPH_CLASS}]`);
+	for (const preset of PRESETS) {
+		for (const role of Object.keys(glyphsFor(preset)) as GlyphRole[]) {
+			expect(every.test(glyph(preset, role)), `${preset}/${role} missing from ALL_GLYPH_CLASS`).toBe(true);
+		}
 	}
 });
 
