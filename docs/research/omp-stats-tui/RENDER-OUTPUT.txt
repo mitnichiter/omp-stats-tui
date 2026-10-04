@@ -4325,7 +4325,7 @@ Levels are square-root compressed against the busiest day, over per-day cost, fa
 fetched activity: 3 route(s) in 126ms
 
 ==============================================================================
-18) $ bun scripts/probe-frame.ts — CHROME, re-captured against the committed BODY
+19) $ bun scripts/probe-frame.ts — CHROME, re-captured against the committed BODY
     b15f09d + 9e90e29. Same contract: OVERWIDE 0, exactly 1 divider, at all
     four widths. Refreshed so these frames and the body's are from one commit.
     THREE DELIBERATE DIVERGENCES from the web, recorded so a later diff against
