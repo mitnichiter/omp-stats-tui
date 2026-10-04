@@ -44,7 +44,7 @@ function ctxWith(data: Partial<PanelData>, width = 120, override?: PanelData): S
  * that the day the first scaffold migrated: status now agrees with the path,
  * so the filter names the four remaining scaffolds by exclusion instead.)
  */
-const specd = ["costs", "projects", "tools", "requests"] as const;
+const specd = ["costs", "projects", "tools", "requests", "errors", "providers", "gain"] as const;
 const STUBS = SCREENS.filter(s => specd.every(id => id !== s.id) && s.status === "scaffolded");
 
 test("every dashboard screen is registered exactly once", () => {
@@ -144,9 +144,10 @@ test("PLACEHOLDER: the fake values are synthetic in their own right, not only la
 	}
 });
 
-test("providers declares no needs: provider-windows does network I/O and is forbidden", () => {
-	expect(screenById("providers").needs).toEqual([]);
-	expect(screenById("providers").reason).toMatch(/network/i);
+test("providers fetches the local aggregates, never the network windows", () => {
+	expect([...screenById("providers").needs].sort()).toEqual(["providers", "rollupStatus"]);
+	expect(screenById("providers").status).toBe("implemented");
+	expect(screenById("providers").reason).toBeUndefined();
 });
 
 test("no screen declares a need that is not a real DataNeed", () => {

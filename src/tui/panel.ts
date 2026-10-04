@@ -190,9 +190,8 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
 	const spec = specById(screen.id);
 	// A screen is selectable only if the layout IR DESCRIBES it and can be FILLED.
 	// `deferred` means described but unfillable; a screen with no spec at all
-	// (`gain`, whose payload provenance is unsettled) has no body to draw either.
-	// Either way, arrowing onto it would spend a keystroke painting a page the
-	// panel cannot honestly fill.
+	// has no body to draw either. Either way, arrowing onto it would spend a
+	// keystroke painting a page the panel cannot honestly fill.
 	return spec !== undefined && !spec.deferred && screen.status !== "excluded";
 });
 

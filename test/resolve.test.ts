@@ -156,10 +156,10 @@ test("every chart series yields at least one finite number to plot", () => {
 });
 
 test("a deferred screen is the ONLY screen with an unresolvable ref, and it says so", () => {
-	// `providers` names `providerStats`, which maps to no `DataNeed` because its
-	// route does network I/O on every load. That is not a bug in the resolver:
-	// it is why the screen is marked `deferred`, and the test pins the
-	// correspondence so the two can never disagree.
+	// When a screen is marked `deferred`, every ref it names must be
+	// unfetchable — that correspondence is what keeps the two from disagreeing.
+	// (`providers` is no longer deferred: its aggregates are DB-backed, and
+	// only the network windows payload stays out of the panel.)
 	for (const spec of DEFERRED) {
 		expect(spec.deferredReason, spec.id).toBeTruthy();
 		for (const ref of refsInSpec(spec)) {

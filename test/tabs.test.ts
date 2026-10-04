@@ -130,7 +130,9 @@ describe("buildTabs", () => {
 		const { theme } = stubTheme();
 		const tabs = buildTabs("unicode", theme, "overview");
 		expect(tabs.map(t => t.id)).toEqual(SHOWN.map(s => s.id));
-		expect(tabs.some(t => t.id === "providers")).toBe(false);
+		for (const spec of SCREEN_SPECS.filter(spec => spec.deferred)) {
+			expect(tabs.some(t => t.id === spec.id), spec.id).toBe(false);
+		}
 	});
 
 	test("label is icon + space + label, and short is the one-cell glyph", () => {

@@ -192,3 +192,15 @@ export function formatElapsed(ms: number): string {
 	if (totalMin < 60) return `${totalMin}m ${String(Math.floor((ms % 60_000) / 1000)).padStart(2, "0")}s`;
 	return `${Math.floor(totalMin / 60)}h ${String(totalMin % 60).padStart(2, "0")}m`;
 }
+
+/**
+ * Byte sizes the host's way (`formatters.ts:93-98`): one decimal, B/KB/MB/GB.
+ * Gain's saved-bytes tile and column read through this, so the panel and the
+ * dashboard agree on `4.8 MB` rather than on two near-identical strings.
+ */
+export function formatBytes(value: number): string {
+	if (value >= 1e9) return `${(value / 1e9).toFixed(1)} GB`;
+	if (value >= 1e6) return `${(value / 1e6).toFixed(1)} MB`;
+	if (value >= 1e3) return `${(value / 1e3).toFixed(1)} KB`;
+	return `${value} B`;
+}

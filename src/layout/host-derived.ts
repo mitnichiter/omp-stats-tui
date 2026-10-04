@@ -306,6 +306,37 @@ export const HOST_DERIVED: Readonly<
 			return requestStatus(row);
 		},
 	},
+
+	savedPerHit: {
+		source: "gainOverall",
+		compute: rows => {
+			const [overall] = rows as readonly { savedTokens?: unknown; hits?: unknown }[];
+			const saved = typeof overall?.savedTokens === "number" ? overall.savedTokens : null;
+			const hits = typeof overall?.hits === "number" ? overall.hits : null;
+			if (saved === null || hits === null || hits <= 0) return null;
+			return saved / hits;
+		},
+	},
+
+	/**
+	 * `GainRoute.tsx` `sourceRows`: one source's share of all saved tokens,
+	 * `total > 0 ? saved / total : 0`. Row-scoped: the table resolves the row's
+	 * own tokens and divides by the GRAND total, which the `againstScope`
+	 * marker on the ref selects.
+	 */
+	sourceShare: {
+		source: "gainBySource",
+		compute: (rows, ctx) => {
+			const [row] = rows as readonly { savedTokens?: unknown }[];
+			const saved = typeof row?.savedTokens === "number" ? row.savedTokens : null;
+			if (saved === null) return null;
+			const totals = rowsFor("gainOverall", ctx.data);
+			const [overall] = totals as readonly { savedTokens?: unknown }[];
+			const total = typeof overall?.savedTokens === "number" ? overall.savedTokens : null;
+			if (total === null || total <= 0) return 0;
+			return saved / total;
+		},
+	},
 };
 
 /** The entry for an IR `name`, or `undefined` when the name is not host-derived. */

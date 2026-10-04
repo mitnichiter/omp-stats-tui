@@ -110,10 +110,14 @@ export function rowsFor(source: MetricSource, data: PanelData): readonly DataRow
 			return asRows(data.tools?.series);
 		case "dailyActivity":
 			return asRows(data.dailyActivity);
-		// `providerStats` is deliberately absent: `/api/stats/provider-windows`
-		// does network I/O on every load and this panel makes no network call.
 		case "providerStats":
-			return [];
+			return asRows(data.providers?.providers);
+		case "gainOverall":
+			return singleRow(data.gain?.overall as DataRow | undefined);
+		case "gainBySource":
+			return Object.entries(data.gain?.bySource ?? {}).map(([source, totals]) => ({ source, ...(totals as object) }));
+		case "gainSeries":
+			return asRows(data.gain?.timeSeries);
 	}
 }
 
@@ -139,9 +143,9 @@ function asRows(value: readonly unknown[] | undefined): readonly DataRow[] {
  * Which fetch fills this ref, or `null` when nothing can.
  *
  * Delegates to `NEED_BY_SOURCE` rather than restating it, so a source added to
- * the IR's table is fetchable here the moment it lands. `null` is NOT an error:
- * it is `providerStats`, whose route does network I/O, and the screen that
- * names it is marked `deferred` for exactly this reason.
+ * the IR's table is fetchable here the moment it lands. `providerStats` reads
+ * the DB-backed `/api/stats/providers` aggregates; the network-only windows
+ * payload has no source because the panel never fetches it.
  */
 export function metricNeed(ref: MetricRef): DataNeed | null {
 	return NEED_BY_SOURCE[sourceOf(ref)] ?? null;
@@ -175,6 +179,10 @@ export function isFetched(source: MetricSource, data: PanelData): boolean {
 			return data.errors !== undefined;
 		case "tools":
 			return data.tools !== undefined;
+		case "providers":
+			return data.providers !== undefined;
+		case "gain":
+			return data.gain !== undefined;
 		case "dailyActivity":
 			return data.dailyActivity !== undefined;
 		case "rollupStatus":

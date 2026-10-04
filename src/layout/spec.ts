@@ -61,10 +61,8 @@ import type { DataNeed } from "../data/api";
  * `DataNeed`, and `NEED_BY_SOURCE` is that map — it is the whole reason the IR
  * can be checked against the data seam instead of against opinion.
  *
- * `providerStats` deliberately maps to nothing: the only route that answers it,
- * `/api/stats/provider-windows`, does network I/O on every load, and the panel
- * makes no network call at all. A source that cannot be fetched is still a real
- * source; it just cannot sit on a screen that claims to be filled.
+ * The network-only windows payload has NO source: the panel never fetches
+ * `/api/stats/provider-windows`, so the IR cannot name it either.
  */
 export type MetricSource =
 	| "overall"
@@ -82,7 +80,10 @@ export type MetricSource =
 	| "toolsSeries"
 	| "dailyActivity"
 	| "rollupStatus"
-	| "providerStats";
+	| "providerStats"
+	| "gainOverall"
+	| "gainBySource"
+	| "gainSeries";
 
 /** A field read off one aggregated row — `overall`, or the first row of a grouped array. */
 export interface AggregateRef {
@@ -154,8 +155,14 @@ export const NEED_BY_SOURCE: Readonly<Record<MetricSource, DataNeed | null>> = {
 	toolsSeries: "tools",
 	dailyActivity: "dailyActivity",
 	rollupStatus: "rollupStatus",
-	// Null rather than a lie: no need fills this source.
-	providerStats: null,
+	// `providerStats` reads the DB-backed `/api/stats/providers` aggregates —
+	// per-provider totals, hourly burn, per-provider series. The NETWORK route
+	// (`provider-windows`) stays out of the load path; see the providers spec's
+	// deferred note for the windows sections.
+	providerStats: "providers",
+	gainOverall: "gain",
+	gainBySource: "gain",
+	gainSeries: "gain",
 };
 
 /** Every metric reachable from a reference, itself first. */
@@ -301,6 +308,7 @@ const costSeries = (field: string, groupBy?: SeriesRef["groupBy"]): SeriesRef =>
 	groupBy,
 });
 const timeSeries = (field: string): SeriesRef => ({ kind: "series", source: "timeSeries", field });
+const gainOverall = (field: string): AggregateRef => ({ kind: "aggregate", source: "gainOverall", field });
 
 /**
  * `sumConversationTokens` in the web app: uncached input + cache reads + cache
@@ -796,6 +804,10 @@ const projects: ScreenSpec = {
 				{ header: "Last active", align: "right", source: { kind: "aggregate", source: "folders", field: "lastTimestamp" } },
 			],
 		},
+		{
+			kind: "note",
+			text: "The web's hide-temporary checkbox, folder search, and click-to-filter have no terminal equivalent; the lists above rank the full folder set.",
+		},
 	],
 };
 
@@ -1130,14 +1142,11 @@ const providers: ScreenSpec = {
 	id: "providers",
 	label: "Providers",
 	short: "Provider",
-	needs: [],
-	deferred: true,
-	deferredReason:
-		"/api/stats/provider-windows does network I/O to every provider on every load, and this panel makes no network call at all; the route's own aggregates route is not behind a need the registry exposes, so nothing here can be filled.",
+	needs: ["providers", "rollupStatus"],
 	source: {
 		file: "@oh-my-pi/omp-stats/src/client/routes/ProvidersRoute.tsx",
 		lines: "146-188 (StatGrid), 189-205 (Provider totals), 206-249 (Burn by provider), 250-310 (Subscription windows), 311-422 (columns)",
-		note: "Structure is ported faithfully so a renderer can be built against it; every band is unfillable until the data seam exposes a non-network provider source.",
+		note: "S1-S4 (stats, totals, burn, peak hours) read the DB-backed /api/stats/providers aggregates. The subscription-window sections (insights + utilization) do broker network I/O per load and stay out of the panel; the custom band below names that boundary.",
 	},
 	bands: [
 		{
@@ -1146,12 +1155,23 @@ const providers: ScreenSpec = {
 				{
 					label: "Providers",
 					metric: { kind: "derived", name: "providerCount", op: "count", of: { kind: "aggregate", source: "providerStats", field: "provider" } },
-					emphasis: "primary",
 				},
-				{ label: "Requests", metric: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
-				{ label: "Tokens", metric: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
-				{ label: "API-equivalent cost", metric: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
-				{ label: "Error rate", metric: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
+				{
+					label: "Requests",
+					metric: { kind: "derived", name: "providerRequests", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
+					hint: { kind: "derived", name: "providerFailed", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" } },
+				},
+				{
+					label: "Tokens",
+					metric: { kind: "derived", name: "providerTokens", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+				},
+				{
+					label: "API-equivalent cost",
+					metric: { kind: "derived", name: "providerCost", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
+					emphasis: "primary",
+					hint: { kind: "derived", name: "providerUnpriced", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "unpricedRequests" } },
+				},
+				{ label: "Error rate", metric: { kind: "derived", name: "providerErrorRate", op: "share", of: { kind: "derived", name: "providerFailed", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" } }, against: { kind: "derived", name: "providerRequests", op: "sum", of: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } } },
 			],
 		},
 		{
@@ -1174,21 +1194,84 @@ const providers: ScreenSpec = {
 			kind: "table",
 			title: "Provider totals",
 			source: "ProvidersRoute.tsx:189-205, 311-422",
-			rows: { source: "providerStats" },
+			rows: {
+				source: "providerStats",
+				initialSort: { by: { kind: "aggregate", source: "providerStats", field: "totalTokens" }, direction: "desc" },
+				limit: 12,
+			},
 			columns: [
 				{ header: "Provider", align: "left", source: { kind: "label", source: "providerStats", field: "provider" } },
-				{ header: "Requests", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
+				{ header: "Requests", align: "right", cell: "meter", source: { kind: "aggregate", source: "providerStats", field: "totalRequests" } },
 				{ header: "Error rate", align: "right", cell: "badge", source: { kind: "derived", name: "errorRate", op: "share", of: { kind: "aggregate", source: "providerStats", field: "failedRequests" }, against: { kind: "aggregate", source: "providerStats", field: "totalRequests" } } },
 				{ header: "Models", align: "right", source: { kind: "aggregate", source: "providerStats", field: "models" } },
-				{ header: "Tokens", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
+				{ header: "Tokens", align: "right", cell: "meter", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
 				{ header: "Share", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalTokens" } },
 				{ header: "Cost", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalCost" } },
 				{ header: "Tokens/s", align: "right", source: { kind: "aggregate", source: "providerStats", field: "avgTokensPerSecond" } },
+				{ header: "Premium", align: "right", source: { kind: "aggregate", source: "providerStats", field: "totalPremiumRequests" } },
 			],
 		},
 		{
-			kind: "custom",
-			id: "subscription-windows",
+			kind: "note",
+			text: "Subscription windows need broker network I/O per load, so the insights and utilization sections stay out of the panel; burn, totals and peak hours above are the local aggregates.",
+		},
+	],
+};
+
+const gain: ScreenSpec = {
+	id: "gain",
+	label: "Gain",
+	short: "Gain",
+	needs: ["gain", "rollupStatus"],
+	source: {
+		file: "@oh-my-pi/omp-stats/src/client/routes/GainRoute.tsx",
+		lines: "128-152 (StatGrid), 154-170 (Savings over time), 171-173 (By source), 181-227 (columns)",
+		note: "Token savings from snapcompact (jsonl beside the DB), NOT cache savings: savedBytes is tokens x 4, reductionPercent stays null, and the route reads /api/stats/gain. The project <select> has no terminal equivalent; the screen reads the unfiltered payload and names the active project in a note when set.",
+	},
+	bands: [
+		{
+			kind: "statRow",
+			stats: [
+				{
+					label: "Saved tokens",
+					metric: gainOverall("savedTokens"),
+					emphasis: "primary",
+					hint: gainOverall("savedTokens"),
+				},
+				{ label: "Saved bytes", metric: gainOverall("savedBytes") },
+				{
+					label: "Reduction",
+					metric: gainOverall("reductionPercent"),
+					hint: { text: "original size not recorded" },
+				},
+				{ label: "Hits", metric: gainOverall("hits") },
+				{
+					label: "Saved per hit",
+					metric: { kind: "derived", name: "savedPerHit", op: "sum", of: gainOverall("savedTokens") },
+					hint: { text: "tokens" },
+				},
+			],
+		},
+		{
+			kind: "table",
+			title: "By source",
+			source: "GainRoute.tsx:171-173, 181-227",
+			rows: {
+				source: "gainBySource",
+				initialSort: { by: { kind: "aggregate", source: "gainBySource", field: "savedTokens" }, direction: "desc" },
+			},
+			columns: [
+				{ header: "Source", align: "left", source: { kind: "label", source: "gainBySource", field: "source" } },
+				{ header: "Saved tokens", align: "right", cell: "meter", source: { kind: "aggregate", source: "gainBySource", field: "savedTokens" } },
+				{ header: "Share", align: "right", source: { kind: "derived", name: "sourceShare", op: "share", of: { kind: "aggregate", source: "gainBySource", field: "savedTokens" }, against: { kind: "aggregate", source: "gainOverall", field: "savedTokens" }, againstScope: "total" } },
+				{ header: "Saved bytes", align: "right", source: { kind: "aggregate", source: "gainBySource", field: "savedBytes" } },
+				{ header: "Hits", align: "right", source: { kind: "aggregate", source: "gainBySource", field: "hits" } },
+				{ header: "Reduction", align: "right", source: { kind: "aggregate", source: "gainBySource", field: "reductionPercent" } },
+			],
+		},
+		{
+			kind: "note",
+			text: "Reduction stays null for snapcompact — original sizes are never recorded — so the tile reads the web's dash, never 0%. Savings are estimated at four bytes per token.",
 		},
 	],
 };
@@ -1209,6 +1292,7 @@ export const SCREEN_SPECS: readonly ScreenSpec[] = Object.freeze([
 	errors,
 	tools,
 	providers,
+	gain,
 ]);
 
 /** Every distinct metric reference anywhere in the spec data. */

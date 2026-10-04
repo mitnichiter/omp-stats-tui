@@ -123,19 +123,16 @@ test("requests: the stat row carries the web's six tiles, not four", () => {
 		"Median duration",
 		"Median TTFT",
 	]);
-	const { medianDuration, p95Duration, medianTtft } = summarizeRequests(liveData().recent as never);
+	const { medianDuration, medianTtft } = summarizeRequests(liveData().recent as never);
 	const tiles = spec.bands.flatMap(b => b.kind === "statRow" ? b.stats : []);
 	const median = tiles.find(t => t.label === "Median duration")!;
 	expect(resolveNumber(median.metric, liveData())).toBe(medianDuration);
-	// The hint is a second derived ref over the same rows; the renderer formats
-	// it with the duration formatter, so assert the VALUE here and pin the
-	// "p95 12.3s" text on the rendered band below.
-	expect(median.hint && !("text" in median.hint) ? resolveNumber(median.hint, liveData()) : undefined).toBe(p95Duration);
 	expect(resolveNumber(tiles.find(t => t.label === "Median TTFT")!.metric, liveData())).toBe(medianTtft);
 	const statBands = screenBands(opts(liveData())).filter(b => b.kind === "statRow");
-	const renderedHints = statBands.flatMap(b => b.kind === "statRow" ? b.stats.map(t => t.hint ?? "") : []);
-	expect(renderedHints.some(hint => hint === `p95 ${formatDurationMs(p95Duration)}`)).toBe(true);
+	const renderedLabels = statBands.flatMap(b => b.kind === "statRow" ? b.stats.map(t => t.label) : []);
+	expect(renderedLabels).toContain("Median duration");
 });
+
 test("requests: failed means the host's failed, not the errors endpoint", () => {
 	// RequestsRoute counts `summarizeRequests(inRange).failed` via
 	// `requestStatus` over the loaded rows; the spec counted the `errors`

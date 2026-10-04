@@ -572,7 +572,7 @@ export function blankData(): PanelData {
 		errors: [],
 		tools: { byTool: [], byToolModel: [], series: [] },
 		providers: { providers: [], hourly: [], series: [] },
-		gain: { overall: { savedTokens: 0, savedBytes: 0, hits: 0, outputBytes: 0, originalBytes: 0, reductionPercent: null }, bySource: {}, timeSeries: [], project: null, projects: [] },
+		gain: { overall: { savedTokens: 0, savedBytes: 0, hits: 0, outputBytes: 0, originalBytes: 0, reductionPercent: null }, bySource: { snapcompact: { savedTokens: 0, savedBytes: 0, hits: 0, outputBytes: 0, originalBytes: 0, reductionPercent: null } }, timeSeries: [], project: null, projects: [] },
 		dailyActivity: [],
 		rollupStatus: { dirtyHours: 0, dirtySessions: 0 },
 	};

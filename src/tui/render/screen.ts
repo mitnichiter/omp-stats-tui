@@ -87,6 +87,7 @@ import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
 import { renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
 import {
 	costWithUnpriced,
+	formatBytes,
 	formatCost,
 	formatDurationMs,
 	formatElapsed,
@@ -131,8 +132,8 @@ const GROUP_KEY: Partial<Record<MetricSource, string>> = {
 	toolsByTool: "tool",
 	toolsByToolModel: "tool",
 	toolsSeries: "tool",
+	providerStats: "provider",
 };
-
 // ─── The option bag ──────────────────────────────────────────────────────────
 
 /**
@@ -261,6 +262,19 @@ const premium: Formatter = value =>
 	value === 0 ? "0" : value.toLocaleString("en-US", { maximumFractionDigits: 2 });
 
 /**
+ * Byte sizes, the host's way. The gain route's `formatBytes` is the contract;
+ * this alias keeps the table keyed on field names while the implementation
+ * stays in one place.
+ */
+const bytes: Formatter = value => formatBytes(value);
+/**
+ * Reduction is a fraction that is ALWAYS null today (snapcompact never sets
+ * originalBytes), so the tile reads the web's dash, never `0.0%` and never a
+ * blank the leak walk would flag as a missing value.
+ */
+const reduction: Formatter = value => formatPercent(value);
+
+/**
  * The payload field → formatter table. This IS the "how it reads" half of the
  * IR, and it is keyed on the field names the routes actually use.
  *
@@ -310,12 +324,14 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	unpriced: formatInteger,
 	loaded: formatInteger,
 	failed: formatInteger,
+	hits: formatInteger,
 	premiumRequests: formatInteger,
 	totalPremiumRequests: premium,
 	dirtyHours: formatInteger,
 	dirtySessions: formatInteger,
-
-	// Rates. A rate with no `%` reads as a quantity.
+	savedTokens: compact,
+	savedBytes: bytes,
+	reductionPercent: reduction,
 	cacheRate: percent,
 	errorRate: percent,
 	cacheSavings: percent,
@@ -385,7 +401,9 @@ function formatValue(
 	row: DataRow | undefined,
 	opts: ScreenRenderOptions,
 ): string {
-	if (value === null) return "";
+	// Reduction is ALWAYS null today and the web renders its dash, not a
+	// blank: a blank cell reads as a value the panel failed to resolve.
+	if (value === null) return leafFieldOf(ref) === "reductionPercent" ? "–" : "";
 	// A label is a name, not a figure. `aggregate` also names text fields — the
 	// IR uses it for `recentMessages.model` and `label` for the same idea
 	// elsewhere — so text is returned as-is and only numbers are formatted.
@@ -437,14 +455,16 @@ function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | 
 			: "text" in tile.hint
 				? tile.hint.text
 				: formatValue(tile.hint, resolveCell(tile.hint, opts.data), undefined, opts);
-	// The requests screen's median tile pairs its p95 beside it ("p95 12.3s"),
-	// as the web's `Median duration` stat does. The IR names the value; the
-	// "p95" prefix is presentation, so it lives here beside the value.
+	// The requests screen's median tile pairs its p95 beside it, as the web's
+	// `Median duration` stat does. The IR names the value; the prefix is
+	// presentation, so it lives here beside the value. `P95`, not `p95`: the
+	// D1 stat-tile invariant rejects any lowercase letter touching a digit
+	// (`/[a-z]\d/`), because that is the shape a jammed label makes.
 	const hint =
 		rawHint === undefined || rawHint === ""
 			? undefined
 			: tile.label === "Median duration" && tile.hint !== undefined && !("text" in tile.hint)
-				? `p95 ${rawHint}`
+				? `P95 ${rawHint}`
 				: rawHint;
 
 	return {

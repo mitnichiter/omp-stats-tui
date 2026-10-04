@@ -55,6 +55,7 @@ export const TAB_ICON: Record<ScreenId, IconRole> = {
 	errors: "errors",
 	tools: "tools",
 	providers: "providers",
+	gain: "gains",
 };
 
 /**
@@ -75,6 +76,7 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		errors: STATS_ICONS.unicode.warning,
 		tools: "⚒",
 		providers: "◈",
+		gain: "+",
 	},
 	nerd: {
 		overview: STATS_ICONS.nerd.trendUp,
@@ -86,6 +88,7 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		errors: STATS_ICONS.nerd.errors,
 		tools: STATS_ICONS.nerd.tools,
 		providers: STATS_ICONS.nerd.providers,
+		gain: STATS_ICONS.nerd.gains,
 	},
 	ascii: {
 		overview: "*",
@@ -97,6 +100,7 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		errors: "!",
 		tools: "T",
 		providers: "H",
+		gain: "+",
 	},
 };
 

@@ -99,6 +99,9 @@ const FIXTURES: Record<string, unknown> = {
 	// The DB-backed aggregates. The NETWORK windows payload has no source:
 	// the panel never fetches it, so the IR cannot name it either.
 	providerStats: [{ provider: "openrouter", totalRequests: 1_280, failedRequests: 4, models: 1, totalInputTokens: 2_100_000, totalOutputTokens: 400_000, totalCacheReadTokens: 51_000_000, totalCacheWriteTokens: 500_000, totalTokens: 54_000_000, totalCost: 935.72, unpricedRequests: 0, totalPremiumRequests: 0, avgTokensPerSecond: 61.2 }],
+	gainOverall: { savedTokens: 1_204_000, savedBytes: 4_816_000, hits: 96, outputBytes: 0, originalBytes: 0, reductionPercent: null },
+	gainBySource: [{ source: "snapcompact", savedTokens: 1_204_000, savedBytes: 4_816_000, hits: 96, outputBytes: 0, originalBytes: 0, reductionPercent: null }],
+	gainSeries: [{ date: "2026-07-14", snapcompact: 803_000, total: 803_000 }],
 };
 
 function readPath(source: string, path: string): unknown {

@@ -308,13 +308,12 @@ test("every selectable screen is on the number row, so no digit is a dead key", 
 
 test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
 	expect(SCREENS.some(s => s.status === "excluded")).toBe(true);
-	// The selectable set is SPEC-DRIVEN: a screen the layout IR marks
-	// `deferred` has no body to draw and no tab on the strip, so arrowing onto it
-	// would spend a keystroke painting an empty page. No shipped screen is
-	// deferred now (`providers` reads the DB-backed aggregates); `gain` has no
-	// spec at all, and its absence here is the assertion.
-	expect(SELECTABLE.map(s => s.id)).not.toContain("gain");
-	expect(SELECTABLE.map(s => s.id)).toContain("providers");
+	// The selectable set is SPEC-DRIVEN: every non-deferred spec is selectable.
+	// `providers` reads the DB-backed aggregates and `gain` the snapcompact
+	// payload, so both are selectable; the excluded screens never are.
+	for (const id of ["providers", "gain"] as const) {
+		expect(SELECTABLE.map(s => s.id), id).toContain(id);
+	}
 	expect(__testing.debugScreenIds()).toEqual(SELECTABLE.map(s => s.id));
 	// Every selectable screen has a SPEC, and every non-deferred spec is
 	// selectable: the two lists are one list.
