@@ -409,29 +409,40 @@ test("a prose hint on a COST tile does not resolve the unpriced count", () => {
 	expect(prose, "prose must not be read as a figure hint").not.toContain("unpriced");
 });
 
-test("a string hint on a Median duration tile is NOT prefixed with P95", () => {
+test("a prose hint on a Median duration tile is NOT prefixed with P95", () => {
 	// THE OTHER SITE A NAIVE GUARD MISSES. `P95 ` names a QUANTILE, and the tile
 	// takes it only when the hint really is the p95 figure. Prefix a prose hint
 	// and the row claims a percentile it never measured.
+	//
+	// The pairing is the SHIPPED one — `metric: duration`, `hint: p95Duration`
+	// off `recentMessages` (spec.ts:920-922) — so this reads as the tile it
+	// describes rather than as a label with an arbitrary metric bolted on to get
+	// a figure hint. A copy that paired `Median duration` with `totalRequests`
+	// would look plausible and assert nonsense.
 	const prose = renderTiles([
-		{
-			label: "Median duration",
-			metric: overallMetric("totalRequests"),
-			hint: "single sample this range",
-		},
+		{ label: "Median duration", metric: recentMetric("duration"), hint: "single sample this range" },
 	]).join("\n");
 	expect(prose).toContain("hint:single sample this range");
 	expect(prose).not.toContain("P95");
 
-	// The figure form still gets it — that is the whole point of the branch.
+	// The figure form still gets the prefix — that is the whole point of the
+	// branch, and without this half the test would pass on a build that dropped
+	// `P95` entirely.
 	const figure = renderTiles([
 		{
 			label: "Median duration",
-			metric: overallMetric("totalRequests"),
-			hint: { kind: "aggregate", source: "overall", field: "totalCost" },
+			metric: recentMetric("duration"),
+			hint: { kind: "derived", name: "p95Duration", op: "sum", of: recentMetric("duration") },
 		},
 	]).join("\n");
 	expect(figure).toMatch(/hint:P95 /);
+});
+
+/** A `recentMessages` aggregate, the source the shipped median tile reads. */
+const recentMetric = (field: string): IRStatTile["metric"] => ({
+	kind: "aggregate",
+	source: "recentMessages",
+	field,
 });
 
 /** An `overall` aggregate ref, the shape a stat tile's own metric usually takes. */
