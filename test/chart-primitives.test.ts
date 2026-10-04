@@ -308,7 +308,7 @@ test("renderSeriesChart IS renderDailyBars called once per series", () => {
 	const series = REQUEST_SERIES;
 	const width = 20;
 	const height = 6;
-	const perSeries = bandHeights(series.map(s => Math.max(...s.values)), Math.floor(height / series.length))[0] ?? 0;
+	const perSeries = bandHeights(series.map(s => Math.max(...s.values)), height)[0] ?? 0;
 	const max = bandMax(series);
 
 	const handRolled = series.flatMap(s => primitive(s.values, width, perSeries, "unicode", max));
@@ -331,8 +331,10 @@ test("every series in a multi-series chart is the primitive, band by band", () =
 		{ label: "Failed", values: [4, 4, 4, 4] },
 	];
 	const width = 20;
-	const budget = 8;
-	const rows = marks(series, width, budget * series.length);
+	// The WHOLE height is the budget: bands draw from one pool, so the test has to
+	// ask for the allocation the same way `renderSeriesChart` does.
+	const budget = 16;
+	const rows = marks(series, width, budget);
 
 	const heights = bandHeights([44, 4], budget);
 	const max = bandMax(series);
@@ -349,8 +351,8 @@ test("composition holds at every preset and every width", () => {
 	const height = 6;
 	for (const preset of PRESETS) {
 		for (const width of WIDTHS) {
-			const perSeries = bandHeights(series.map(s => Math.max(...s.values)), Math.floor(height / series.length))[0] ?? 0;
-		const max = bandMax(series);
+			const perSeries = bandHeights(series.map(s => Math.max(...s.values)), height)[0] ?? 0;
+			const max = bandMax(series);
 			const expected = series.flatMap(s => primitive(s.values, width, perSeries, preset, max));
 			expect(marks(series, width, height, preset)).toEqual(expected);
 			for (const row of expected) expect(cells(row)).toBe(width);
@@ -367,17 +369,30 @@ test("the SHARED scale is what stops a 4% failure rate reading as 100%", () => {
 	// Asserted on the ALLOCATION rather than on the pixels: `renderDailyBars`
 	// rounds any fraction of a row up to at least one filled cell, so measuring
 	// pixels here would be testing the primitive's rounding, not this rule.
-	expect(bandHeights([44, 4], 8)).toEqual([8, 1]);
+	// THE BUDGET IS THE WHOLE CHART, so these sums are the chart height — a band
+	// cannot claim a row another band is not giving up.
+	expect(bandHeights([44, 4], 8)).toEqual([7, 1]);
 	// Equal peaks get equal bands — the case the composition equalities rely on.
-	expect(bandHeights([10, 10, 10], 3)).toEqual([3, 3, 3]);
+	expect(bandHeights([10, 10, 10], 3)).toEqual([1, 1, 1]);
 	// A series that recorded something keeps at least one row, so "drew nothing"
 	// and "recorded nothing" stay distinguishable.
-	expect(bandHeights([100, 1], 4)).toEqual([4, 1]);
+	expect(bandHeights([100, 1], 4)).toEqual([3, 1]);
 	// No budget, no bands.
 	expect(bandHeights([44, 4], 0)).toEqual([0, 0]);
-	// Nothing recorded anywhere: every series still gets its share of the rows, so
-	// "no data" reads as a flat empty chart rather than a missing one.
-	expect(bandHeights([0, 0], 4)).toEqual([4, 4]);
+	// Nothing recorded anywhere: every band still gets a row, so "no data" reads
+	// as a flat empty chart rather than a missing one. There is no magnitude to
+	// divide, so the rows left over after that go to NOBODY.
+	expect(bandHeights([0, 0], 4)).toEqual([1, 1]);
+	// And the sum never exceeds the budget, at any series count — the property
+	// that lets a four-series chart keep the rows its bands actually drew.
+	for (const peaks of [[16, 8, 2, 1], [1, 1, 1], [9], [44, 4, 0]]) {
+		for (const budget of [0, 1, 2, 3, 8, 14, 40]) {
+			expect(
+				bandHeights(peaks, budget).reduce((sum, rows) => sum + rows, 0),
+				`${JSON.stringify(peaks)} / ${budget}`,
+			).toBeLessThanOrEqual(budget);
+		}
+	}
 });
 
 test("a labelled chart names every band and still holds the width", () => {
@@ -441,6 +456,8 @@ test("renderSeriesChart drops the remainder rather than giving it to the last se
 	];
 	const rows = marks(many, 10, 5);
 	void bandMax(many);
-	expect(rows.length).toBe(3);
+	// The 5 rows go to the LOUDEST bands, not to the last one: `b` peaks at 2 and
+	// takes the spare row that `a` — no quieter, but listed first — did not.
+	expect(rows.length).toBe(5);
 	for (const row of rows) expect(cells(row)).toBe(10);
 });

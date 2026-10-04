@@ -39,7 +39,7 @@
 import { expect, test } from "bun:test";
 
 import { renderDailyBars, renderModelCostBars } from "../src/tui/charts/bars";
-import { renderSeriesChart } from "../src/tui/charts/compose";
+import { renderSeriesChart, type SeriesChartSeries } from "../src/tui/charts/compose";
 import { renderRankedBars, renderShareBar, renderSparkline } from "../src/tui/charts/sparkline";
 import { glyph, glyphsFor, type GlyphSet, type SymbolPreset } from "../src/tui/glyphs";
 import { stripForTest, type PaletteTheme } from "../src/tui/palette";
@@ -266,6 +266,154 @@ test("a quiet series draws a SHORTER band than a loud one, not an identical one"
 	// And not by a hair: a 4% band against a 100% one must be visibly shorter, or
 	// the reader is being told the failure rate is high.
 	expect(quiet * 3).toBeLessThan(loud);
+});
+
+/**
+ * Rows of INK in each labelled band, in the order the labels were given.
+ *
+ * `renderSeriesChart` labels a band AFTER its marks, so a band's rows are those
+ * between the previous label and its own — the same split the test above walks
+ * by hand, done once for three chart shapes instead of three times.
+ *
+ * Throws rather than returning a short array: a band that cannot be found means
+ * the chart is not shaped the way the caller believes, and a silently shorter
+ * result would let `Math.max` over an empty set pass.
+ */
+function bandInk(rows: readonly string[], labels: readonly string[], fill: string): number[] {
+	const ink: number[] = [];
+	let start = 0;
+	for (const label of labels) {
+		const at = rows.findIndex((row, index) => index >= start && stripForTest(row).includes(label));
+		if (at < 0) throw new Error(`no band labelled ${JSON.stringify(label)}: ${JSON.stringify(rows)}`);
+		ink.push(rows.slice(start, at).filter(row => [...stripForTest(row)].includes(fill)).length);
+		start = at + 1;
+	}
+	return ink;
+}
+
+test("an all-zero series inside a multi-series chart draws its floor, never a blank band", () => {
+	// DEFECT 1, and it is in the COMPOSITION rather than the primitive: the
+	// primitive already drew a floor for an all-zero series, at every height. The
+	// composed chart lost it, because the floor was charged to the magnitude side
+	// — `plotRows` gives a one-row band over to the data, and a series that
+	// recorded nothing has no data to put in that row, so the row came out blank
+	// with nothing under it. A blank band and a band that was never there are then
+	// the same claim, which is the whole reason the three states are three.
+	const axis = glyph("unicode", "axisLine");
+	const width = 20;
+	const rows = renderSeriesChart(
+		[
+			{ label: "Succeeded", values: [12, 30, 8, 20, 21] },
+			{ label: "Failed", values: [0, 0, 0, 0, 0] },
+		],
+		{ width, height: 12, preset: "unicode", theme: THEME, paint: (_color, text) => text },
+	);
+	const failed = rows.findIndex(row => stripForTest(row).includes("Failed"));
+	expect(failed, "the all-zero band must still be present").toBeGreaterThan(0);
+	const band = rows.slice(0, failed).map(row => stripForTest(row));
+	// PRESENT, ACCOUNTED FOR, NOTHING RECORDED: its floor is the only ink it has.
+	expect(band).toContain(axis.repeat(width));
+	// And it is never a block of nothing, which is what an absent band looks like.
+	expect(band.some(row => row.trim() === "")).toBe(false);
+});
+
+test("band height carries magnitude across two, three and four series", () => {
+	// DEFECT 2. Band height was allocated in a space where the FLOOR counted as
+	// magnitude, so the loudest band spent the very row that said it was loud on
+	// its floor: bands allocated 1 and 2 rows drew the SAME single row of ink. A
+	// 16x peak spread came out of a four-series chart as 1 of 4 distinct band
+	// shapes, which is the shared-max claim failing silently — the maximum was
+	// passed to every band, and the row budget cancelled it out again.
+	//
+	// Two series is included because it is the case that already worked: if the
+	// fix regressed THAT, it would have stopped discriminating everywhere.
+	const fill = glyph("unicode", "barFill");
+	const shapes: readonly (readonly [string, readonly number[]])[][] = [
+		[
+			["Succeeded", [44, 40, 44, 38]],
+			["Failed", [4, 4, 4, 4]],
+		],
+		[
+			["a", [60, 50, 60, 55]],
+			["b", [10, 10, 10, 10]],
+			["c", [1, 1, 1, 1]],
+		],
+		[
+			["Input", [2, 1, 4, 2]],
+			["Output", [1, 2, 1, 1]],
+			["Cache read", [16, 8, 20, 12]],
+			["Cache write", [1, 2, 1, 1]],
+		],
+	];
+
+	for (const shape of shapes) {
+		const labels = shape.map(([label]) => label);
+		const rows = renderSeriesChart(
+			shape.map(([label, values]) => ({ label, values })),
+			{ width: 20, height: 14, preset: "unicode", theme: THEME, paint: (_color, text) => text },
+		);
+		const ink = bandInk(rows, labels, fill);
+		expect(ink.length, labels.join("/")).toBe(labels.length);
+		// Every series that recorded something draws something.
+		for (const [index, count] of ink.entries()) {
+			expect(count, `${labels[index]} drew nothing`).toBeGreaterThan(0);
+		}
+		// And the loudest band is VISIBLY taller than the quietest — three times
+		// over, or the reader is being told a quiet series is a loud one. Equal
+		// bands are the failure this test exists for.
+		const loud = Math.max(...ink);
+		const quiet = Math.min(...ink);
+		expect(quiet * 3, `${labels.join("/")} drew ${ink.join(", ")} rows of ink`).toBeLessThanOrEqual(loud);
+	}
+});
+
+test("a chart too short for BOTH names and discrimination drops the names, not the rows", () => {
+	// Found while sweeping the band allocation: names cost one row each, and at
+	// four series in eight rows they cost half the chart — leaving every band
+	// exactly one row. That is a chart which names four series and then shows
+	// them as four identical bars, so the naming was buying nothing a reader can
+	// use while destroying the one thing they can.
+	//
+	// A label is CHROME and band height is DATA, so when the rows cannot pay for
+	// both, the marks win and the caller names them.
+	const fill = glyph("unicode", "barFill");
+	const shape: readonly SeriesChartSeries[] = [
+		{ label: "Input", values: [16, 8, 12] },
+		{ label: "Output", values: [8, 4, 6] },
+		{ label: "Cache read", values: [4, 2, 3] },
+		{ label: "Cache write", values: [2, 1, 1] },
+	];
+	// Eight rows for four bands: two rows each with names, or one spare row for
+	// the loudest band without them. The second is strictly more informative.
+	const rows = renderSeriesChart(shape, { width: 20, height: 8, preset: "unicode", theme: THEME, paint: (_c, t) => t });
+	expect(rows.some(row => shape.some(s => stripForTest(row).includes(s.label)))).toBe(false);
+	expect(rows.length).toBeLessThanOrEqual(8);
+	expect(rows.filter(row => [...stripForTest(row)].includes(fill)).length).toBeGreaterThan(4);
+	// One row taller, and there IS room for both — so the names come back.
+	const roomy = renderSeriesChart(shape, { width: 20, height: 14, preset: "unicode", theme: THEME, paint: (_c, t) => t });
+	for (const series of shape) {
+		expect(roomy.some(row => stripForTest(row).includes(series.label)), `${series.label} must be named`).toBe(true);
+	}
+});
+
+test("no band ever claims a row the chart was not given", () => {
+	// The budget is the WHOLE chart height, so the floor a band reserves its own
+	// row for comes out of the same pool. This is the invariant that lets a
+	// four-series chart keep the rows its bands actually drew instead of
+	// overflowing the panel it sits in.
+	for (const count of [1, 2, 3, 4, 5, 6]) {
+		for (const height of [1, 2, 3, 4, 8, 14, 20]) {
+			const series: SeriesChartSeries[] = Array.from({ length: count }, (_, i) => ({
+				label: `s${i}`,
+				values: [16 / (i + 1), 8 / (i + 1), 4 / (i + 1)],
+			}));
+			for (const labels of [false, true]) {
+				const rows = renderSeriesChart(series, { width: 20, height, preset: "unicode", theme: THEME, paint: (_c, t) => t, labels });
+				expect(rows.length, `${count}/${height}/${labels}`).toBeLessThanOrEqual(height);
+				for (const row of rows) expect(cells(row), `${count}/${height}/${labels}`).toBe(20);
+			}
+		}
+	}
 });
 
 test("a one-row chart is marks, not a floor — a quiet series never vanishes", () => {

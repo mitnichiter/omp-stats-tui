@@ -167,12 +167,22 @@ function heights(values: readonly number[], rows: number, supplied?: number): re
  * body would overflow — and `renderSeriesChart` splits one `height` between its
  * series, so an extra row per band would silently halve the resolution.
  *
- * At `height` 1 there is no room for both a bar and a floor, so the single row
- * is DATA. `bandHeights` floors a series that recorded something at one row,
- * and a bare floor would render that series as having recorded nothing.
+ * WHETHER THE LAST ROW IS DATA OR FLOOR IS A QUESTION ABOUT THE DATA, NOT ABOUT
+ * THE HEIGHT. At `height` 1 there is no room for both, so the single row is
+ * normally the DATA — `bandHeights` floors a series that recorded something at
+ * one row, and a bare baseline would render that series as having recorded
+ * nothing.
+ *
+ * But a band with no ink at all has no data to give that row to: it measured
+ * zero, every bucket of it. Its one row is therefore the FLOOR, and that row is
+ * the only ink the chart has — present, accounted for, nothing recorded. Reading
+ * the height alone made an all-zero series render as a blank band with nothing
+ * under it, which is the one claim a blank band cannot make: a band that was
+ * never there looks identical, and "this series recorded nothing" then reads as
+ * "this chart lost a series".
  */
-function plotRows(height: number): number {
-	return height >= 2 ? height - 1 : height;
+function plotRows(height: number, hasInk: boolean): number {
+	return height >= 2 || !hasInk ? Math.max(0, height - 1) : height;
 }
 
 /**
@@ -269,7 +279,7 @@ export function renderDailyBars(values: readonly number[], opts: BarsOptions): r
 		Array.from({ length: width }, (_, i) => i),
 	);
 
-	const rows = plotRows(opts.height);
+	const rows = plotRows(opts.height, columns.some(value => value > 0));
 	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }
 
@@ -317,6 +327,6 @@ export function renderModelCostBars(
 					Array.from({ length: width }, (_, i) => i),
 				);
 
-	const rows = plotRows(opts.height);
+	const rows = plotRows(opts.height, columns.some(value => value > 0));
 	return compose(heights(columns, rows, opts.max), rows, { ...opts, width });
 }

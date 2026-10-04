@@ -145,9 +145,51 @@ export interface SeriesChartOptions {
  * just as readily as with a right one.
  */
 export function bandHeights(peaks: readonly number[], budget: number): readonly number[] {
-	const shared = peaks.reduce((max, peak) => (peak > max ? peak : max), 0);
-	if (budget <= 0) return peaks.map(() => 0);
-	return peaks.map(peak => (shared <= 0 ? budget : Math.max(1, Math.round((peak / shared) * budget))));
+	const count = peaks.length;
+	if (count === 0 || budget <= 0) return peaks.map(() => 0);
+
+	// `budget` is the WHOLE chart's row budget, not a per-series allowance: the
+	// rows of one band are taken from the same pool as the rows of every other,
+	// which is the only way band height can carry magnitude ACROSS series. It
+	// used to be an even per-band slice that this function then scaled by peak
+	// share, so a band could never claim a row another band was not using — and
+	// at four series that slice is two rows, which is too few to tell 16x apart.
+	//
+	// EVERY BAND GETS ONE ROW FIRST, handed to the LOUDEST bands if the budget
+	// cannot cover them all. A band with no row at all draws nothing, and a band
+	// that drew nothing is indistinguishable from a series that recorded nothing.
+	// Which row it is does not matter: a one-row band draws its floor when the
+	// series is all zero, and its single row of ink otherwise (`plotRows`).
+	const loudest = peaks
+		.map((peak, index) => ({ index, peak }))
+		.sort((a, b) => b.peak - a.peak || a.index - b.index);
+	const rows = new Array<number>(count).fill(0);
+	const covered = Math.min(count, budget);
+	for (const { index } of loudest.slice(0, covered)) rows[index] = 1;
+
+	// WHAT IS LEFT OVER IS APPORTIONED BY PEAK SHARE, one row at a time, to
+	// whichever band is furthest below its share — the highest-averages method.
+	// Handing the remainder to the LAST series would make its apparent magnitude a
+	// function of its position in the list, which is exactly the kind of quiet lie
+	// a chart must not tell; and splitting it by `round(share)` alone overspends
+	// the budget, since every band's rounding error points the same way.
+	//
+	// Rows that no band can claim — an all-zero chart, where the series count has
+	// taken the budget and there is no magnitude to divide — go to NOBODY.
+	for (let left = budget - covered; left > 0; left--) {
+		let best = -1;
+		let furthest = Number.POSITIVE_INFINITY;
+		for (let index = 0; index < count; index++) {
+			if (peaks[index]! <= 0) continue;
+			const below = rows[index]! / peaks[index]!;
+			if (below >= furthest) continue;
+			furthest = below;
+			best = index;
+		}
+		if (best < 0) break;
+		rows[best] = (rows[best] ?? 0) + 1;
+	}
+	return rows;
 }
 
 /**
@@ -191,15 +233,28 @@ export function renderSeriesChart(
 	}
 
 	const colors = resolveSeries(series.length, opts.theme);
-	const labelled = opts.labels !== false;
-	// With labels, each band reserves one row for its name. A chart too short to
-	// afford labels draws marks only rather than names with no marks.
-	const markable = labelled ? opts.height - series.length : opts.height;
-	const budget = markable > 0 ? Math.floor(markable / series.length) : 0;
-	const rowsEach = bandHeights(
-		series.map(entry => entry.values.reduce((max, value) => (value > max ? value : max), 0)),
-		budget,
-	);
+	// A band with NO rows at all draws nothing, and a band that drew nothing is
+	// indistinguishable from a series that recorded nothing — so every band is
+	// guaranteed a row BEFORE anything else is paid for. That row is its floor:
+	// the one row of an all-zero series is the floor, and for a live series it is
+	// a row of ink. Names come out of what is left, and a chart too short to
+	// afford both draws marks rather than names with no marks under them.
+	const perBand = series.map(entry => entry.values.reduce((max, value) => (value > max ? value : max), 0));
+	const wanted = opts.labels !== false;
+	// A LABEL IS ONLY WORTH ITS ROW IF THE BANDS STILL GET TO DIFFER. Names cost
+	// one row each, and at four series in eight rows they cost half the chart,
+	// leaving every band exactly one row — a chart that names four series and
+	// shows them as four identical bars. Data beats chrome: when the rows cannot
+	// pay for both, the chart draws marks and lets the caller name them.
+	const labelled = wanted && opts.height >= series.length * 2 + 1;
+	// Clamped to the declared height: a band may never claim a row the chart was
+	// not given, because an overflowing band corrupts the panel around it.
+	const markable = Math.min(opts.height, labelled ? opts.height - series.length : opts.height);
+	// THE WHOLE BUDGET, not an even slice of it. `bandHeights` apportions rows
+	// across the bands by peak share, and it can only do that from one pool —
+	// dividing first left every band the same handful of rows, at four series two
+	// rows each, which no allocation could make look different.
+	const rowsEach = bandHeights(perBand, markable);
 	// ONE divisor for every band. This is the whole point of the module, and it
 	// used to be missing: each band re-scaled against its own peak, so a series
 	// peaking at a fiftieth of the loudest drew the same shape as the loudest.
