@@ -111,7 +111,7 @@ export function rangeHit(line: string, col: number): Range | null {
  * (`sidebarWidth 0`) leaves no dead click zone; everything else is body text.
  */
 export function hitTest(frame: MouseFrame, row: number, col: number): MouseHit {
-	// The one top-border row and the two `│ ` inset columns `OverlayPanel`
+	// The one top-border row and the two inset columns `OverlayPanel`
 	// draws around every content row.
 	const contentRow = row - 1;
 	const contentCol = col - 2;

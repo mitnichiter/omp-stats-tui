@@ -1,4 +1,4 @@
-import { matchesKey, routeSgrMouseInput, TabBar, type Component, type TUI } from "@oh-my-pi/pi-tui";
+import { matchesKey, routeSgrMouseInput, TabBar, type Component, type SgrMouseEvent, type TUI } from "@oh-my-pi/pi-tui";
 import { OverlayPanel, PanelDivider, PanelRows } from "@oh-my-pi/pi-tui/chrome";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
 import {
@@ -38,6 +38,7 @@ import { framePolicy } from "./responsive";
 import { TAB_BAR_INDENT, buildTabs, tabBarTheme } from "./tabs";
 import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, bodyRows } from "./frame";
 import { footerHints, hintsFor, type HintMode } from "./footer";
+import { hitTest, type MouseFrame } from "./mouse";
 
 /**
  * THE MOUNT SEAM.
@@ -69,9 +70,12 @@ import { footerHints, hintsFor, type HintMode } from "./footer";
  * `fullscreen: true` is NOT optional. It borrows the terminal's alternate screen
  * buffer — the same `?1049h` mechanism `btop` and `bottom` use — which is what
  * stops a full-height panel from fighting the transcript for the last row and
- * the last column. `mouseTracking: false` means the wheel arrives as SGR text
- * on stdin, which `routeSgrMouseInput` below understands and the editor behind
- * the overlay does not, so a click cannot leak through to it.
+ * the last column. Mouse tracking stays on the host default: while a fullscreen
+ * overlay holds the alt screen the engine emits `1000h/1003h/1006h`, so clicks,
+ * wheel and motion arrive as SGR text on stdin, which `routeSgrMouseInput`
+ * understands and the editor behind the overlay does not — a click cannot leak
+ * through to it. `/settings` and `/usage` rely on the same default; opting out
+ * would cost clicks and hover, not just the wheel.
  */
 export const STATS_OVERLAY_OPTIONS = {
 	anchor: "top-left",
@@ -79,7 +83,6 @@ export const STATS_OVERLAY_OPTIONS = {
 	maxHeight: "100%",
 	margin: 0,
 	fullscreen: true,
-	mouseTracking: false,
 } as const;
 
 /**
@@ -244,6 +247,9 @@ const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", 
 const TAB_SWITCHES_SCREENS = true;
 
 export function panelAction(data: string, jumpArmed = false): PanelAction | null {
+	// Wheel-only: clicks and motion route through `#routeMouse`, which needs
+	// the last frame's geometry. The wheel needs none — it scrolls the body
+	// from anywhere, exactly like `usage-dashboard.ts:1369-1373` (`wheel * 2`).
 	let wheel: number | null = null;
 	if (
 		routeSgrMouseInput(data, event => {
@@ -309,6 +315,12 @@ interface PanelState {
 	ingest: IngestHandle | null;
 	/** `done()` calls so far. The mount promise must resolve exactly once. */
 	doneCalls: number;
+	/** Screen id under the pointer, or null. Painted with the host's `hoverTab` token. */
+	hoveredSidebarId: string | null;
+	/** Strip tab under the pointer, mirrored from the TabBar (which keeps its own private). */
+	hoveredStripId: string | null;
+	/** Last frame's geometry for the mouse router. Null until the first render. */
+	mouse: MouseFrame | null;
 	/** Last frame's outputs, untruncated, so a test reads what was composed. */
 	source: readonly string[];
 	chart: readonly string[];
@@ -363,6 +375,9 @@ export class StatsPanel implements Component {
 			syncError: null,
 			ingest: null,
 			doneCalls: 0,
+			hoveredSidebarId: null,
+			hoveredStripId: null,
+			mouse: null,
 			source: NO_ROWS,
 			chart: NO_ROWS,
 			header: "",
@@ -584,6 +599,19 @@ export class StatsPanel implements Component {
 		}
 		const nav = column ? sidebar(this.#theme, preset, state.screenId) : null;
 		const sidebarWidth = nav?.width ?? 0;
+		// The routers hit-test against THIS frame, exactly as `/settings` reads
+		// its `#tabRowStart` bookkeeping: strip zones come from the `TabBar`'s
+		// own last render, sidebar rows from `NAV_GROUPS`, range segments from
+		// the stripped topbar row.
+		const tabBar = this.#tabBar;
+		state.mouse = {
+			topbarRows: topLines.length,
+			stripRows: strip.length,
+			sidebarWidth: column ? sidebarWidth : 0,
+			sidebarRows: column ? (nav?.lines.length ?? 0) : 0,
+			topbar: stripAnsi(top),
+			tabAt: (line, col) => tabBar.tabAt(line, col)?.id,
+		};
 
 		// `bodyRows` is the same one row arithmetic `/settings` uses: one for the
 		// chrome row that replaced the header, one more per wrap.
@@ -770,6 +798,10 @@ export class StatsPanel implements Component {
 	handleInput(data: string): void {
 		const state = this.#state;
 		if (state.closed) return;
+		// The mouse router first, because its escape prefix swallows real keys —
+		// the same ORDER `usage-dashboard.ts:1367-1405` uses. Keyboard handling
+		// below is untouched: the mouse is additive, never required.
+		if (routeSgrMouseInput(data, event => this.#routeMouse(event))) return;
 		// The `g` prefix expires on TIME, not on a timer (Shell.tsx parity: the
 		// web compares timestamps on the next keypress and never clears).
 		const armed =
@@ -816,6 +848,51 @@ export class StatsPanel implements Component {
 		}
 	}
 
+	/**
+	 * The mouse router: clicks, wheel and motion over the last frame.
+	 *
+	 * Shape copied from `settings-selector.ts:1224-1275`: wheel scrolls the
+	 * body from anywhere; motion arms hover (strip tab via the TabBar's own
+	 * `setHoverTab`, sidebar row via state both painted on the next render);
+	 * a left click on a hit selects it through the SAME `#selectScreen` and
+	 * range paths the keys use. Releases and non-left buttons are consumed
+	 * and ignored — swallowing a click the panel does not own would eat it,
+	 * but every SGR report IS owned here, and returning false would hand a
+	 * click prefix to the keymap. Anything off every hit area is inert.
+	 */
+	#routeMouse(event: SgrMouseEvent): boolean {
+		const state = this.#state;
+		if (event.wheel !== null) {
+			this.#scrollBy(event.wheel * 2);
+			return true;
+		}
+		const frame = state.mouse;
+		if (frame === null) return true;
+		if (event.motion) {
+			const hit = hitTest(frame, event.row, event.col);
+			if (hit.type === "screen" && hit.via === "strip") {
+				this.#tabBar.setHoverTab(hit.id);
+				state.hoveredStripId = hit.id;
+				state.hoveredSidebarId = null;
+			} else {
+				this.#tabBar.setHoverTab(null);
+				state.hoveredStripId = null;
+				state.hoveredSidebarId = hit.type === "screen" && hit.via === "sidebar" ? hit.id : null;
+			}
+			this.#changed();
+			return true;
+		}
+		if (!event.leftClick) return true;
+		const hit = hitTest(frame, event.row, event.col);
+		if (hit.type === "screen") {
+			const index = SELECTABLE_SCREENS.findIndex(screen => screen.id === hit.id);
+			if (index !== -1) this.#selectScreen(index);
+		} else if (hit.type === "range" && hit.id !== state.range) {
+			state.range = hit.id;
+			this.#load();
+		}
+		return true;
+	}
 
 	#indexOf(id: ScreenId): number {
 		return SELECTABLE_SCREENS.findIndex(screen => screen.id === id);
@@ -826,16 +903,20 @@ export class StatsPanel implements Component {
 		if (count === 0) return;
 		const screen = SELECTABLE_SCREENS[((index % count) + count) % count];
 		if (screen.id === state.screenId) return;
+		// The pointer no longer points at what the old highlight meant, so a
+		// hover pill left on the old tab would lie — `/settings` clears on
+		// select the same way.
+		this.#tabBar.setHoverTab(null);
+		state.hoveredStripId = null;
+		state.hoveredSidebarId = null;
 		state.screenId = screen.id;
 		state.scroll = 0;
 		this.#load();
 	}
-
 	#scrollBy(delta: number): void {
 		this.#state.scroll = Math.max(0, Math.min(this.#state.scroll + delta, this.#state.maxScroll));
 		this.#changed();
 	}
-
 	// --- teardown ------------------------------------------------------------
 
 	/** Close from the keyboard. `done()` runs at most once, whatever the host does. */
@@ -1031,6 +1112,8 @@ export const __testing = {
 	debugMaxScroll: (panel: StatsPanel) => STATE.get(panel)!.maxScroll,
 	debugClosed: (panel: StatsPanel) => STATE.get(panel)!.closed,
 	debugDoneCalls: (panel: StatsPanel) => STATE.get(panel)!.doneCalls,
+	debugFrame: (panel: StatsPanel) => STATE.get(panel)!.mouse,
+	debugHoverTab: (panel: StatsPanel) => STATE.get(panel)!.hoveredStripId,
 	debugChartRows: (panel: StatsPanel, width = 120): readonly string[] => {
 		panel.render(width);
 		return STATE.get(panel)!.chart;

@@ -34,10 +34,11 @@ import { TAB_SHORT } from "../src/tui/tabs";
  *   3. Resizing the terminal re-plans the frame. `render` reads
  *      `tui.terminal.rows` per frame because there is no resize hook, and a
  *      stub `tui` cannot resize.
- *   4. Esc / q reach the panel rather than the editor behind it, and the wheel
- *      scrolls rather than selecting. Mouse reporting is off for the overlay
- *      (`mouseTracking: false`) precisely so the wheel arrives as SGR text;
- *      nothing here asserts the host delivers it that way.
+ *   4. Esc / q reach the panel rather than the editor behind it, clicks land
+ *      on their row, and the wheel scrolls rather than selecting. Mouse
+ *      tracking stays on the host default for the overlay precisely so clicks,
+ *      wheel and motion arrive as SGR text; nothing here asserts the host
+ *      delivers it that way.
  *   5. The keymap under a REMAPPED `keybindings.yml`. `matchesKey` and
  *      `matchesSelect*` read the module-global singleton, and this file runs
  *      against the defaults only.
@@ -174,14 +175,16 @@ function columnHeights(rows: string[]): number[] {
 // The overlay options: the one mistake no test here can see
 // ---------------------------------------------------------------------------
 
-test("the overlay borrows the alternate screen buffer and leaves the mouse off", () => {
+test("the overlay borrows the alternate screen buffer and leaves mouse tracking on", () => {
+	// `mouseTracking` ABSENT is the point: the host default is on for fullscreen
+	// overlays, which is what delivers clicks and hover as SGR text. Pinning
+	// the rest keeps the frame contract visible.
 	expect(STATS_OVERLAY_OPTIONS).toEqual({
 		anchor: "top-left",
 		width: "100%",
 		maxHeight: "100%",
 		margin: 0,
 		fullscreen: true,
-		mouseTracking: false,
 	});
 });
 
@@ -323,6 +326,8 @@ test("digits index the SELECTABLE screens, so a number never lands on an exclude
 });
 
 test("the wheel scrolls and is consumed; a plain letter is not mistaken for a mouse event", () => {
+	// Wheel-only here: clicks and motion need the last frame's geometry, so
+	// they route through `#routeMouse` in `handleInput` (test/mouse.test.ts).
 	expect(panelAction("\x1b[<64;10;5M")).toEqual({ type: "scroll", rows: -2 });
 	expect(panelAction("\x1b[<65;10;5M")).toEqual({ type: "scroll", rows: 2 });
 	expect(panelAction("q")).toEqual({ type: "close" });
