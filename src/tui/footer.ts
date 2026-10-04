@@ -2,32 +2,41 @@
  * `src/tui/footer.ts` — the panel's key hints, hand-rolled for the ANSI path.
  *
  * WHY HAND-ROLLED. `hintsRow` returns a `NativeNode`, so it is unusable
- * anywhere but the native renderer (F20: `native/overlay.ts:42-51`). `/settings`
- * hand-rolls its ANSI footer from `editorKey`/`editorKeys`/`formatKeyHint` and
- * joins with `" · "`; this does the same, and adds the one thing `/settings`'s
- * ANSI footer lacks: **keys and labels in different colours.** A dim key beside a
- * muted label reads as a sentence, where a single-colour hint reads as a wall.
+ * anywhere but the native renderer (F20: `native/overlay.ts:42-51`). `/usage`
+ * builds its own hint string and renders it as a single dim span
+ * (`overlays/usage-dashboard.ts:926`: `this.#footer.setLines([theme.fg("dim", hint)])`),
+ * joining the pieces with `" · "`. `/settings` does the same for its ANSI twin
+ * (`overlays/settings-selector.ts:107-145`, `settingsHintsNode`). This module is
+ * that same shape, built from `formatKeyHints` so every keycap matches the rest
+ * of the host UI rather than being spelled by hand.
  *
- * WHY `rawKeyHint` RATHER THAN A FORK. `rawKeyHint` reaches the theme singleton,
- * exactly as `getTabBarTheme` does. F23 §3.1 recommends accepting that rather
- * than forking, and the reasoning holds: it is the SAME singleton the host's own
- * footer uses, so it cannot disagree with the rest of the UI, and the whole of
- * `keybinding-hints.ts` is singleton-based — a local fork would fork the entire
- * hint vocabulary to change one line. The footer is per-frame and cheap.
+ * ONE TONE, NOT TWO. The row is wrapped ONCE in `theme.fg("dim", …)`. The
+ * earlier split — dim keys beside muted labels — was this module's own idea,
+ * and it is now wrong twice over: it is not what `/usage` does, and a footer is
+ * a chrome line, not content. A hint row that competes with the data above it
+ * is a chrome line nobody reads. Keycaps and labels are therefore the same
+ * weight, and the only thing that separates two hints is the separator.
+ *
+ * `tab` IS THE SCREEN SWITCH. The panel has a visible tab strip, so the hint row
+ * names the same verb the strip advertises: `tab`/`shift+tab` for screens, and
+ * `left`/`right` for the horizontal RANGE axis (`panelAction`: `left`/`right`
+ * step the range, `tab`/`shift+tab` change screen — `src/tui/panel.ts:275-277`).
+ * Arrows-for-screens would contradict the strip sitting directly above.
  *
  * WHY THE HINTS ARE DATA. A footer built by concatenating strings is a footer
  * that drifts from the keymap: a key gets rebound, the hint does not, and the
  * panel advertises something it no longer does. {@link hintsFor} returns the keys
- * as `KeyName`s, so `test/tab-strip.test.ts` can round-trip every one of them
- * through `panelAction` and fail when a hint names an unbound key.
+ * as `KeyName`s, so a test can round-trip every one of them through
+ * `panelAction` and fail when a hint names an unbound key.
  *
  * PURE. The hint SET is a function of state; the colouring comes from an
- * injected `Theme`, so the module holds no singleton and loads before theme init.
+ * injected `Theme`, so the module holds no singleton and loads before theme
+ * init. No terminal reads, no data access, no timers.
  */
 
-import { rawKeyHint } from "@oh-my-pi/pi-tui/chrome";
-import type { Theme } from "@oh-my-pi/pi-tui/theme";
+import { formatKeyHints } from "@oh-my-pi/pi-tui/key-hint-format";
 import type { KeyName } from "@oh-my-pi/pi-tui/key-hint-format";
+import type { Theme } from "@oh-my-pi/pi-tui/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
 
 /** One hint: the keys that do it, and what they do. */
@@ -47,20 +56,24 @@ export type HintMode = "idle" | "scrollable" | "syncing" | "error";
 /**
  * The hints for a state, in the order they read.
  *
+ * ORDER IS THE READING ORDER: the most useful verb lands where the eye lands,
+ * and `close` is always LAST because it is the only way out of the panel and
+ * must never be the first thing a stray key hits.
+ *
  * `scrollable` puts the scroll hint FIRST rather than in the middle. F23 §3.2's
  * argument: it is the one hint whose absence changes what the reader can DO, so
  * it belongs where the eye lands, and a footer that buries it mid-row teaches the
  * reader to skip the footer.
  *
  * EVERY KEY HERE IS BOUND BY `panelAction`. That is not a convention, it is an
- * assertion: `test/tab-strip.test.ts` maps each hint back to a raw key sequence
- * and fails if `panelAction` returns null. A hint for an unbound key is a lie the
- * user acts on.
+ * assertion — `test/footer.test.ts` maps every hint of every mode back through
+ * `panelAction` and fails if it returns null. A hint for an unbound key is a lie
+ * the user acts on.
  */
 export function hintsFor(mode: HintMode): readonly PanelHint[] {
 	const scroll: PanelHint = { keys: ["up", "down"], label: "scroll" };
-	const screen: PanelHint = { keys: ["left", "right"], label: "screen" };
-	const range: PanelHint = { keys: ["r"], label: "range" };
+	const screen: PanelHint = { keys: ["tab", "shift+tab"], label: "screen" };
+	const range: PanelHint = { keys: ["left", "right"], label: "range" };
 	const sync: PanelHint = { keys: ["s"], label: "sync" };
 	const close: PanelHint = { keys: ["escape", "q"], label: "close" };
 
@@ -82,11 +95,28 @@ export function hintsFor(mode: HintMode): readonly PanelHint[] {
 /**
  * The footer row.
  *
- * Hints are dropped from the RIGHT until the row fits, never truncated. A hint
- * that ends mid-word is worse than a shorter footer, and `truncateToWidth` on a
- * STYLED string can cut an escape sequence in half and leak the remainder as
- * literal text — which is why the fit is measured on the assembled row with
- * `visibleWidth` and the row is rebuilt after each drop.
+ * ONE `dim` SPAN for the whole row, `/usage`-style. Hints are separated by a
+ * `borderMuted` dot — one step quieter than the text it divides — and every
+ * keycap renders through `formatKeyHints` so it looks like a keycap everywhere
+ * else in the host.
+ *
+ * Hints are dropped WHOLE, never truncated. A hint that ends mid-word is worse
+ * than a shorter footer, and `truncateToWidth` on a STYLED string can cut an
+ * escape sequence in half and leak the remainder as literal text — which is why
+ * the fit is measured on the assembled row with `visibleWidth` and the row is
+ * rebuilt after each drop.
+ *
+ * THE LAST HINT IS PINNED. A plain "drop from the right" loop eats `close`
+ * first, and `close` is the only exit from a fullscreen overlay that borrowed
+ * the alt screen buffer: a user on a 60-column terminal would be told how to
+ * scroll, switch screens, change range and sync, and never how to leave. So the
+ * set is read as `head · middle… · tail`, where `head` is the scroll hint —
+ * whose absence changes what the reader can DO, F23 §3.2's own argument for
+ * putting it first — and `tail` is `close`. Both are load-bearing; the middle
+ * hints (range, sync) are conveniences that degrade gracefully, and they are
+ * the only things a narrow terminal gives up, in that order. If even
+ * `head + tail` does not fit, `tail` alone does: showing how to leave beats
+ * showing how to scroll.
  *
  * Returns `[]` rather than `undefined` for an empty hint set: a panel row is a
  * string, and `PanelRows` must never be handed nothing where a row is expected.
@@ -97,14 +127,23 @@ export function footerHints(
 	width = Number.POSITIVE_INFINITY,
 ): readonly string[] {
 	if (hints.length === 0) return [];
-	// One step quieter than either half, so the separator recedes instead of
-	// reading as content.
 	const separator = theme.fg("borderMuted", " · ");
-	let kept = [...hints];
-	while (kept.length > 0) {
-		const row = kept.map(hint => rawKeyHint(hint.keys, hint.label)).join(separator);
+
+	// A one-hint set has no middle and no separate tail, so the pinned shape
+	// degenerates to the plain left-to-right loop.
+	const head = hints[0]!;
+	const tail = hints.length > 1 ? hints[hints.length - 1]! : undefined;
+	const middle = hints.length > 2 ? hints.slice(1, -1) : [];
+
+	const candidates: PanelHint[][] = [];
+	for (let kept = middle.length; kept >= 0; kept--) {
+		candidates.push(tail === undefined ? [head] : [head, ...middle.slice(0, kept), tail]);
+	}
+	if (tail !== undefined) candidates.push([tail]);
+
+	for (const parts of candidates) {
+		const row = theme.fg("dim", parts.map(hint => `${formatKeyHints(hint.keys)} ${hint.label}`).join(separator));
 		if (visibleWidth(row) <= width) return [row];
-		kept = kept.slice(0, -1);
 	}
 	// Nothing fits: drop the row entirely rather than emit a truncated word.
 	return [];

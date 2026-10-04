@@ -1,0 +1,290 @@
+import { expect, test } from "bun:test";
+import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
+import { formatKeyHints } from "@oh-my-pi/pi-tui/key-hint-format";
+import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { panelAction } from "../src/tui/panel";
+import { clampFooter, footerHints, hintsFor, type HintMode, type PanelHint } from "../src/tui/footer";
+
+/**
+ * `test/footer.test.ts` — the hint row's SET, its STYLE, and its fit.
+ *
+ * Three claims are asserted here that no other file can make:
+ *
+ *   1. **A hint may never name an unbound key.** Every `KeyName` in every mode
+ *      is converted to the raw byte sequence `matchesKey` sees and pushed
+ *      through the panel's own `panelAction`. A hint the panel does not handle
+ *      is a lie the user acts on.
+ *   2. **The row is ONE dim span.** `/usage` renders its hint line as
+ *      `theme.fg("dim", hint)` (`overlays/usage-dashboard.ts:926`) and the panel
+ *      matches it. There is no `muted` span, because a footer that competes with
+ *      the data above it is a footer nobody reads.
+ *   3. **`close` survives every width.** It is the only exit from a fullscreen
+ *      overlay that borrowed the alt screen buffer, so the fit algorithm pins it
+ *      and spends the width on the middle hints instead.
+ */
+
+ensureThemeSync();
+
+const MODES = ["idle", "scrollable", "syncing", "error"] as const satisfies readonly HintMode[];
+const ALL_HINTS: Record<HintMode, readonly PanelHint[]> = {
+	idle: hintsFor("idle"),
+	scrollable: hintsFor("scrollable"),
+	syncing: hintsFor("syncing"),
+	error: hintsFor("error"),
+};
+const ESC = String.fromCharCode(27);
+const SEPARATOR = " · ";
+const RESET_FG = `${ESC}[39m`;
+const ANSI = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
+const strip = (text: string) => text.replace(ANSI, "");
+
+/** The `SGR…m` prefix `theme.fg(color, …)` opens a span with. */
+const sgr = (color: "dim" | "muted" | "borderMuted"): string => theme.fg(color, "x").split("x")[0]!;
+
+/** The only SGR sequences a footer row may contain. */
+const ALLOWED_SPANS: readonly string[] = [sgr("dim"), sgr("borderMuted"), RESET_FG];
+
+/** The raw byte sequence `matchesKey` sees for each key the hints can name. */
+const SEQUENCES: Readonly<Record<string, string>> = {
+	up: `${ESC}[A`,
+	down: `${ESC}[B`,
+	left: `${ESC}[D`,
+	right: `${ESC}[C`,
+	tab: "\t",
+	"shift+tab": `${ESC}[Z`,
+	escape: ESC,
+};
+
+/** The plain text one hint contributes to the row. */
+const hintText = (hint: PanelHint): string => `${formatKeyHints(hint.keys)} ${hint.label}`;
+
+// ─── the hint SET ───────────────────────────────────────────────────────────
+
+test("the primary screen switch is tab, and the arrows are NOT it", () => {
+	// The panel draws a visible tab strip, so the hint row must name the same
+	// verb the strip advertises. Arrows-for-screens would contradict the strip
+	// sitting directly above it.
+	const screen = hintsFor("idle").find(hint => hint.label === "screen");
+	expect(screen).toBeDefined();
+	expect(screen!.keys).toEqual(["tab", "shift+tab"]);
+	expect(screen!.keys).not.toContain("left");
+	expect(screen!.keys).not.toContain("right");
+});
+
+test("left/right are the RANGE hint, because the range is the horizontal axis", () => {
+	const range = hintsFor("idle").find(hint => hint.label === "range");
+	expect(range).toBeDefined();
+	expect(range!.keys).toEqual(["left", "right"]);
+});
+
+test("every key any hint names in ANY mode maps to a non-null panelAction", () => {
+	for (const mode of MODES) {
+		for (const hint of ALL_HINTS[mode]) {
+			for (const key of hint.keys) {
+				const input = SEQUENCES[key] ?? key;
+				expect(
+					panelAction(input),
+					`${mode}: hint "${hint.label}" advertises an unbound key: ${key} (${JSON.stringify(input)})`,
+				).not.toBeNull();
+			}
+		}
+	}
+});
+
+test("close is present in every mode and always LAST", () => {
+	// It is the only way out of the panel, so no mode decision can drop it and it
+	// never sits where a stray key hits it first.
+	for (const mode of MODES) {
+		const hints = ALL_HINTS[mode];
+		expect(hints.length, mode).toBeGreaterThan(0);
+		expect(hints[hints.length - 1]!.label, mode).toBe("close");
+		expect(hints[hints.length - 1]!.keys, mode).toEqual(["escape", "q"]);
+	}
+});
+
+test("the hint set grows and shrinks with the state it describes", () => {
+	expect(hintsFor("idle").map(h => h.label)).toEqual(["screen", "range", "sync", "close"]);
+	expect(hintsFor("scrollable").map(h => h.label)).toEqual(["scroll", "screen", "range", "sync", "close"]);
+	expect(hintsFor("syncing").map(h => h.label)).toEqual(["screen", "range", "close"]);
+	expect(hintsFor("error").map(h => h.label)).toEqual(["retry sync", "close"]);
+});
+
+test("syncing offers no second sync, error offers a retry, scrollable leads with scroll", () => {
+	// A sync is already running: offering `s` would be offering a key that does
+	// nothing.
+	expect(hintsFor("syncing").map(h => h.label)).not.toContain("sync");
+	expect(hintsFor("syncing").flatMap(h => h.keys)).not.toContain("s");
+
+	// The message on screen is the thing to act on, so `s` retries instead of
+	// stepping a range the user has not read yet.
+	expect(hintsFor("error").map(h => h.label)).toContain("retry sync");
+
+	// Scroll is the one hint whose ABSENCE changes what the reader can do, so it
+	// lands where the eye lands.
+	expect(hintsFor("scrollable")[0]!.label).toBe("scroll");
+	expect(hintsFor("idle").map(h => h.label)).not.toContain("scroll");
+});
+
+test("hintsFor is pure and deterministic, with no shared mutable state", () => {
+	const snapshot = hintsFor("idle").map(hint => ({ keys: [...hint.keys], label: hint.label }));
+	expect(hintsFor("idle").map(hint => ({ keys: [...hint.keys], label: hint.label }))).toEqual(snapshot);
+
+	// Mutating a returned hint must not reach the next caller: each call builds a
+	// fresh array rather than handing out a module-level constant by reference.
+	const first = hintsFor("idle") as PanelHint[];
+	first[0]!.label = "mutated";
+	(first[0]!.keys as string[]).push("f5");
+	expect(hintsFor("idle").map(h => h.label)).toEqual(["screen", "range", "sync", "close"]);
+	expect(hintsFor("idle")[0]!.keys).toEqual(["tab", "shift+tab"]);
+});
+
+// ─── the STYLE ──────────────────────────────────────────────────────────────
+
+test("the whole row is ONE dim span, with no muted half", () => {
+	const hints = hintsFor("idle");
+	const [row] = footerHints(hints, theme);
+	const plain = hints.map(hintText).join(SEPARATOR);
+
+	expect(row).toBeDefined();
+	expect(strip(row!)).toBe(plain);
+	// /usage parity, asserted on the escapes themselves: the row opens with the
+	// dim SGR and resets once at the end. A dim-key / muted-label split cannot
+	// produce that shape.
+	expect(row!.startsWith(sgr("dim"))).toBe(true);
+	expect(row!.endsWith(RESET_FG)).toBe(true);
+	expect(row!.includes(sgr("muted"))).toBe(false);
+	// And the exhaustive form of the same claim: dim, separators, reset — nothing
+	// else colours anything.
+	for (const match of row!.match(ANSI) ?? []) {
+		expect(ALLOWED_SPANS, `unexpected SGR ${JSON.stringify(match)} in the footer row`).toContain(match);
+	}
+});
+
+test("hints are separated by a border-muted dot, one step quieter than the text", () => {
+	const hints = hintsFor("idle");
+	expect(hints.length).toBeGreaterThan(1);
+	const [row] = footerHints(hints, theme);
+	// Exactly one separator per gap — no doubled dots from a join mistake.
+	expect(row!.split(SEPARATOR).length - 1).toBe(hints.length - 1);
+	expect(row!.includes(theme.fg("borderMuted", SEPARATOR))).toBe(true);
+	expect(strip(row!)).toBe(hints.map(hintText).join(SEPARATOR));
+});
+
+test("every key renders through formatKeyHints, so keycaps match the host", () => {
+	for (const mode of MODES) {
+		const [row] = footerHints(hintsFor(mode), theme);
+		for (const hint of ALL_HINTS[mode]) {
+			expect(row, `${mode}/${hint.label}`).toContain(hintText(hint));
+		}
+	}
+});
+
+// ─── the fit ────────────────────────────────────────────────────────────────
+
+test("the row never exceeds the width it was handed, across 20..200", () => {
+	for (let width = 20; width <= 200; width++) {
+		for (const mode of MODES) {
+			const [row] = footerHints(hintsFor(mode), theme, width);
+			if (row === undefined) continue; // nothing fit: the row is dropped
+			expect(visibleWidth(row), `${mode}@${width}`).toBeLessThanOrEqual(width);
+		}
+	}
+});
+
+test("close is pinned: it survives every width at which ANY hint fits", () => {
+	// The defect this pins: a plain "drop from the right" loop ate `close` first
+	// at 60 columns, leaving a user in a fullscreen alt-screen overlay with no
+	// advertised way out.
+	for (const mode of MODES) {
+		for (let width = 1; width <= 200; width++) {
+			const [row] = footerHints(hintsFor(mode), theme, width);
+			if (row === undefined) continue;
+			expect(strip(row!), `${mode}@${width} dropped close`).toContain(hintText(ALL_HINTS[mode].at(-1)!));
+		}
+	}
+	// The exact case from the bug report: scrollable at innerWidth 56. `range`
+	// still fits there; the regression was that `close` did NOT.
+	const row = footerHints(hintsFor("scrollable"), theme, 56)[0]!;
+	expect(visibleWidth(row)).toBeLessThanOrEqual(56);
+	for (const hint of [ALL_HINTS.scrollable[0]!, ALL_HINTS.scrollable[1]!, ALL_HINTS.scrollable.at(-1)!]) {
+		expect(strip(row), `scrollable@56 lost ${hint.label}`).toContain(hintText(hint));
+	}
+	// And at the width where the middle must go, it is `range` that goes — not
+	// the exit.
+	const keep = [ALL_HINTS.scrollable[0]!, ALL_HINTS.scrollable[1]!, ALL_HINTS.scrollable.at(-1)!];
+	const threeWide = visibleWidth(keep.map(hintText).join(SEPARATOR));
+	expect(strip(footerHints(hintsFor("scrollable"), theme, threeWide)[0]!)).toBe(keep.map(hintText).join(SEPARATOR));
+	const two = [ALL_HINTS.scrollable[0]!, ALL_HINTS.scrollable.at(-1)!];
+	expect(strip(footerHints(hintsFor("scrollable"), theme, threeWide - 1)[0]!)).toBe(
+		two.map(hintText).join(SEPARATOR),
+	);
+});
+
+test("only the middle hints are dropped, whole, right to left", () => {
+	// A hint ending mid-word is worse than a shorter footer, and truncating a
+	// STYLED string can cut an escape in half. So every surviving row is
+	// `head + a prefix of middle + tail`: whole hints, in order, never a
+	// fragment and never a reordering.
+	for (const mode of MODES) {
+		const hints = ALL_HINTS[mode];
+		const middle = hints.slice(1, -1);
+		// Narrowest first, so a growing index means a growing row.
+		const shapes = [hintText(hints.at(-1)!)];
+		for (let kept = 0; kept <= middle.length; kept++) {
+			shapes.push([hints[0]!, ...middle.slice(0, kept), hints.at(-1)!].map(hintText).join(SEPARATOR));
+		}
+
+		let widestKept = 0;
+		for (let width = 1; width <= 200; width++) {
+			const [row] = footerHints(hintsFor(mode), theme, width);
+			if (row === undefined) continue;
+			const kept = shapes.indexOf(strip(row!));
+			expect(kept, `${mode}@${width} produced a row that is not head+middle-prefix+tail`).toBeGreaterThanOrEqual(0);
+			// A wider terminal can never show FEWER hints.
+			expect(kept, `${mode}@${width} lost hints as the width grew`).toBeGreaterThanOrEqual(widestKept);
+			widestKept = kept;
+		}
+		expect(widestKept, `${mode} must fit every hint by width 200`).toBe(shapes.length - 1);
+	}
+});
+
+test("a one- and two-hint set degrade to a plain left-to-right loop", () => {
+	// No middle to give up: the pinned shape must not invent one.
+	const closeOnly: PanelHint[] = [{ keys: ["escape", "q"], label: "close" }];
+	const retry: PanelHint = { keys: ["s"], label: "retry sync" };
+	const plain = (hints: readonly PanelHint[], width: number) => footerHints(hints, theme, width)[0];
+
+	expect(plain(closeOnly, 200)).toBe(footerHints(closeOnly, theme)[0]);
+	expect(plain([retry, closeOnly[0]!], 200)).toBe(footerHints([retry, closeOnly[0]!], theme)[0]);
+	// Too narrow for both: the tail alone, because how to leave beats what to do.
+	const twoWide = visibleWidth(plain([retry, closeOnly[0]!], 200)!);
+	expect(strip(plain([retry, closeOnly[0]!], twoWide - 1)!)).toBe(hintText(closeOnly[0]!));
+});
+
+test("a row too narrow for even close is dropped, not truncated", () => {
+	// A clipped keycap is worse than no row at all, and `PanelRows` must never be
+	// handed `undefined` where a row is expected. The `close` hint on its own is
+	// the floor the algorithm bottoms out at, so one column under IT is where the
+	// row disappears entirely.
+	const closeFloor = visibleWidth(hintText(ALL_HINTS.error.at(-1)!));
+	expect(closeFloor).toBeGreaterThan(0);
+	expect(strip(footerHints(hintsFor("error"), theme, closeFloor)[0]!)).toBe(hintText(ALL_HINTS.error.at(-1)!));
+	expect(footerHints(hintsFor("error"), theme, closeFloor - 1)).toEqual([]);
+	expect(footerHints(hintsFor("idle"), theme, 0)).toEqual([]);
+	expect(footerHints([], theme)).toEqual([]);
+	expect(footerHints([], theme, 80)).toEqual([]);
+	expect(footerHints([], theme, 0)).toEqual([]);
+});
+
+test("no width argument means no fit constraint", () => {
+	expect(footerHints(hintsFor("scrollable"), theme)[0]).toBe(
+		footerHints(hintsFor("scrollable"), theme, Number.POSITIVE_INFINITY)[0],
+	);
+});
+
+test("clampFooter shortens an already-composed row and leaves a fitting one alone", () => {
+	const [row] = footerHints(hintsFor("idle"), theme);
+	expect(clampFooter(row!, 200)).toBe(row!);
+	expect(visibleWidth(clampFooter(row!, 12))).toBeLessThanOrEqual(12);
+	expect(clampFooter("plain", 80)).toBe("plain");
+});
