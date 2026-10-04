@@ -13111,3 +13111,474 @@ assertions); bunx tsc --noEmit clean; omp models -e src/index.ts 53 bytes.
 │ ←/→ screen · r/⇧R range · s sync · ⎋/q close                                                                                                       │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
+==============================================================================
+20) $ bun scripts/probe-render.ts costs|overview 150 100 60 40
+    BAND-ALLOCATION FIX — four-series band heights + all-zero band floors
+==============================================================================
+
+Two defects in `renderSeriesChart`'s band allocation, both found by an
+independent verification pass and both latent behind the shade-noise removal:
+
+  DEFECT 1 — an ALL-ZERO series inside a multi-series chart drew a blank band
+  with no floor. `plotRows` gave a one-row band over to the data, and a series
+  that recorded nothing has no data to put there, so the row came out blank.
+  The single-series path drew its floor for the same data; the composed chart
+  did not, so "this series recorded nothing" and "this chart lost a series"
+  rendered identically.
+
+  DEFECT 2 — a FOUR-series chart collapsed a 16x peak spread into identical
+  single-row bands. `bandHeights` scaled each band against an even per-band
+  slice of the budget and `renderDailyBars` charged a floor row out of that
+  slice AGAIN, so the loud band's advantage was spent on chrome and every band
+  was left with one magnitude row: 1 of 4 distinct band shapes.
+
+THE FIX. The budget is now the WHOLE chart, apportioned across bands by peak
+share (highest-averages), with every band guaranteed one row before anything
+else is paid for. The floor is decided by the DATA (does this band have ink?)
+rather than by the height, so a zero bucket inside a live series stays a gap
+and an all-zero series draws its floor.
+
+A LABEL IS ONLY WORTH ITS ROW IF THE BANDS STILL GET TO DIFFER: names cost one
+row each, and at four series in eight rows they cost half the chart, leaving
+every band one row. Data beats chrome, so a chart too short for both draws
+marks and lets the caller name them.
+
+MEASURED, from the captures below (rows per band, measured not eyeballed):
+
+  width  barHeight  Input  Output  Cache read  Cache write  distinct
+   150       14       3      2        4            1           4/4
+   100       14       3      2        4            1           4/4
+    60       10       2      1        2            1           2/4
+    40        4       1      1        1            1           1/4
+
+Widths 100/150 show four visibly different band heights. Widths 40/60 are
+capped by `planLayout`'s own `barHeight` (4 and 10 — `src/tui/layout.ts`, not
+part of this change): four distinct heights cannot be drawn in the 4 markable
+rows a four-series chart gets at width 40, so the allocation gives the loudest
+band its rows and every band still gets a floor. The distribution degrades
+gracefully rather than pretending to discriminate rows it does not have.
+
+NOTE: `Cache write` is $0 in this database for the whole 24h range, so its band
+is the all-zero case — one row, and that row is its floor. Before the fix it
+was one row of nothing at all.
+
+--- costs, widths 150 / 100 / 60 / 40 ---
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+costs  width=150  range=24h  preset=unicode  inner=146
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent estimate     Average per day             Top model
+$2.86                       $1.43                       muse-spark-1.3-contributor
+0                                                       
+Per priced request          Unpriced requests
+$0.0007                     0
+
+⏱ Daily estimate per day, by billing component
+                                                                                                                                                  
+                                                                                                                                                ██
+__________________________________________________________________________________________________________________________________________________
+ Input                                                                                                                                            
+                                                                                                                                                ██
+__________________________________________________________________________________________________________________________________________________
+ Output                                                                                                                                           
+                                                                                                                                                █ 
+                                                                                                                                                █ 
+                                                                                                                                                ██
+__________________________________________________________________________________________________________________________________________________
+ Cache read                                                                                                                                       
+__________________________________________________________________________________________________________________________________________________
+ Cache write                                                                                                                                      
+
+⏱ Where it went share of the total
+Input       ████████████████████                             40.9% $1.17
+Output      █████████                                        17.8% $0.51
+Cache read  ████████████████████                             41.3% $1.18
+Cache write                                                  0.0% $0
+█ Input         40.9%
+█ Output        17.8%
+█ Cache read    41.3%
+█ Cache write    0.0%
+
+📊 By model
+Model                           Requests Estimate Share   Input  Output Cache read Cache write Per request Unpriced
+muse-spark-1.3-contributor         2,050    $2.86 99.9%   $1.17   $0.51      $1.18          $0     $0.0014        0
+gemini-3.8-flash                       4  $0.0016  0.1% $0.0011 $0.0005         $0          $0     $0.0004        0
+muse-spark-1.3-contributor-free       66       $0  0.0%      $0      $0         $0          $0          $0        0
+space-bunny-free                   2,091       $0  0.0%      $0      $0         $0          $0          $0        0
+
+Bars scale by cost, never by tokens: this data carries a 41x price spread at comparable token volume, and a token-scaled chart inverts the rankin…
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+40 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+costs  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent estimate     Average per day             Top model
+$2.86                       $1.43                       muse-spark-1.3-contributor
+0                                                       
+Per priced request          Unpriced requests
+$0.0007                     0
+
+⏱ Daily estimate per day, by billing component
+                                                                                                
+                                                                                              ██
+________________________________________________________________________________________________
+ Input                                                                                          
+                                                                                              ██
+________________________________________________________________________________________________
+ Output                                                                                         
+                                                                                              █ 
+                                                                                              █ 
+                                                                                              ██
+________________________________________________________________________________________________
+ Cache read                                                                                     
+________________________________________________________________________________________________
+ Cache write                                                                                    
+
+⏱ Where it went share of the total
+Input       ████████████████████                             40.9% $1.17
+Output      █████████                                        17.8% $0.51
+Cache read  ████████████████████                             41.3% $1.18
+Cache write                                                  0.0% $0
+█ Input         40.9%
+█ Output        17.8%
+█ Cache read    41.3%
+█ Cache write    0.0%
+
+📊 By model
+Model                           Requests Estimate Share   Input  Output Cache read Cache write
+muse-spark-1.3-contributor         2,050    $2.86 99.9%   $1.17   $0.51      $1.18          $0
+gemini-3.8-flash                       4  $0.0016  0.1% $0.0011 $0.0005         $0          $0
+muse-spark-1.3-contributor-free       66       $0  0.0%      $0      $0         $0          $0
+space-bunny-free                   2,091       $0  0.0%      $0      $0         $0          $0
+
+Bars scale by cost, never by tokens: this data carries a 41x price spread at comparable token v…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+40 rows
+
+════════════════════════════════════════════════════════════
+costs  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+API-equivalent estimate     Average per day
+$2.86                       $1.43
+0                           
+Top model                   Per priced request
+muse-spark-1.3-contributor  $0.0007
+Unpriced requests
+0
+
+⏱ Daily estimate per day, by billing component
+                                                      ██
+________________________________________________________
+ Input                                                  
+                                                      ██
+ Output                                                 
+                                                      ██
+________________________________________________________
+ Cache read                                             
+________________________________________________________
+ Cache write                                            
+
+⏱ Where it went share of the total
+Input       █████████████                    40.9% $1.17
+Output      ██████                           17.8% $0.51
+Cache read  █████████████                    41.3% $1.18
+Cache write                                  0.0% $0
+█ Input         40.9%
+█ Output        17.8%
+█ Cache read    41.3%
+█ Cache write    0.0%
+
+📊 By model
+Model                           Requests Estimate Share
+muse-spark-1.3-contributor         2,050    $2.86 99.9%
+gemini-3.8-flash                       4  $0.0016  0.1%
+muse-spark-1.3-contributor-free       66       $0  0.0%
+3 of 4
+
+Bars scale by cost, never by tokens: this data carries …
+────────────────────────────────────────────────────────────
+38 rows
+
+════════════════════════════════════════
+costs  width=40  range=24h  preset=unicode  inner=36
+────────────────────────────────────────
+API-equivalent estimate
+$2.86
+0
+Average per day
+$1.43
+Top model
+muse-spark-1.3-contributor
+Per priced request
+$0.0007
+Unpriced requests
+0
+
+⏱ Daily estimate per day, by billin…
+                                  ██
+                                  ██
+                                  ██
+____________________________________
+
+⏱ Where it went share of the total
+Input       █████        40.9% $1.17
+Output      ██           17.8% $0.51
+Cache read  █████        41.3% $1.18
+Cache write              0.0% $0
+█ Input         40.9%
+█ Output        17.8%
+█ Cache read    41.3%
+█ Cache write    0.0%
+
+📊 By model
+Model                      Requests
+muse-spark-1.3-contributor    2,050
+gemini-3.8-flash                  4
+2 of 4
+
+Bars scale by cost, never by tokens…
+────────────────────────────────────────
+35 rows
+
+fetched costs: 2 route(s) in 44ms
+
+--- overview, widths 150 / 100 / 60 / 40 ---
+
+══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+overview  width=150  range=24h  preset=unicode  inner=146
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent cost  Requests             Conversation tokens
+$2.86                4,211                1.1B
+0                    67                   4M
+Cache rate           Error rate
+97.5%                1.6%
+96.1%                4,144
+
+Uncached input    Cache read        Cache write
+27M               1.1B              0
+Output            Premium requests  Tokens/s
+4M                0                 57.3/s
+Avg latency       Avg TTFT
+13.2s             4.9s
+
+⏱ Activity requests per bucket
+                                                                                                                          █                  █  █ 
+                                                                                                                          █                  █  █ 
+                                                                                                                          █                  █  █ 
+                                                                                                                          ██                 █  █ 
+                                                                                                                          ██                 █ ██ 
+                                                                                                                          ██                 █ ██ 
+                                                                                                                          ██            █    █ ██ 
+                                                                                                                          ██            ████ ████ 
+                                                                                                                          ██           ██████████ 
+                                                                                                                         ███           ███████████
+__________________________________________________________________________________________________________________________________________________
+ Succeeded                                                                                                                                        
+                                                                                                                         ███           ██████████ 
+ Failed                                                                                                                                           
+
+⏱ Token mix share of the total
+Uncached input █                                                2.4% 27M
+Cache read     ███████████████████████████████████████████████  97.2% 1.1B
+Cache write                                                     0.0% 0
+Output                                                          0.4% 4M
+█ Uncached input    2.4%
+█ Cache read       97.2%
+█ Cache write       0.0%
+█ Output            0.4%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model            Provider    When   Tokens Cost Duration Status
+space-bunny-free opencode-go 2m ago   228K   $0     4.9s     ok
+space-bunny-free opencode-go 2m ago   228K   $0     3.6s     ok
+space-bunny-free opencode-go 2m ago   227K   $0     3.6s     ok
+space-bunny-free opencode-go 2m ago   227K   $0     3.8s     ok
+4 of 12
+
+The web Activity card offers requests, tokens or cost; a panel has no mode switch, so this screen draws requests and the series are named so a re…
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+52 rows
+
+════════════════════════════════════════════════════════════════════════════════════════════════════
+overview  width=100  range=24h  preset=unicode  inner=96
+────────────────────────────────────────────────────────────────────────────────────────────────────
+API-equivalent cost  Requests             Conversation tokens
+$2.86                4,211                1.1B
+0                    67                   4M
+Cache rate           Error rate
+97.5%                1.6%
+96.1%                4,144
+
+Uncached input    Cache read        Cache write
+27M               1.1B              0
+Output            Premium requests  Tokens/s
+4M                0                 57.3/s
+Avg latency       Avg TTFT
+13.2s             4.9s
+
+⏱ Activity requests per bucket
+                                                                        █                  █  █ 
+                                                                        █                  █  █ 
+                                                                        █                  █  █ 
+                                                                        ██                 █  █ 
+                                                                        ██                 █ ██ 
+                                                                        ██                 █ ██ 
+                                                                        ██            █    █ ██ 
+                                                                        ██            ████ ████ 
+                                                                        ██           ██████████ 
+                                                                       ███           ███████████
+________________________________________________________________________________________________
+ Succeeded                                                                                      
+                                                                       ███           ██████████ 
+ Failed                                                                                         
+
+⏱ Token mix share of the total
+Uncached input █                                                2.4% 27M
+Cache read     ███████████████████████████████████████████████  97.2% 1.1B
+Cache write                                                     0.0% 0
+Output                                                          0.4% 4M
+█ Uncached input    2.4%
+█ Cache read       97.2%
+█ Cache write       0.0%
+█ Output            0.4%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model            Provider    When   Tokens Cost Duration Status
+space-bunny-free opencode-go 2m ago   228K   $0     4.9s     ok
+space-bunny-free opencode-go 2m ago   228K   $0     3.6s     ok
+space-bunny-free opencode-go 2m ago   227K   $0     3.6s     ok
+space-bunny-free opencode-go 2m ago   227K   $0     3.8s     ok
+4 of 12
+
+The web Activity card offers requests, tokens or cost; a panel has no mode switch, so this scre…
+────────────────────────────────────────────────────────────────────────────────────────────────────
+52 rows
+
+════════════════════════════════════════════════════════════
+overview  width=60  range=24h  preset=unicode  inner=56
+────────────────────────────────────────────────────────────
+API-equivalent cost  Requests
+$2.86                4,211
+0                    67
+    ▃█▇▁▄▃▃▂▁▁▁▁▁▁       ▂█▆▂▄▃▃▃▂█▃▅█▂
+Conversation tokens  Cache rate
+1.1B                 97.5%
+4M                   96.1%
+    ▁██▂▂▁▂▃▁▅▃▃▆▂
+Error rate
+1.6%
+4,144
+    ▃▃▃▆█▇▂▂▂▅▄▅▄▁
+
+Uncached input    Cache read        Cache write
+27M               1.1B              0
+Output            Premium requests  Tokens/s
+4M                0                 57.3/s
+Avg latency       Avg TTFT
+13.2s             4.9s
+
+⏱ Activity requests per bucket
+                                █                  █  █ 
+                                █                  █  █ 
+                                ██                 █ ██ 
+                                ██            █    █ ██ 
+                                ██            ████ ████ 
+                               ███           ███████████
+________________________________________________________
+ Succeeded                                              
+                               ███           ██████████ 
+ Failed                                                 
+
+⏱ Token mix share of the total
+Uncached input █                              2.4% 27M
+Cache read     █████████████████████████████  97.2% 1.1B
+Cache write                                   0.0% 0
+Output                                        0.4% 4M
+█ Uncached input    2.4%
+█ Cache read       97.2%
+█ Cache write       0.0%
+█ Output            0.4%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model            Provider    When   Tokens Cost Duration
+space-bunny-free opencode-go 2m ago   228K   $0     4.9s
+space-bunny-free opencode-go 2m ago   228K   $0     3.6s
+space-bunny-free opencode-go 2m ago   227K   $0     3.6s
+3 of 12
+
+The web Activity card offers requests, tokens or cost; …
+────────────────────────────────────────────────────────────
+53 rows
+
+════════════════════════════════════════
+overview  width=40  range=24h  preset=unicode  inner=36
+────────────────────────────────────────
+API-equivalent cost
+$2.86
+0
+    ▃█▇▁▄▃▃▂▁▁▁▁▁▁
+Requests
+4,211
+67
+    ▂█▆▂▄▃▃▃▂█▃▅█▂
+Conversation tokens
+1.1B
+4M
+    ▁██▂▂▁▂▃▁▅▃▃▆▂
+Cache rate
+97.5%
+96.1%
+Error rate
+1.6%
+4,144
+    ▃▃▃▆█▇▂▂▂▅▄▅▄▁
+
+Uncached input    Cache read
+27M               1.1B
+Cache write       Output
+0                 4M
+Premium requests  Tokens/s
+0                 57.3/s
+Avg latency       Avg TTFT
+13.2s             4.9s
+
+⏱ Activity requests per bucket
+            █                  █  █ 
+           ███           ███████████
+____________________________________
+           ███           ██████████ 
+
+⏱ Token mix share of the total
+Uncached input            2.4% 27M
+Cache read     ██████████ 97.2% 1.1B
+Cache write               0.0% 0
+Output                    0.4% 4M
+█ Uncached input    2.4%
+█ Cache read       97.2%
+█ Cache write       0.0%
+█ Output            0.4%
+█ Main agent       33.3%
+█ Subagents        33.3%
+█ Advisor          33.3%
+
+📊 Latest requests
+Model            Provider    When
+space-bunny-free opencode-go 2m ago
+space-bunny-free opencode-go 2m ago
+2 of 12
+
+The web Activity card offers reques…
+────────────────────────────────────────
+55 rows
+
+fetched overview: 3 route(s) in 28ms
