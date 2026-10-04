@@ -41,6 +41,46 @@ test("every data-ink glyph in every preset is exactly one cell wide", () => {
 	}
 });
 
+// ─── axisLine ─────────────────────────────────────────────────────────────────
+
+test("axisLine is a floor mark, not a rule run and not a sparkline rung", () => {
+	// Added for the chart baseline. The constraints are all measured rather than
+	// argued, because each one was a way this glyph could have been wrong:
+	//
+	// - G5 forbids a full-width run of box-drawing rules in a body
+	//   (band.test.ts:166, RULE_RUN = /[─━═]{3,}/) and /usage draws zero rules
+	//   there, so the baseline must not be `─`, `━` or `═`. It is a MARK that
+	//   sits on the floor, not a rule that draws one.
+	// - It must be its own role rather than a borrowed one. `sparkRamp[0]` is
+	//   width-1 and is not a rule char, but reusing it would make the floor mark
+	//   and the first rung of a sparkline the same character, so a change to one
+	//   would silently restyle the other.
+	for (const preset of PRESETS) {
+		const mark = glyph(preset, "axisLine");
+		expect(Bun.stringWidth(mark), `${preset}/axisLine/${mark}`).toBe(1);
+		expect(`${mark.repeat(3)}`, `${preset} axisLine ×3 must not be a rule run`).not.toMatch(/[─━═]{3,}/);
+		expect(glyphsFor(preset).sparkRamp, `${preset} axisLine must not be a sparkline rung`).not.toContain(mark);
+	}
+});
+
+test("axisLine is a distinct ROLE even where it shares heatEmpty's codepoint", () => {
+	// A deliberate, recorded decision rather than an oversight. In `unicode`,
+	// `axisLine` and `heatEmpty` are both U+00B7 MIDDLE DOT, so they are NOT
+	// visually distinct — the request that asked for this glyph argued they
+	// should not be, and also specified this exact codepoint.
+	//
+	// What the separate role buys is INDEPENDENCE: the two meanings move
+	// separately from here on, which is the same reason `heatCell` is one `■`
+	// at all four levels rather than four different squares. The alternative —
+	// `_` in both presets — is still on the table and is the better mark if a
+	// baseline ever needs to read as low rather than centred.
+	expect(glyph("unicode", "axisLine")).toBe("·");
+	expect(glyph("ascii", "axisLine")).toBe("_");
+	// And it is never the ascii blank, or the baseline would vanish under ascii.
+	expect(glyph("ascii", "axisLine")).not.toBe(glyph("ascii", "heatEmpty"));
+	expect(glyph("ascii", "axisLine")).not.toBe(" ");
+});
+
 test("nerd preset emits byte-identical data ink to unicode", () => {
 	expect(glyphsFor("nerd")).toEqual(glyphsFor("unicode"));
 });
