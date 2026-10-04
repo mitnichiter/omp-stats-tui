@@ -265,6 +265,45 @@ test("clicking a topbar range segment changes the range; clicking body does noth
 	expect(__testing.debugRange(panel)).toBe("7d");
 });
 
+test("range hit areas survive the topbar's move to the right edge, at every width", async () => {
+	// The chrome pass moved the action cluster from the left of the topbar to
+	// the right (the web's `.topbar-spacer { flex: 1 }`, styles.css:453-455), so
+	// every range segment changed column. `rangeSpans` finds segments by
+	// substring on the stripped row, which is position-independent by
+	// construction — this pins that, at all four widths the brief names, and
+	// through a real click rather than by inspecting the geometry.
+	for (const width of [40, 60, 100, 150]) {
+		const panel = await settledPanel();
+		plain(panel, width);
+		const frame = __testing.debugFrame(panel)!;
+		// Whatever segments the topbar actually shows at this width — the
+		// control collapses to its active member below the six-segment minimum,
+		// so asking for `7d` at width 40 would test the wrong thing. Driven off
+		// the real hit-test geometry, not a hand-computed column.
+		const spans = rangeSpans(frame.topbar);
+		expect(spans.length, `w=${width}`).toBeGreaterThan(0);
+		for (const span of spans) {
+			panel.handleInput(sgr(CLICK, span.start + 2 + 1, 1 + 1));
+			await __testing.settled(panel);
+			expect(__testing.debugRange(panel), `w=${width} ${span.id}`).toBe(span.id);
+		}
+	}
+});
+
+test("the brand and the spacer are not clickable: only the segments own the topbar row", async () => {
+	// The wordmark and the painted spacer between it and the action cluster are
+	// chrome, not targets. A click there must not select a screen or a range —
+	// which is also why the chip's column is inert rather than a hidden range.
+	const panel = await settledPanel();
+	plain(panel, 150);
+	const before = __testing.debugRange(panel);
+	for (const col of [1, 5, 20, 60]) {
+		panel.handleInput(sgr(CLICK, col + 2, 1 + 1));
+	}
+	await __testing.settled(panel);
+	expect(__testing.debugRange(panel)).toBe(before);
+});
+
 // ---------------------------------------------------------------------------
 // Wheel and hover through the real input path
 // ---------------------------------------------------------------------------
