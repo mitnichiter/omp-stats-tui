@@ -17,6 +17,8 @@ import type { ScreenId } from "../src/tui/screens/types";
 import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
 import { TAB_SHORT } from "../src/tui/tabs";
+import { hintsFor } from "../src/tui/footer";
+import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 
 /**
  * WHAT A HUMAN STILL HAS TO VERIFY
@@ -209,8 +211,8 @@ test("every key the panel advertises maps to an action, and nothing else does", 
 		[PGDN, { type: "scroll", viewport: 1 }],
 		[HOME, { type: "scrollTo", edge: "top" }],
 		[END, { type: "scrollTo", edge: "bottom" }],
-		[LEFT, { type: "screen", by: -1 }],
-		[RIGHT, { type: "screen", by: 1 }],
+		[LEFT, { type: "range", by: -1 }],
+		[RIGHT, { type: "range", by: 1 }],
 		[TAB, { type: "screen", by: 1 }],
 		[SHIFT_TAB, { type: "screen", by: -1 }],
 		["1", { type: "screenIndex", index: 0 }],
@@ -241,9 +243,71 @@ test("tab switches screens everywhere — the fallthrough rule is closed as cont
 	// If a real landmark model ever lands, the commit that reclaims `tab` adds an
 	// action — it does not re-read this mapping.
 	expect(panelAction(TAB)).toEqual({ type: "screen", by: 1 });
-	expect(panelAction(TAB)).toEqual(panelAction(RIGHT));
 	expect(panelAction(SHIFT_TAB)).toEqual({ type: "screen", by: -1 });
 });
+
+test("tab is THE screen switch; the arrows belong to the horizontal range control", () => {
+	// Defect 1, decided once.
+	//
+	// `tab` already switched screens, but the footer advertised `←/→`, so the
+	// advertised key and the idiomatic key disagreed — and the arrows collided
+	// with horizontal-scroll expectation on a panel whose body scrolls
+	// vertically only.
+	//
+	// So: `tab`/`shift+tab` is the primary, advertised screen switch (it is what
+	// every host overlay uses for "next tab" — settings-selector.ts:122, :138).
+	// The arrows are NOT dropped, because a dead key is worse than a repurposed
+	// one; they take the one genuinely horizontal thing on screen, the range
+	// control, which is drawn horizontally in the topbar. That makes the arrows
+	// mean what a user pressing them expects of a horizontal control, and it
+	// frees `tab` to be unambiguous.
+	expect(panelAction(TAB)).toEqual({ type: "screen", by: 1 });
+	expect(panelAction(SHIFT_TAB)).toEqual({ type: "screen", by: -1 });
+	expect(panelAction(LEFT)).toEqual({ type: "range", by: -1 });
+	expect(panelAction(RIGHT)).toEqual({ type: "range", by: 1 });
+	// The arrows and `r`/`R` are ALIASES for one target, exactly as digits and
+	// `g`-letters already are for screens (see chrome.ts's KEYMAP DECISION).
+	expect(panelAction(RIGHT)).toEqual(panelAction("r"));
+	expect(panelAction(LEFT)).toEqual(panelAction("R"));
+});
+
+test("the footer names the real primary switch, so it never implies the arrows switch screens", async () => {
+	// The brief's acceptance in one assertion: the hint row must name `tab` as
+	// the screen switch and must NOT pair the arrows with "screen". A footer
+	// that advertised the arrows while tab was the real switch IS the defect.
+	const panel = makePanel({ data: dataFor() });
+	await __testing.settled(panel);
+	const frame = panel.render(100);
+	const footer = stripAnsi(frame[frame.length - 2]!);
+	expect(footer).toContain("screen");
+	expect(footer).toContain("range");
+	expect(footer).not.toMatch(/←\/→\s*screen/);
+	// Every key the footer prints is bound: round-trip each hint key through
+	// the panel's own keymap so a hint can never name a dead key.
+	for (const hint of hintsFor("idle")) {
+		for (const key of hint.keys) {
+			expect(panelAction(rawKeySequence(key)), `footer hint "${hint.label}" names an unbound key: ${key}`).not.toBeNull();
+		}
+	}
+});
+
+/** The raw byte sequence `matchesKey` sees for a footer hint key name. */
+function rawKeySequence(key: string): string {
+	const sequences: Record<string, string> = {
+		up: UP,
+		down: DOWN,
+		left: LEFT,
+		right: RIGHT,
+		pageUp: PGUP,
+		pageDown: PGDN,
+		home: HOME,
+		end: END,
+		escape: "\x1b",
+		tab: TAB,
+		"shift+tab": SHIFT_TAB,
+	};
+	return sequences[key] ?? key;
+}
 
 /**
  * No one-step composed capture of the full panel — chrome + body + footer —
@@ -277,9 +341,14 @@ test("the composed frame at width 100: topbar + sidebar, body, divider, footer, 
 	expect(footer).toContain("screen");
 	expect(footer).toContain("sync");
 	expect(footer).toContain("close");
-	// The title carries the range, and the screen name lives in the SIDEBAR, not the title.
-	expect(plain[0]).toContain("30 days");
-	expect(plain[0]).not.toContain("Overview");
+	// The TITLE names the page (`Stats · <screen>`), and the RANGE lives only in
+	// the topbar's segmented control. The old contract had the title carrying
+	// the range while the topbar one row below carried both the wordmark and
+	// the range's active pill — the window was named twice and the page not at
+	// all.
+	expect(plain[0]).toContain("Overview");
+	expect(plain[0]).not.toContain("30 days");
+	expect(plain[1]).toContain("30d");
 });
 
 test("the composed frame at width 60: the nav becomes the strip row and everything still fits", async () => {
@@ -479,27 +548,32 @@ test("above EXACT_DIRTY_LIMIT the header escalates: past it the host stops union
 	expect(EXACT_DIRTY_LIMIT).toBe(96);
 });
 
-test("the active range is in the title, so the window is never ambiguous", async () => {
+test("the active range is named by the topbar control, not by the title", async () => {
+	// The window is never ambiguous, but it is named ONCE and by the control
+	// that changes it: the segmented range control's active pill, which
+	// survives every topbar mode down to `minimal` (`brand + active range`).
 	const panel = makePanel({ data: dataFor(), range: "7d" });
 	await __testing.settled(panel);
-	expect(__testing.debugTitle(panel)).toContain(rangeLabel("7d"));
+	const topbar = stripAnsi(panel.render(120)[1]!);
+	expect(topbar).toContain(rangeMeta("7d").label);
+	expect(__testing.debugTitle(panel)).not.toContain(rangeLabel("7d"));
 });
 
 // ---------------------------------------------------------------------------
 // Screens
 // ---------------------------------------------------------------------------
 
-test("arrow keys and tab move through the selectable screens and refetch", async () => {
+test("tab and shift+tab move through the selectable screens and refetch", async () => {
 	const asked: DataNeed[][] = [];
 	const panel = makePanel({ data: dataFor(), fetch: spyFetch([], asked) });
 	await __testing.settled(panel);
 	expect(__testing.debugScreenId(panel)).toBe("overview");
 
-	panel.handleInput(RIGHT);
+	panel.handleInput(TAB);
 	await __testing.settled(panel);
 	expect(__testing.debugScreenId(panel)).toBe(SELECTABLE[1].id);
 
-	panel.handleInput(LEFT);
+	panel.handleInput(SHIFT_TAB);
 	await __testing.settled(panel);
 	expect(__testing.debugScreenId(panel)).toBe("overview");
 
@@ -517,10 +591,10 @@ test("arrow keys and tab move through the selectable screens and refetch", async
 test("screen switching wraps in both directions", async () => {
 	const panel = makePanel({ data: dataFor() });
 	await __testing.settled(panel);
-	panel.handleInput(LEFT);
+	panel.handleInput(SHIFT_TAB);
 	await __testing.settled(panel);
 	expect(__testing.debugScreenId(panel)).toBe(SELECTABLE[SELECTABLE.length - 1].id);
-	panel.handleInput(RIGHT);
+	panel.handleInput(TAB);
 	await __testing.settled(panel);
 	expect(__testing.debugScreenId(panel)).toBe("overview");
 });
@@ -780,11 +854,11 @@ test("esc closes exactly once however many times it is pressed", async () => {
 test("keys after close are inert", async () => {
 	const panel = makePanel({ data: dataFor() });
 	await __testing.settled(panel);
-	panel.handleInput(RIGHT);
+	panel.handleInput(TAB);
 	await __testing.settled(panel);
 	panel.handleInput("\x1b");
 	const screen = __testing.debugScreenId(panel);
-	panel.handleInput(RIGHT);
+	panel.handleInput(TAB);
 	panel.handleInput("r");
 	expect(__testing.debugScreenId(panel)).toBe(screen);
 	expect(__testing.debugRange(panel)).toBe(DEFAULT_RANGE);

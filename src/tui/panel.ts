@@ -220,31 +220,43 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
 /**
  * Screen shortcuts. `1`-`9` for the first nine, `0` for the tenth — the
  * convention every numbered overlay uses, because there is no eleventh digit.
- * An eleventh screen is simply not on the number row and is reached with the
- * arrows; test/panel.test.ts asserts `SELECTABLE_SCREENS.length` against this
- * list, so the gap becomes a test failure rather than a silently dead key.
+ * An eleventh screen is simply not on the number row and is reached with `tab`;
+ * test/panel.test.ts asserts `SELECTABLE_SCREENS.length` against this list, so
+ * the gap becomes a test failure rather than a silently dead key.
  */
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
 /**
- * THE `tab` DECISION, stated once so it never goes ambiguous again.
+ * THE KEYMAP DECISION, stated once so it never goes ambiguous again.
  *
- * F23 §1.4 argued `tab` should fall through to next-screen only when a screen
- * had ≤ 1 band, reserving it for landmark jumping otherwise. F23's own key
- * table in the same section lists `tab` → "next screen" in BOTH rows, and
- * closer to the point, this panel has no landmark-focus model at all: there is
- * no `landmark` action, no section-focus state, and no jump to reserve `tab`
- * for. A key that is "reserved" for a jump that does not exist is a dead key,
- * and a dead key is worse than either behaviour — the reader presses it and
- * the panel silently does nothing.
+ * `tab` was already switching screens, but the FOOTER advertised `←/→` for it.
+ * So the advertised key and the idiomatic key disagreed, and the arrows
+ * collided with horizontal-scroll expectation on a panel whose body scrolls
+ * vertically only. A footer that teaches the wrong key is worse than no footer.
  *
- * So `tab` switches screens everywhere, exactly like `→`. The brief's
- * `tab`-falls-through rule is closed as CONTRADICTED by F23's own table, and
- * this comment is the record: should a real landmark model ever land, THAT is
- * the commit that reclaims `tab`, and it reclaims it by adding an action, not
- * by re-reading this mapping.
+ * `tab` switches screens everywhere. F23 §1.4 argued `tab` should fall through
+ * only when a screen had ≤ 1 band, reserving it for landmark jumping; F23's
+ * own key table in the same section lists `tab` → "next screen" in BOTH rows,
+ * and closer to the point, this panel has no landmark-focus model at all: no
+ * `landmark` action, no section-focus state, no jump to reserve `tab` for. A
+ * key "reserved" for a jump that does not exist is a dead key. `tab` is also
+ * what every host overlay already uses for "next tab"
+ * (settings-selector.ts:122, :138), so it is the advertised primary.
+ *
+ * THE ARROWS ARE NOT DROPPED — a dead key is worse than a repurposed one. They
+ * take the one genuinely HORIZONTAL thing on screen: the range control, which
+ * is drawn left-to-right in the topbar (`Shell.tsx:78`, `.segmented` at
+ * styles.css:1057). `→` steps toward the wider window and `←` toward the
+ * narrower one, matching the visual order of the segments and matching the
+ * web's own range ordering. They are ALIASES for `r`/`R`, exactly as digits
+ * and `g`-letters are aliases for each other, so nothing that worked before
+ * stops working — only the meaning of two keys changed, and it changed to the
+ * one thing on screen that is horizontal.
+ *
+ * Should a real landmark model ever land, THAT is the commit that reclaims
+ * `tab`, and it reclaims it by adding an action, not by re-reading this mapping.
  */
-const TAB_SWITCHES_SCREENS = true;
+
 
 export function panelAction(data: string, jumpArmed = false): PanelAction | null {
 	// Wheel-only: clicks and motion route through `#routeMouse`, which needs
@@ -269,12 +281,15 @@ export function panelAction(data: string, jumpArmed = false): PanelAction | null
 	}
 	if (matchesSelectCancel(data) || matchesKey(data, "q")) return { type: "close" };
 	if (data === "g" || data === "G") return { type: "armJump" };
-	if (matchesKey(data, "r")) return { type: "range", by: 1 };
-	if (matchesKey(data, "shift+r")) return { type: "range", by: -1 };
+	// The RANGE cluster: `←`/`→` drive the horizontal range control in the
+	// topbar, and `r`/`R` are the mnemonic aliases for the same two steps. See
+	// THE KEYMAP DECISION above for why the arrows left the screen switch.
+	if (matchesKey(data, "left") || matchesKey(data, "shift+r")) return { type: "range", by: -1 };
+	if (matchesKey(data, "right") || matchesKey(data, "r")) return { type: "range", by: 1 };
 	if (matchesKey(data, "s")) return { type: "sync" };
-	if (matchesKey(data, "left") || matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
-	if (matchesKey(data, "right")) return { type: "screen", by: 1 };
-	if (TAB_SWITCHES_SCREENS && matchesKey(data, "tab")) return { type: "screen", by: 1 };
+	// The SCREEN switch, tab first because it is what the footer advertises.
+	if (matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
+	if (matchesKey(data, "tab")) return { type: "screen", by: 1 };
 	const digit = DIGITS.indexOf(data);
 	if (digit !== -1) return { type: "screenIndex", index: digit };
 	if (matchesSelectUp(data)) return { type: "scroll", rows: -1 };
@@ -625,7 +640,18 @@ export class StatsPanel implements Component {
 		// between two keypresses cannot leave the view scrolled past its end.
 		state.scroll = Math.max(0, Math.min(state.scroll, state.maxScroll));
 
-		state.title = `Stats · ${rangeLabel(state.range)}`;
+		// THE TITLE ANSWERS "WHICH PAGE", NEVER "WHICH WINDOW". It used to read
+		// `Stats · <range>` while the topbar one row below carried the
+		// `omp/stats` wordmark AND the range's active pill — so the window was
+		// named twice and the page was named nowhere, which is why the two
+		// chrome regions read as one awkward block.
+		//
+		// The range is not lost by moving it: the topbar's segmented control
+		// shows the active window in every mode down to `minimal`, which keeps
+		// `brand + active range` (chrome.ts's topbar). Host parity for the shape
+		// is `/usage`, whose panel title is `Usage · Details` — panel, then
+		// section (usage-dashboard.ts:913).
+		state.title = `Stats · ${spec?.label ?? "Overview"}`;
 		this.#panel.title = state.title;
 		this.#header.setLines(headerLines);
 		this.#header.setHeight(headerLines.length);

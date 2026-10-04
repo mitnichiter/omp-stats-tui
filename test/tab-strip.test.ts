@@ -96,10 +96,11 @@ test("the strip's active tab follows panelAction, and handleInput is never consu
 		const bar = new TabBar("", buildTabs(preset, theme, "overview"), tabBarTheme(theme));
 		bar.showHint = false;
 		const start = bar.getActiveTab().id;
-		// The panel's cascade, not TabBar's: `TabBar.handleInput` would give
-		// `tab` to tab-switching unconditionally and take it away from landmark
-		// jumping, which is backwards for a dashboard (F23 §1.4).
-		const action = panelAction("\x1b[C");
+		// The panel's cascade, not TabBar's: `TabBar.handleInput` takes `tab` for
+		// itself, but the panel maps `tab` to next-screen so the key means one
+		// thing everywhere (THE KEYMAP DECISION in src/tui/panel.ts). The arrows
+		// used to be this step and now drive the range control instead.
+		const action = panelAction("\t");
 		expect(action).toEqual({ type: "screen", by: 1 } satisfies PanelAction);
 		const next = SCREEN_SPECS.filter(spec => !spec.deferred)[
 			(SCREEN_SPECS.filter(spec => !spec.deferred).findIndex(spec => spec.id === start) + 1) %
