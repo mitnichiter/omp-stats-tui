@@ -4323,3 +4323,187 @@ Levels are square-root compressed against the busiest day, over per-day cost, fa
 16 rows
 
 fetched activity: 3 route(s) in 126ms
+
+==============================================================================
+18) $ bun scripts/probe-frame.ts — CHROME, re-captured against the committed BODY
+    b15f09d + 9e90e29. Same contract: OVERWIDE 0, exactly 1 divider, at all
+    four widths. Refreshed so these frames and the body's are from one commit.
+    DELIBERATE DIVERGENCE (not drift): the web collapses grid-main-side to one
+    column below 1100px (styles.css:712-722), so its two-up layout exists only
+    at terminal width 150. Our nav column is permanent from 60 up — a terminal
+    has no pixels to collapse against, and a nav that vanished at 60 would
+    leave a screen with no discoverable way off it that digits and tab cannot
+    name.
+==============================================================================
+  FRAME@150 — 40 rows, widest 150, 1 divider(s), OVERWIDE: 0
+  FRAME@100 — 40 rows, widest 100, 1 divider(s), OVERWIDE: 0
+  FRAME@60 — 40 rows, widest 60, 1 divider(s), OVERWIDE: 0
+  FRAME@40 — 40 rows, widest 40, 1 divider(s), OVERWIDE: 0
+--- FRAME@150: rows=40 widest=150 dividers=1 OVERWIDE=0
+╭─ Stats · Overview ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                                                                                    ● Live    1h  24h  7d  30d  90d  All  │
+│   Usage            │ API-equivalent cost  Requests             Conversation tokens                                                                 │
+│ ❯ ↗  Overview  G O │ $112.36              65,460               1.3B                                                                                │
+│   ⬢  Models    G M │ 4,197 unpriced       1,315                9.4M                                                                                │
+│   💲 Costs     G C │ Cache rate           Error rate                                                                                               │
+│   Activity         │ 96.2%                2.0%                                                                                                     │
+│   📅 Activity  G A │ 81.4%                64,145                                                                                                   │
+│   📊 Requests  G R │                                                                                                                               │
+│   ✘  Errors    G E │ Uncached input    Cache read        Cache write                                                                               │
+│   Insights         │ 47M               1.2B              13M                                                                                       │
+│   🛠  Tools     G L │ Output            Premium requests  Tokens/s                                                                                  │
+│   📁 Projects  G J │ 9.4M              1.5               61.2/s                                                                                    │
+│                    │ Avg latency       Avg TTFT                                                                                                    │
+│                    │ 12.3s             0.43s                                                                                                       │
+│                    │                                                                                                                               │
+│                    │ ⏱ Activity requests per bucket                                                                                                │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │  Succeeded                                                                                                                  … │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │  Failed                                                                                                                     … │
+│                    │                                                                                                                               │
+│                    │ ⏱ Token mix share of the total                                                                                                │
+│                    │ Uncached input ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 3.7% 47M                                                      │
+│                    │ Cache read     █████████████████████████████████████████████░░░ 94.6% 1.2B                                                    │
+│                    │ Cache write    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 1.0% 13M                                                      │
+│                    │ Output         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.7% 9.4M                                                     │
+│                    │ █ Uncached input    3.7%                                                                                                      │
+│                    │ █ Cache read       94.6%                                                                                                      │
+│                    │ █ Cache write       1.0%                                                                                                      │
+│                    │ █ Output            0.7%                                                                                                      │
+│                    │ █ Main agent       33.3%                                                                                                      │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ⇥/⇧⇥ screen · ←/→ range · s sync · ⎋/q close                                                                                          │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- FRAME@100: rows=40 widest=100 dividers=1 OVERWIDE=0
+╭─ Stats · Overview ───────────────────────────────────────────────────────────────────────────────╮
+│ omp/stats                                                  ● Live    1h  24h  7d  30d  90d  All  │
+│   Usage            │ API-equivalent cost  Requests             Conversation tokens               │
+│ ❯ ↗  Overview  G O │ $112.36              65,460               1.3B                              │
+│   ⬢  Models    G M │ 4,197 unpriced       1,315                9.4M                              │
+│   💲 Costs     G C │ Cache rate           Error rate                                             │
+│   Activity         │ 96.2%                2.0%                                                   │
+│   📅 Activity  G A │ 81.4%                64,145                                                 │
+│   📊 Requests  G R │                                                                             │
+│   ✘  Errors    G E │ Uncached input    Cache read        Cache write                             │
+│   Insights         │ 47M               1.2B              13M                                     │
+│   🛠  Tools     G L │ Output            Premium requests  Tokens/s                                │
+│   📁 Projects  G J │ 9.4M              1.5               61.2/s                                  │
+│                    │ Avg latency       Avg TTFT                                                  │
+│                    │ 12.3s             0.43s                                                     │
+│                    │                                                                             │
+│                    │ ⏱ Activity requests per bucket                                              │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │  Succeeded                                                                … │
+│                    │ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░… │
+│                    │  Failed                                                                   … │
+│                    │                                                                             │
+│                    │ ⏱ Token mix share of the total                                              │
+│                    │ Uncached input ██░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 3.7% 47M    │
+│                    │ Cache read     █████████████████████████████████████████████░░░ 94.6% 1.2B  │
+│                    │ Cache write    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 1.0% 13M    │
+│                    │ Output         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.7% 9.4M   │
+│                    │ █ Uncached input    3.7%                                                    │
+│                    │ █ Cache read       94.6%                                                    │
+│                    │ █ Cache write       1.0%                                                    │
+│                    │ █ Output            0.7%                                                    │
+│                    │ █ Main agent       33.3%                                                    │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ⇥/⇧⇥ screen · ←/→ range · s sync · ⎋/q close                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- FRAME@60: rows=40 widest=60 dividers=1 OVERWIDE=0
+╭─ Stats · Overview ───────────────────────────────────────╮
+│ omp/stats                    1h  24h  7d  30d  90d  All  │
+│  ↗ Overview    ◫    ⬢    $    ▣    ≡    ⚠    ⚒    ◈    … │
+│ API-equivalent cost  Requests                            │
+│ $112.36              65,460                              │
+│ 4,197 unpriced       1,315                               │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▆▃█▂   ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▆▄▃                  │
+│ Conversation tokens  Cache rate                          │
+│ 1.3B                 96.2%                               │
+│ 9.4M                 81.4%                               │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▇▄▂                                       │
+│ Error rate                                               │
+│ 2.0%                                                     │
+│ 64,145                                                   │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▄▃█▂                                       │
+│                                                          │
+│ Uncached input    Cache read        Cache write          │
+│ 47M               1.2B              13M                  │
+│ Output            Premium requests  Tokens/s             │
+│ 9.4M              1.5               61.2/s               │
+│ Avg latency       Avg TTFT                               │
+│ 12.3s             0.43s                                  │
+│                                                          │
+│ ⏱ Activity requests per bucket                           │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│  Succeeded                                               │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│  Failed                                                  │
+│                                                          │
+│ ⏱ Token mix share of the total                           │
+│ Uncached input █░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 3.7% 47M │
+│ Cache read     ████████████████████████████░░ 94.6% 1.2B │
+│ Cache write    ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 1.0% 13M │
+│ Output         ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0.7% 9.4M │
+├──────────────────────────────────────────────────────────┤
+│ ↑/↓ scroll · ⇥/⇧⇥ screen · ←/→ range · ⎋/q close         │
+╰──────────────────────────────────────────────────────────╯
+
+--- FRAME@40: rows=40 widest=40 dividers=1 OVERWIDE=0
+╭─ Stats · Overview ───────────────────╮
+│ omp/stats                       30d  │
+│  ↗ Overview    ◫    ⬢    $    ▣    … │
+│  ⚠    ⚒    ◈    +                    │
+│ API-equivalent cost                  │
+│ $112.36                              │
+│ 4,197 unpriced                       │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▆▃█▂                   │
+│ Requests                             │
+│ 65,460                               │
+│ 1,315                                │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▆▄▃                   │
+│ Conversation tokens                  │
+│ 1.3B                                 │
+│ 9.4M                                 │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▇▄▂                   │
+│ Cache rate                           │
+│ 96.2%                                │
+│ 81.4%                                │
+│ Error rate                           │
+│ 2.0%                                 │
+│ 64,145                               │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▄▃█▂                   │
+│                                      │
+│ Uncached input    Cache read         │
+│ 47M               1.2B               │
+│ Cache write       Output             │
+│ 13M               9.4M               │
+│ Premium requests  Tokens/s           │
+│ 1.5               61.2/s             │
+│ Avg latency       Avg TTFT           │
+│ 12.3s             0.43s              │
+│                                      │
+│ ⏱ Activity requests per bucket       │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+│  Succeeded                           │
+│ ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█ │
+├──────────────────────────────────────┤
+│ ↑/↓ scroll · ⇥/⇧⇥ screen · ⎋/q close │
+╰──────────────────────────────────────╯
+
