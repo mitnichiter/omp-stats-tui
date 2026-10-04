@@ -19,7 +19,7 @@ import { DEFAULT_RANGE, nextRange, rangeLabel, type Range } from "../data/ranges
 import { describeSyncProgress, startIngest, type IngestHandle, type SyncEvent } from "../sync/client";
 import { costsForBuckets, renderDailyBars } from "./charts/bars";
 import { costWithUnpriced, formatInteger, formatPercent, tokenCells } from "./format";
-import { glyphsFor, type SymbolPreset } from "./glyphs";
+import { glyph, glyphsFor, type SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
 import { LABEL_WIDTH, planLayout, type LayoutPlan } from "./layout";
 import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
@@ -683,8 +683,11 @@ export class StatsPanel implements Component {
 		// one vertical in the body, and G5 bans full-width rules, not columns.
 		// DIVERGENCE (deliberate, noted): the host draws no gutters around the
 		// outer frame — OverlayPanel's `row()` already insets both sides — so
-		// only this inner column carries the bar.
-		const gutter = this.#theme.fg("dim", "│");
+		// only this inner column carries the bar. The mark comes from
+		// glyph(preset, "columnGap") — "│" under unicode/nerd, "|" under ascii
+		// (glyphs.ts:58,80; never theme.symbol("sep.pipe"), which measures 3
+		// cells) — so the gutter matches the frame it sits in on every preset.
+		const gutter = this.#theme.fg("dim", glyph(preset, "columnGap"));
 		return rendered.lines.map((line, index) => {
 			const side = index < sidebarLines.length ? sidebarLines[index]! : " ".repeat(sidebarWidth);
 			return `${side} ${gutter} ${line}`;

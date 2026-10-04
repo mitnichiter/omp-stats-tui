@@ -28,8 +28,9 @@
  *   paints a page the panel cannot honestly fill wastes the keystroke.
  */
 import { expect, test } from "bun:test";
-import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
+import { ensureThemeSync, setSymbolPreset, theme } from "@oh-my-pi/pi-tui/theme";
 import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+
 import { SCREEN_SPECS } from "../src/layout/spec";
 import {
 	JUMP_TIMEOUT_MS,
@@ -196,6 +197,29 @@ test("the sidebar gutter is the dim column bar, settings split-layout parity", (
 		expect(navRow).toBeDefined();
 		expect(navRow!).toMatch(/│/);
 	});
+});
+
+test("the sidebar gutter follows the preset: │ under unicode, | under ascii", async () => {
+	// Follow-up to the gutter commit: `#bodyLines` hardcoded "│", so ascii
+	// rendered a unicode bar in an ascii frame. The gutter is data ink, so it
+	// comes from glyph(preset, "columnGap") like every other mark. Asserted
+	// by ABSENCE under ascii: the frame borders are "|" and "+" there, so any
+	// remaining "│" is the hardcoded gutter leaking through.
+	const current = theme.getSymbolPreset();
+	await setSymbolPreset("unicode");
+	const upanel = __testing.makePanel({ data: liveData(), rows: 40 });
+	await __testing.settled(upanel);
+	const urow = upanel.render(100).map(strip).find(row => row.includes("Overview") && row.includes("G O"));
+	expect(urow).toBeDefined();
+	expect(urow!).toContain("│");
+	await setSymbolPreset("ascii");
+	const apanel = __testing.makePanel({ data: liveData(), rows: 40 });
+	await __testing.settled(apanel);
+	const arow = apanel.render(100).map(strip).find(row => row.includes("Overview") && row.includes("G O"));
+	expect(arow).toBeDefined();
+	expect(arow!).not.toContain("│");
+	expect(arow!).toContain("|");
+	await setSymbolPreset(current);
 });
 // ─── live chip: LiveChip.tsx branch order, minus connected ────────────────────
 
