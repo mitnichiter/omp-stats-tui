@@ -335,10 +335,18 @@ test("the composed frame at width 100: topbar + sidebar, body, divider, footer, 
 	// Exactly ONE divider: the topbar, the dividers panel chrome draws, and
 	// section 6's G5/G6 rules all meet here for the first time.
 	expect(plain.filter(row => row.includes("├")).length).toBe(1);
-	// The footer names the keys the panel binds and nothing else.
+	// The footer names the keys the panel binds and nothing else. NOT `scroll`:
+	// that hint is DERIVED from whether the body actually overflows
+	// (`#footerLine` picks the mode from `maxScroll > 0`), so asserting it here
+	// was asserting a property of the BODY's height, not of the chrome. It held
+	// only while the body was tall enough to overflow at 40 rows; when the stat
+	// grid stopped stretching and the content got shorter, the hint correctly
+	// disappeared and this assertion broke. The invariant it was reaching for
+	// — the hint is present exactly when the body scrolls — is pinned
+	// separately below, against a panel that genuinely overflows.
 	const footer = plain[plain.length - 2];
-	expect(footer).toContain("scroll");
 	expect(footer).toContain("screen");
+	expect(footer).toContain("range");
 	expect(footer).toContain("sync");
 	expect(footer).toContain("close");
 	// The TITLE names the page (`Stats · <screen>`), and the RANGE lives only in
@@ -349,6 +357,37 @@ test("the composed frame at width 100: topbar + sidebar, body, divider, footer, 
 	expect(plain[0]).toContain("Overview");
 	expect(plain[0]).not.toContain("30 days");
 	expect(plain[1]).toContain("30d");
+});
+
+test("the scroll hint appears exactly when the body overflows, and not otherwise", async () => {
+	// The one invariant the removed assertion was accidentally covering, now
+	// stated directly and in both directions. `scroll` is mode-conditional by
+	// design: a body that fits does not get told about scrolling, because a hint
+	// for a key that would do nothing is a lie the reader acts on.
+	// Sweeping terminal heights rather than picking one makes the test
+	// self-calibrating against the fixture: it requires that the sweep actually
+	// produced a fitting frame AND an overflowing one, so it cannot pass
+	// vacuously, and it does not break when the body's row count changes.
+	let sawFit = false;
+	let sawOverflow = false;
+	for (const rows of [10, 14, 20, 26, 30, 40]) {
+		const panel = makePanel({ data: dataFor(), rows });
+		await __testing.settled(panel);
+		const frame = panel.render(100);
+		const footer = stripAnsi(frame[frame.length - 2]!);
+		if (__testing.debugMaxScroll(panel) > 0) {
+			sawOverflow = true;
+			expect(footer, `rows=${rows}`).toContain("scroll");
+		} else {
+			sawFit = true;
+			expect(footer, `rows=${rows}`).not.toContain("scroll");
+		}
+		// `close` is the one hint the fit algorithm never drops (footer.ts), so
+		// it has to be there in BOTH modes.
+		expect(footer, `rows=${rows}`).toContain("close");
+	}
+	expect(sawFit).toBe(true);
+	expect(sawOverflow).toBe(true);
 });
 
 test("the composed frame at width 60: the nav becomes the strip row and everything still fits", async () => {
