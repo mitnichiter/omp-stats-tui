@@ -127,6 +127,8 @@ const HOTKEYS: Record<string, string> = {
 	errors: "e",
 	tools: "l",
 	projects: "j",
+	providers: "v",
+	gain: "n",
 };
 
 /**
@@ -138,9 +140,9 @@ const HOTKEYS: Record<string, string> = {
  * only as a scaffold have no row).
  */
 const GROUPS: Record<string, readonly string[]> = {
-	Usage: ["overview", "models", "costs"],
+	Usage: ["overview", "models", "costs", "providers"],
 	Activity: ["activity", "requests", "errors"],
-	Insights: ["tools", "projects"],
+	Insights: ["tools", "projects", "gain"],
 };
 
 /**

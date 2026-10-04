@@ -2,6 +2,20 @@ import { test, expect } from "bun:test";
 import { ensureThemeSync } from "@oh-my-pi/pi-tui/theme";
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import { NAV_GROUPS } from "../src/tui/chrome";
+
+/** Overlay nav-row index of a screen, derived from NAV_GROUPS. The literals 2/0/9
+ * below are now derived: `tools` was nav row 9 when the nav had eleven rows and
+ * moved to row 10 when `providers` and `gain` gained rows. */
+const navRowOf = (id: string): number => {
+	let row = 0;
+	for (const g of NAV_GROUPS) {
+		row += 1;
+		const hit = g.items.findIndex(i => i.id === id);
+		if (hit !== -1) return row + hit;
+		row += g.items.length;
+	}
+	throw new Error(`no nav row for ${id}`);
+};
 import { __testing } from "../src/tui/panel";
 import type { StatsPanel } from "../src/tui/panel";
 import type { PanelData } from "../src/data/api";
@@ -100,9 +114,10 @@ test("sidebar rows follow NAV_GROUPS: one heading row per group, then its screen
 		expected.push(null);
 		for (const item of group.items) expected.push(item.id);
 	}
-	// Three headings plus eight screens: the eleven nav rows the panel's
-	// MIN_SIDEBAR_ROWS comment counts.
-	expect(expected.length).toBe(11);
+	// Derived, never restated: three headings plus one row per screen. The count
+	// used to be hardcoded as 11 and went stale the moment `providers` and `gain`
+	// became reachable — which is the bug this file's siblings now pin.
+	expect(expected.length).toBe(NAV_GROUPS.reduce((n, g) => n + 1 + g.items.length, 0));
 	for (let row = 0; row < expected.length; row++) {
 		expect(sidebarHit(row), `row ${row}`).toBe(expected[row]);
 	}
@@ -110,7 +125,7 @@ test("sidebar rows follow NAV_GROUPS: one heading row per group, then its screen
 
 test("sidebarHit is null past the nav and for negative rows", () => {
 	expect(sidebarHit(-1)).toBeNull();
-	expect(sidebarHit(11)).toBeNull();
+	expect(sidebarHit(NAV_GROUPS.reduce((n, g) => n + 1 + g.items.length, 0))).toBeNull();
 	expect(sidebarHit(40)).toBeNull();
 });
 
@@ -214,16 +229,16 @@ test("clicking a sidebar row switches screens; headings do nothing", async () =>
 	const width = 100;
 	plain(panel, width);
 	const frame = __testing.debugFrame(panel)!;
-	expect(frame.sidebarRows).toBe(11);
+	expect(frame.sidebarRows).toBe(NAV_GROUPS.reduce((n, g) => n + 1 + g.items.length, 0));
 	const overlayRow = (navRow: number) => 1 + frame.topbarRows + frame.stripRows + navRow + 1;
-	// Nav row 2 is `models`; content col 0 is overlay col 2.
-	panel.handleInput(sgr(CLICK, 3, overlayRow(2)));
+	// `models`, wherever the nav puts it; content col 0 is overlay col 2.
+	panel.handleInput(sgr(CLICK, 3, overlayRow(navRowOf("models"))));
 	expect(__testing.debugScreenId(panel)).toBe("models");
 	// Nav row 0 is the `Usage` heading: the screen does not move.
 	panel.handleInput(sgr(CLICK, 3, overlayRow(0)));
 	expect(__testing.debugScreenId(panel)).toBe("models");
-	// Nav row 9 is `tools` in the third group: groups all map.
-	panel.handleInput(sgr(CLICK, 3, overlayRow(9)));
+	// `tools` in the third group: groups all map.
+	panel.handleInput(sgr(CLICK, 3, overlayRow(navRowOf("tools"))));
 	expect(__testing.debugScreenId(panel)).toBe("tools");
 });
 
@@ -422,7 +437,7 @@ test("hover over a sidebar row paints the 4th-arg hover band; leaving clears it"
 	const width = 100;
 	const lines = panel.render(width);
 	const frame = __testing.debugFrame(panel)!;
-	expect(frame.sidebarRows).toBe(11);
+	expect(frame.sidebarRows).toBe(NAV_GROUPS.reduce((n, g) => n + 1 + g.items.length, 0));
 	const bodyStart = 1 + frame.topbarRows + frame.stripRows;
 	// Nav row 2 is `models` (overview is active): motion over its cells arms
 	// the sidebar hover, and the painted frame must carry the band while the

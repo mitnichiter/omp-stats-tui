@@ -44,7 +44,7 @@ import {
 	topbar,
 } from "../src/tui/chrome";
 import { SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
-import { __testing } from "../src/tui/panel";
+import { __testing, SELECTABLE_SCREENS } from "../src/tui/panel";
 import type { SyncEvent } from "../src/sync/client";
 import { liveData } from "./fixtures/panel";
 
@@ -115,6 +115,29 @@ const hexOf = (colour: Parameters<typeof theme.fg>[0]): string => {
 	return `#${[r, g, b].map(v => Number(v).toString(16).padStart(2, "0")).join("")}`;
 };
 
+/** Frame row index of a nav GROUP HEADING, derived from NAV_GROUPS. These used
+ * to be the literals 4 and 8, which shifted the moment `providers` joined Usage
+ * and silently moved the thing these tests are about. */
+const headingRowOf = (heading: string): number => {
+	let row = 0;
+	for (const g of NAV_GROUPS) {
+		if (g.heading === heading) return row;
+		row += 1 + g.items.length;
+	}
+	throw new Error(`no nav heading ${heading}`);
+};
+/** Frame row index of a nav ROW, derived the same way. */
+const navRowOf = (id: string): number => {
+	let row = 0;
+	for (const g of NAV_GROUPS) {
+		row += 1;
+		const hit = g.items.findIndex(i => i.id === id);
+		if (hit !== -1) return row + hit;
+		row += g.items.length;
+	}
+	throw new Error(`no nav row for ${id}`);
+};
+
 const idle = (over: Record<string, unknown> = {}) => ({
 	syncing: false,
 	current: 0,
@@ -132,7 +155,13 @@ const idle = (over: Record<string, unknown> = {}) => ({
 test("nav groups are Usage / Activity / Insights in web order, with the drawable subset", () => {
 	expect(NAV_GROUPS.map(g => g.heading)).toEqual(["Usage", "Activity", "Insights"]);
 	const ids = NAV_GROUPS.flatMap(g => g.items.map(i => i.id));
-	expect(ids).toEqual(["overview", "models", "costs", "activity", "requests", "errors", "tools", "projects"]);
+	// Derived from SELECTABLE_SCREENS, never restated: every screen the arrow
+	// keys can land on has a nav row, in nav-group order. This used to be a
+	// literal eight-id list, which is how `providers` and `gain` came to be
+	// reachable with no row to show them on.
+	expect(ids).toEqual(SELECTABLE_SCREENS.map(s => s.id).sort(
+		(a, b) => ids.indexOf(a) - ids.indexOf(b),
+	));
 });
 
 test("every nav label matches the layout IR, so the sidebar cannot drift from the strip", () => {
@@ -185,16 +214,19 @@ test("the jump window matches the web's 1200 ms", () => {
 test("sidebar has one row per screen under its group heading, with a G-letter hint", () => {
 	const { width, lines } = sidebar(theme, "unicode", "overview");
 	const plain = lines.map(strip);
-	expect(plain).toHaveLength(3 + 8);
+	// Derived from NAV_GROUPS, never restated: one heading row per group plus one
+	// row per screen. This was `3 + 8` and went stale when `providers` and `gain`
+	// gained nav rows.
+	expect(plain).toHaveLength(NAV_GROUPS.reduce((n, g) => n + 1 + g.items.length, 0));
 	// Every row carries the host's 2-column prefix slot: cursor + space when
 	// selected, two spaces otherwise (settings-list.ts:939-940).
 	expect(plain[0]!.trim()).toBe("Usage");
-	expect(plain[4]!.trim()).toBe("Activity");
-	expect(plain[8]!.trim()).toBe("Insights");
+	expect(plain[headingRowOf("Activity")]!.trim()).toBe("Activity");
+	expect(plain[headingRowOf("Insights")]!.trim()).toBe("Insights");
 	expect(plain[1]).toMatch(/Overview/);
 	expect(plain[1]).toMatch(/G O/);
-	expect(plain[6]).toMatch(/Requests/);
-	expect(plain[6]).toMatch(/G R/);
+	expect(plain[navRowOf("requests")]).toMatch(/Requests/);
+	expect(plain[navRowOf("requests")]).toMatch(/G R/);
 	for (const line of plain) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 	expect(width).toBeLessThanOrEqual(26);
 });
@@ -239,15 +271,15 @@ test("the group headings are two different levels, not one colour repeated three
 	// one.
 	const { lines } = sidebar(theme, "unicode", "overview");
 	expect(strip(lines[0]!).trim()).toBe("Usage");
-	expect(strip(lines[4]!).trim()).toBe("Activity");
+	expect(strip(lines[headingRowOf("Activity")]!).trim()).toBe("Activity");
 	expect(inksIn(lines[0]!)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
-	expect(inksIn(lines[4]!)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
+	expect(inksIn(lines[headingRowOf("Activity")]!)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
 	// Two different colours, not merely different weights.
 	expect(hexOf(SIDEBAR_INK.headingActive)).not.toBe(hexOf(SIDEBAR_INK.headingInactive));
 	expect(lines[0]!).not.toBe(lines[4]!);
 	// A heading is never a row: no cursor, no jump key.
-	expect(lines[4]!).not.toContain(theme.nav.cursor);
-	expect(strip(lines[4]!)).not.toMatch(/G [A-Z]/);
+	expect(lines[headingRowOf("Activity")]!).not.toContain(theme.nav.cursor);
+	expect(strip(lines[headingRowOf("Activity")])).not.toMatch(/G [A-Z]/);
 });
 
 test("the four sidebar levels are four different renderings, each tied to its own token", () => {
@@ -257,8 +289,8 @@ test("the four sidebar levels are four different renderings, each tied to its ow
 	const { lines } = sidebar(theme, "unicode", "overview");
 	const headingActive = lines[0]!; // "Usage"
 	const rowActive = lines[1]!; // Overview
-	const rowInactive = lines[2]!; // Models
-	const headingInactive = lines[4]!; // "Activity"
+	const rowInactive = lines[navRowOf("models")]!;
+	const headingInactive = lines[headingRowOf("Activity")]!;
 	const four = [headingActive, headingInactive, rowActive, rowInactive];
 	expect(new Set(four).size, "two sidebar levels rendered byte-identically").toBe(4);
 
@@ -289,7 +321,7 @@ test("a row's jump hint is the faintest run on that row", () => {
 	for (const id of ["overview", "models", "costs"]) {
 		const { lines } = sidebar(theme, "unicode", id);
 		const rows = lines.filter(l => /G [A-Z]$/.test(strip(l)));
-		expect(rows.length).toBe(8);
+		expect(rows.length).toBe(NAV_GROUPS.reduce((n, g) => n + g.items.length, 0));
 		for (const line of rows) {
 			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(hexOf(SIDEBAR_INK.jumpKey));
 		}
@@ -358,7 +390,7 @@ test("sidebar columns align: icon gutter, label column, and a right-aligned jump
 	const { width, lines } = sidebar(theme, "unicode", "overview");
 	const plain = lines.map(strip);
 	const bodyRows = plain.filter(row => /G [A-Z]$/.test(row));
-	expect(bodyRows).toHaveLength(8);
+	expect(bodyRows).toHaveLength(NAV_GROUPS.reduce((n, g) => n + g.items.length, 0));
 
 	// Every jump key ends in the SAME cell — the trailing edge, as in the web
 	// where `.nav-row-label { flex: 1 }` pushes the `kbd` to the row's end.
@@ -376,7 +408,7 @@ test("sidebar columns align: icon gutter, label column, and a right-aligned jump
 		const row = bodyRows.find(candidate => candidate.includes(label))!;
 		return visibleWidth(row.slice(0, row.indexOf(label)));
 	};
-	const labels = ["Overview", "Models", "Costs", "Activity", "Requests", "Errors", "Tools", "Projects"];
+	const labels = NAV_GROUPS.flatMap(g => g.items.map(i => i.label));
 	const columns = labels.map(labelColumn);
 	expect(new Set(columns).size).toBe(1);
 

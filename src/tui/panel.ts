@@ -695,7 +695,9 @@ export class StatsPanel implements Component {
 		this.#header.setHeight(headerLines.length);
 		const visible = state.source.slice(state.scroll, state.scroll + plan.bodyRows);
 		this.#body.setLines(nav === null ? visible : this.#zipSidebar(visible, nav.lines, sidebarWidth, preset));
-		this.#body.setHeight(plan.bodyRows);
+		// At least as tall as the nav: `#zipSidebar` may have added rows to keep the
+		// whole nav visible, and `setHeight` would clip them straight back off.
+		this.#body.setHeight(Math.max(plan.bodyRows, nav?.lines.length ?? 0));
 		this.#footer.setLines([this.#footerLine(plan)]);
 		return this.#panel.render(width);
 	}
@@ -762,11 +764,23 @@ export class StatsPanel implements Component {
 	 * glyph(preset, "columnGap") — "│" under unicode/nerd, "|" under ascii
 	 * (glyphs.ts:58,80; never theme.symbol("sep.pipe"), which measures 3 cells)
 	 * — so the gutter matches the frame it sits in on every preset.
+	 * CALLED ON THE SLICED WINDOW, never on the source. That is what pins it:
+	 * the nav is frame chrome, so zipping it after the slice means `index` here is
+	 * the BODY's visible row rather than its document row.
 	 *
-	 * CALLED ON THE SLICED WINDOW, never on the source. That is the whole fix:
-	 * the nav is frame chrome, so zipping it after the slice pins it, and
-	 * `index` here is the BODY's visible row rather than its document row, which
-	 * is what the nav is supposed to align with.
+	 * THE NAV SETS A FLOOR ON THE FRAME, NEVER THE OTHER WAY ROUND. This used to
+	 * map over `bodyRows` alone, which made the nav column exactly as tall as the
+	 * body happened to be — so a screen with a short body silently DROPPED the
+	 * bottom of the nav. That is a function of the BODY, and the nav is not the
+	 * body's: `gain` is the last row of the nav and `overview` has a 50-line body
+	 * against `gain`'s 12, so arrowing from overview to gain made the entire
+	 * active marker disappear — the nav appeared to jump to a screen it never
+	 * showed. It is the same class of defect as zipping the nav before the slice,
+	 * which put `Usage` and `Overview` in the scrolled document.
+	 *
+	 * THE RULE: a screen reachable by arrow key must be visible in the frame you
+	 * reach it from. So the frame is at least `max(body rows, nav lines)` tall and
+	 * the body is padded with blanks to fill — never the nav clipped to fit.
 	 */
 	#zipSidebar(
 		bodyRows: readonly string[],
@@ -775,9 +789,11 @@ export class StatsPanel implements Component {
 		preset: SymbolPreset,
 	): readonly string[] {
 		const gutter = this.#theme.fg("dim", glyph(preset, "columnGap"));
-		return bodyRows.map((line, index) => {
+		const height = Math.max(bodyRows.length, sidebarLines.length);
+		return Array.from({ length: height }, (_, index) => {
 			const side = index < sidebarLines.length ? sidebarLines[index]! : " ".repeat(sidebarWidth);
-			return `${side} ${gutter} ${line}`;
+			const body = index < bodyRows.length ? bodyRows[index]! : "";
+			return `${side} ${gutter} ${body}`;
 		});
 	}
 
