@@ -594,8 +594,40 @@ interface StatTileOut {
 }
 
 function statRowBand(stats: readonly IRStatTile[], opts: ScreenRenderOptions): Band | null {
+	// The figures THIS statRow states, by metric identity. A hint that is zero
+	// and restates one of them is the same figure twice: the costs screen's
+	// `API-equivalent estimate` printed the hint `0` while the `Unpriced
+	// requests` tile in the same row printed the same `0`, and the extra row
+	// pushed the next tile row down. Scoped narrowly — ONLY a hint that
+	// resolves to numeric zero is eligible, because a non-zero hint is a second
+	// figure (the money caveat at work: `7 unpriced` says how much of the total
+	// above is a floor, and the sibling stating it does not make this one
+	// redundant, it makes it confirmed). And it fires only when the statRow
+	// still states the figure elsewhere: a zero hint that is the ONLY place its
+	// figure appears is kept, because dropping it would delete information —
+	// nothing else on the row says nothing went unmeasured. Prose hints are not
+	// figures at all, so they never qualify.
+	//
+	// The comparison is by the IR's own metric identity (`groupKeyOf`, the same
+	// rule that pairs chart series with legend items), so the two tiles resolve
+	// through the same aggregator and print the same text. And the scope is the
+	// statRow BAND rather than the rendered tile row: below three-across the
+	// grid wraps the tiles into several visual rows, which is a width accident —
+	// the statRow is the declared row of figures, so a figure stated anywhere
+	// in it is stated. The caveat survives where it belongs either way: at zero
+	// there is nothing to caveat, and the sibling tile is on screen with it.
+	const stated: Record<string, true> = Object.fromEntries(stats.map(tile => [groupKeyOf(tile.metric), true]));
 	const tiles = stats
-		.map(tile => toStatTile(tile, opts))
+		.map(tile => {
+			const out = toStatTile(tile, opts);
+			if (out?.hint === undefined) return out;
+			// Narrowed here: prose is words, never a figure, so only a real
+			// `MetricRef` can restate a sibling tile.
+			const hintRef = isProseHint(tile.hint) ? undefined : tile.hint;
+			if (hintRef === undefined) return out;
+			const hintValue = resolveNumber(hintRef, opts.data);
+			return hintValue === 0 && stated[groupKeyOf(hintRef)] ? { ...out, hint: undefined } : out;
+		})
 		.filter((tile): tile is StatTileOut => tile !== null);
 	return tiles.length === 0 ? null : { kind: "statRow", stats: tiles };
 }

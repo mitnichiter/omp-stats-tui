@@ -21,7 +21,7 @@
  * has its own test below, because a rule stated only by its exception is a rule
  * nobody can check.
  */
-
+import type { Band } from "../src/tui/band";
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
@@ -237,4 +237,47 @@ test("B: the unpriced column is KEPT even when every row is zero — it is the m
 	expect(headers, "the caveat column must render beside cost").toContain("Unpriced");
 	expect(headers, "the other all-zero column is the one that goes").not.toContain("Cache write");
 	expect(headers, "and the money column it caveats is still there").toContain("Estimate");
+});
+
+// ─── C: a hint that says zero and repeats its own row ─────────────────────────
+
+const tileOf = (bands: readonly Band[], label: string) => {
+	const row = bands.find(band => band.kind === "statRow");
+	if (row === undefined || row.kind !== "statRow") throw new Error("no statRow band");
+	const tile = row.stats.find(stat => stat.label === label);
+	if (tile === undefined) throw new Error(`no tile ${label}`);
+	return tile;
+};
+
+test("C: a zero hint that a sibling tile states is dropped", () => {
+	// The screenshot: `API-equivalent estimate` printed the hint `0` while the
+	// `Unpriced requests` tile in the same statRow printed the same `0` — the
+	// same figure twice, and the extra row pushed the next tile row down.
+	const bands = screenBands(opts(specOf("costs"), liveData()));
+	expect(tileOf(bands, "API-equivalent estimate").hint, "the restated zero must go").toBeUndefined();
+	expect(tileOf(bands, "Unpriced requests").value, "while the figure itself stays stated").toBe("0");
+});
+
+test("C: a NON-ZERO hint always renders, even beside the sibling that states it", () => {
+	// The money caveat at work: `7 unpriced` under the estimate is the number
+	// that says how much of the total above is a floor, and a sibling tile
+	// stating it does not make this one redundant — it makes it confirmed.
+	// Narrowly scoped: ONLY a hint that resolves to numeric zero is eligible.
+	const spec = probeSpec([{ kind: "statRow", stats: [
+		{ label: "API-equivalent estimate", metric: summedCost("cost"), hint: summedCost("unpricedRequests") },
+		{ label: "Unpriced requests", metric: summedCost("unpricedRequests") },
+	]}]);
+	const data = costData([costRow("a", 10, { unpricedRequests: 7 })]);
+	expect(tileOf(screenBands(opts(spec, data)), "API-equivalent estimate").hint).toBeDefined();
+});
+
+test("C: a zero hint that is the ONLY place its figure appears is kept", () => {
+	// Dropping this one would delete information: nothing else on the row
+	// states the count, and `0` here still says something — nothing went
+	// unmeasured, stated where the caveat belongs.
+	const spec = probeSpec([{ kind: "statRow", stats: [
+		{ label: "API-equivalent estimate", metric: summedCost("cost"), hint: summedCost("unpricedRequests") },
+	]}]);
+	const data = costData([costRow("a", 10, { unpricedRequests: 0 })]);
+	expect(tileOf(screenBands(opts(spec, data)), "API-equivalent estimate").hint).toBe("0");
 });
