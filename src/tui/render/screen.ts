@@ -1563,6 +1563,25 @@ function sortRows(
  * is `band.ts`'s rule and the reason no blank line precedes it. Every item
  * resolving to nothing makes the band disappear rather than drawing a column of
  * `0.0%` that reads as a measurement.
+ *
+ * AND IT DISAPPEARS WHEN IT HAS NOTHING OF ITS OWN TO SAY. A legend exists
+ * because most chart kinds CANNOT name their own series: `bars` writes each
+ * series' label under its marks with nothing beside it saying how much that
+ * series is of anything, so the shares have to live somewhere. A `shareBar` is
+ * the opposite — every one of its rows is `label bar… pct figure`, the label
+ * AND the share AND the figure, published (CostsRoute.tsx:284-318, the web's
+ * `ComponentBreakdown` renders the same rows inside the card). A legend under
+ * one repeats all four labels at all four percentages, which is what the costs
+ * screen was doing: eight rows for four figures.
+ *
+ * So: a legend whose every item ADOPTED a share from a chart above is a second
+ * rendering of that chart and is dropped. All-or-nothing, never per item —
+ * `renderLegend` wears each swatch in its item index's hue, so dropping the
+ * first four of Overview's seven would slide the three agent keys onto the
+ * hues the shareBar already spent on the token kinds, and a key naming the
+ * wrong series is worse than a repeated one. The exemption is the case that
+ * makes the rule safe: Overview's legend names three agent rows its shareBar
+ * has no series for, so it keeps all seven (`test/redundant-layout.test.ts`).
  */
 function legendBand(
 	items: readonly IRLegendItem[],
@@ -1585,6 +1604,8 @@ function legendBand(
 		return { label: item.label, metric: item.metric, value: item.value, share: adopted };
 	});
 	const own = sharesOf(entries.filter(entry => entry.share === undefined));
+	// Every item published by a chart above => this band restates that chart.
+	if (entries.length > 0 && entries.every(entry => entry.share !== undefined)) return null;
 	return entries.some(entry => (entry.share ?? own.find(c => c.label === entry.label)?.share ?? 0) > 0)
 		? {
 				kind: "legend",
