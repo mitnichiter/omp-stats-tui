@@ -25,6 +25,7 @@ import { expect, test } from "bun:test";
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { __testing, SELECTABLE_SCREENS } from "../src/tui/panel";
 import { NAV_GROUPS, screenForHotkey, sidebar } from "../src/tui/chrome";
+import { hitTest } from "../src/tui/mouse";
 import type { ScreenId } from "../src/tui/screens/types";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 
@@ -188,3 +189,88 @@ test("every screen the strip can show that has a nav row is reachable by its own
 		expect(screenForHotkey(item.hotkey), `${spec.id}`).toBe(spec.id);
 	}
 });
+
+// ─── the hit map, which must cover every row the nav paints ─────────────────
+
+/**
+ * THE HIT MAP MUST COVER EVERY ROW THE NAV PAINTS.
+ *
+ * A row that shows a screen the reader can click must select that screen, and a
+ * row that does not is a dead zone in a control that looks alive. `c24d260`
+ * fixed the paint; this guards the half that is easy to leave behind, because
+ * the paint is verified by looking at the frame and the hit map is verified only
+ * by clicking it.
+ *
+ * THE OFF-BY-ONE IS NOT HYPOTHETICAL. This file's own first draft of this
+ * probe, and an external verification of the same bug, both reported that `gain`
+ * "sits at nav row 13" and is therefore unclickable. It sits at nav row 12. The
+ * nav is 13 lines, so its rows are 0-12 and row 13 correctly does not exist;
+ * both probes added a row of `1 + topbarRows + stripRows` where `hitTest`
+ * subtracts exactly that plus one more, and every row came back shifted by one —
+ * which looks precisely like "the last row is dead" and is in fact "everything
+ * is off by one".
+ *
+ * So the offsets below are DERIVED FROM `hitTest`'s own arithmetic rather than
+ * restated, and the expected ids come from `NAV_GROUPS` rather than written out.
+ */
+function expectedNavRows(): readonly (string | null)[] {
+	return NAV_GROUPS.flatMap(g => [null, ...g.items.map(i => i.id)]);
+}
+
+/** The overlay row `hitTest` reads as nav row `nav` — its arithmetic, not a guess. */
+function overlayRowOf(frame: { topbarRows: number; stripRows: number }, nav: number): number {
+	return nav + 1 + frame.topbarRows + frame.stripRows;
+}
+
+async function frameFor(width: number, rows: number) {
+	const panel = __testing.makePanel({ data: liveData(), screenId: "overview", rows });
+	await __testing.settled(panel);
+	panel.render(width);
+	return __testing.debugFrame(panel)!;
+}
+
+test("the frame's hit map covers exactly the rows the nav paints", async () => {
+	const painted = expectedNavRows().length;
+	expect(painted).toBe(NAV_LINES);
+	for (const width of WIDTHS) {
+		for (const rows of HEIGHTS) {
+			const frame = await frameFor(width, rows);
+			// The map must be as tall as the paint, or the tail of the nav is a
+			// dead zone. This is the assertion the reported bug tripped over.
+			expect(frame.sidebarRows, `${width}/${rows} hit map height`).toBe(painted);
+			// And exactly one row past the end is the first non-nav row.
+			expect(hitTest(frame, overlayRowOf(frame, painted), 3).type, `${width}/${rows} past the nav`).toBe("none");
+		}
+	}
+});
+
+test("every painted nav row maps to the screen it shows — none wrong, none dead", async () => {
+	const expected = expectedNavRows();
+	for (const width of WIDTHS) {
+		for (const rows of HEIGHTS) {
+			const frame = await frameFor(width, rows);
+			for (const [nav, want] of expected.entries()) {
+				const hit = hitTest(frame, overlayRowOf(frame, nav), 3);
+				const got = hit.type === "screen" ? hit.id : null;
+				expect(got, `${width}/${rows} nav row ${nav} shows ${want ?? "a heading"} but hit ${got ?? hit.type}`).toBe(want);
+			}
+		}
+	}
+});
+
+/**
+ * END-TO-END CLICKING IS NOT DUPLICATED HERE ON PURPOSE.
+ *
+ * `test/mouse.test.ts` already drives `panel.handleInput` for real clicks, and
+ * its `overlayRow` helper uses `nav + 2 + topbarRows + stripRows` — one MORE
+ * than `hitTest`'s own `row - 1 - topbarRows - stripRows`. Both conventions pass
+ * their own suite, because each suite is self-consistent: mouse.test.ts clicks
+ * through `#routeMouse` and this file calls `hitTest` directly.
+ *
+ * That one-row gap between the two is itself worth recording and is NOT yet
+ * resolved — which of them is authoritative depends on which frame geometry
+ * `#routeMouse` consults, and pinning that down is its own piece of work. Until
+ * it is settled, adding a THIRD convention here would make the disagreement
+ * harder to find rather than easier, so the end-to-end sweep stays where it
+ * already lives.
+ */
