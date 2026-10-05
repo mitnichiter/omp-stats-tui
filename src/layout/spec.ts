@@ -1394,6 +1394,51 @@ export const SCREEN_SPECS: readonly ScreenSpec[] = Object.freeze([
 	gain,
 ]);
 
+// ─── The one answer to "is this a screen?" ───────────────────────────────────
+
+/**
+ * Can this screen id actually be DRAWN? THE SINGLE ANSWER, and the reason the
+ * panel and the sidebar cannot drift apart.
+ *
+ * THE DUPLICATION THIS REPLACES. Two modules independently decided what a screen
+ * is, from the same registry and the same spec table:
+ *
+ *   - `panel.ts`'s `SELECTABLE_SCREENS` filtered the `SCREENS` registry down to
+ *     ids with a spec that is not `deferred`;
+ *   - `chrome.ts`'s `NAV_GROUPS` filtered a hand-written `GROUPS` map down to
+ *     ids that have a spec AND a jump hotkey.
+ *
+ * Same inputs, two rules. Nothing made them agree, so nothing would have
+ * noticed when they stopped: a screen could become arrow-selectable and vanish
+ * from the sidebar, or appear in the nav with no body to draw, and each module
+ * would still be internally consistent — which is precisely the shape of bug
+ * that hides.
+ *
+ * Both now call THIS, so "drawable" is stated once. The remaining differences
+ * between them are not this predicate's business and are not folded into it:
+ *
+ *   - ORDER. The digit row indexes `SELECTABLE_SCREENS` and the sidebar reads
+ *     `NAV_GROUPS`, and those orders are deliberately different (the nav is
+ *     grouped for reading, the number row is not). Deriving one from the other
+ *     would have changed which screen `4` selects.
+ *   - THE REGISTRY'S OWN `status: "excluded"`, which lives with the registry and
+ *     is the registry's knowledge, not the IR's.
+ *
+ * `deferred` is the distinction that matters: a deferred screen is DESCRIBED
+ * faithfully but cannot be filled from the data seam, so arrowing onto it spends
+ * a keystroke painting a page the panel cannot honestly fill. An id with no spec
+ * at all has no body to draw either.
+ */
+export function isDrawableScreen(id: string): boolean {
+	const spec = SCREEN_SPECS.find(candidate => candidate.id === id);
+	return spec !== undefined && !spec.deferred;
+}
+
+/** The spec for `id`, or `undefined` when the IR does not describe it. */
+export function specForScreen(id: string): ScreenSpec | undefined {
+	return SCREEN_SPECS.find(candidate => candidate.id === id);
+}
+
 /** Every distinct metric reference anywhere in the spec data. */
 export const ALL_METRIC_REFS: readonly MetricRef[] = SCREEN_SPECS.flatMap(spec =>
 	spec.bands.flatMap(band => refsInBand(band)),

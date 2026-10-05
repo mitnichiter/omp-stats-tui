@@ -24,7 +24,7 @@ import { statsIcon } from "./icons";
 // `MIN_USABLE_WIDTH` floors the narrowed body plan — see `render`.
 import { LABEL_WIDTH, MIN_USABLE_WIDTH, planLayout, type LayoutPlan } from "./layout";
 import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
-import { SCREEN_SPECS } from "../layout/spec";
+import { isDrawableScreen, specForScreen } from "../layout/spec";
 import { renderScreenWith } from "./render/screen";
 import {
 	JUMP_TIMEOUT_MS,
@@ -183,24 +183,35 @@ export type PanelAction =
 	| { type: "sync" };
 
 
-/** The IR spec for a screen id, or `undefined` when the registry has no spec. */
+/**
+ * The IR spec for a screen id, or `undefined` when the registry has no spec.
+ *
+ * A named delegation rather than an inline `SCREEN_SPECS.find`, so the lookup and
+ * the drawability predicate below are stated side by side in one place: they are
+ * two questions about the same table, and the second is derived from the first.
+ */
 export function specById(id: ScreenId) {
-	return SCREEN_SPECS.find(spec => spec.id === id);
+	return specForScreen(id);
 }
 
 /**
- * The screens a key can land on. `excluded` is deliberately absent: a tab that
- * says "excluded from the port" is a real answer, but arrowing onto it wastes a
- * keystroke and no number may ever select it.
+ * The screens a key can land on, in the order the DIGIT ROW uses — which is the
+ * registry's own order and deliberately NOT the sidebar's, because the two answer
+ * different questions (`1`-`9`/`0` index this list; the nav is grouped for
+ * reading). Order is part of this constant's contract and is not derived from
+ * `NAV_GROUPS`.
+ *
+ * `excluded` stays, and stays the registry's own call: a tab that says "excluded
+ * from the port" is a real answer, but arrowing onto it wastes a keystroke.
+ *
+ * "Drawable" is NOT decided here. This filter asks {@link isDrawableScreen} — the
+ * same predicate `NAV_GROUPS` uses — so the number row and the sidebar cannot
+ * disagree about which screens exist. That duplication is what
+ * `test/screens.test.ts` now pins shut.
  */
-export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(screen => {
-	const spec = specById(screen.id);
-	// A screen is selectable only if the layout IR DESCRIBES it and can be FILLED.
-	// `deferred` means described but unfillable; a screen with no spec at all
-	// has no body to draw either. Either way, arrowing onto it would spend a
-	// keystroke painting a page the panel cannot honestly fill.
-	return spec !== undefined && !spec.deferred && screen.status !== "excluded";
-});
+export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
+	screen => isDrawableScreen(screen.id) && screen.status !== "excluded",
+);
 
 /**
  * Translate one input into one action, or null for a key this panel does not

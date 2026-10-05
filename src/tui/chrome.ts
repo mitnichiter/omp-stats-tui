@@ -39,7 +39,7 @@ import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
 import { RANGES, type Range } from "../data/ranges";
-import { SCREEN_SPECS, type ScreenSpec } from "../layout/spec";
+import { isDrawableScreen, specForScreen, type ScreenSpec } from "../layout/spec";
 import { describeSyncProgress, type SyncEvent } from "../sync/client";
 import { formatInteger } from "./format";
 import type { SymbolPreset } from "./glyphs";
@@ -146,15 +146,27 @@ const GROUPS: Record<string, readonly string[]> = {
 };
 
 /**
- * The nav, with labels resolved from the layout IR so the sidebar cannot drift
- * from the tab strip: both read the same `SCREEN_SPECS`.
+ * The nav, with labels resolved from the layout IR.
+ *
+ * Two derivations, both deliberate:
+ *
+ *   - DRAWABILITY comes from {@link isDrawableScreen}, the same predicate
+ *     `SELECTABLE_SCREENS` uses, so a screen cannot be arrow-selectable and
+ *     missing from the sidebar, or present in the sidebar with no body to draw.
+ *     `test/screens.test.ts` pins that the two can never drift.
+ *   - ORDER comes from `GROUPS`, NOT from `SELECTABLE_SCREENS`. The nav is
+ *     grouped for reading and the number row is not, so deriving one order from
+ *     the other would change which screen a digit selects.
+ *
+ * A jump letter is still required: a row nobody can `g`-jump is not worth a row,
+ * and `screenForHotkey` reads these letters.
  */
 export const NAV_GROUPS: readonly NavGroup[] = Object.entries(GROUPS).map(([heading, ids]) => ({
 	heading,
 	items: ids.flatMap(id => {
-		const spec = SCREEN_SPECS.find(candidate => candidate.id === id);
+		const spec = specForScreen(id);
 		const hotkey = HOTKEYS[id] ?? "";
-		return spec && hotkey !== "" ? [{ id: spec.id, label: spec.label, hotkey }] : [];
+		return spec && isDrawableScreen(id) && hotkey !== "" ? [{ id: spec.id, label: spec.label, hotkey }] : [];
 	}),
 }));
 
