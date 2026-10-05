@@ -1349,14 +1349,34 @@ function tableBand(
 	const all = sortRows(folded, rowSource, opts);
 	if (all.length === 0) return null;
 
+	// A column that resolves to zero in EVERY row is noise, not a figure: the
+	// costs screen's `By model` printed Cache read and Cache write as `$0` down
+	// all three rows — a header, a gutter and a digit restating "nothing
+	// happened here". Dropped HERE, where the composition decision is made, and
+	// against the FULL ordered set rather than the shown prefix: dropping on a
+	// prefix would hide a non-zero model past the row limit. Two columns survive
+	// whatever the rows say. The identity (index 0, as in the truncation policy)
+	// because a row whose subject the reader cannot see cannot be read at all.
+	// The money caveat — a column reading `unpricedRequests`, the same test the
+	// stat tiles use — because AGENTS.md:228 renders it beside cost ALWAYS: a
+	// cost figure shown without it is a wrong number, not a rounded one, and a
+	// dropped caveat would REMOVE a claim where every other dropped column only
+	// stops repeating one. A `null` keeps its column: a value that cannot be
+	// resolved is not a zero measurement.
+	const kept = columns.filter((column, index) =>
+		index === 0
+		|| /unpriced/i.test(leafFieldOf(column.source))
+		|| !all.every(row => resolveNumber(column.source, opts.data, row) === 0),
+	);
+
 	const shown = all.slice(0, rowSource.limit ?? Math.max(4, opts.plan.tableColumns * 4));
-	const maxes = columnMaxes(columns, all, opts);
+	const maxes = columnMaxes(kept, all, opts);
 	const cellWidth = Math.max(1, opts.plan.valueWidth);
 
 	return {
 		kind: "table",
 		title,
-		columns: columns.map(column => ({
+		columns: kept.map(column => ({
 			key: column.header,
 			header: column.header,
 			align: column.align,
@@ -1369,7 +1389,7 @@ function tableBand(
 			kind: "inline",
 			rows: shown.map(row => {
 				const record: Record<string, string> = {};
-				for (const column of columns) {
+				for (const column of kept) {
 					record[column.header] = renderCell(column, row, maxes.get(column.header) ?? 0, cellWidth, opts);
 				}
 				return record;

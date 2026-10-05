@@ -104,8 +104,7 @@ function costRow(model: string, cost: number, over: Partial<CostTimeSeriesPoint>
 	};
 }
 
-/** A payload whose whole cost table is the rows given. */
-const costData = (rows: readonly CostTimeSeriesPoint[]): PanelData => liveData({ costs: { costSeries: rows } });
+const costData = (rows: readonly CostTimeSeriesPoint[]): PanelData => liveData({ costs: { costSeries: [...rows] } });
 
 // ─── A: a legend that only repeats the chart above it ─────────────────────────
 
@@ -173,4 +172,69 @@ test("A: a chart kind that cannot name its own series KEEPS its legend", () => {
 	expect(legend, "a chart that publishes nothing must keep its legend").toBeTruthy();
 	if (legend === undefined || legend.kind !== "legend") throw new Error("not a legend band");
 	expect(legend.items.map(item => item.label)).toEqual(["Succeeded", "Failed"]);
+});
+
+// ─── B: a column that is zero in every row says nothing ──────────────────────
+
+/** A one-table spec over `costSeries`, so a test varies the DATA, not the spec. */
+function costTableSpec(columns: readonly IRColumn[]): ScreenSpec {
+	return probeSpec([{ kind: "table", title: "By model", rows: { source: "costSeries" }, columns }]);
+}
+
+const modelColumn: IRColumn = {
+	header: "Model",
+	align: "left",
+	source: { kind: "label", source: "costSeries", field: "model" },
+};
+
+const headersOf = (spec: ScreenSpec, data: PanelData): readonly string[] => {
+	const table = screenBands(opts(spec, data)).find(band => band.kind === "table");
+	if (table === undefined || table.kind !== "table") throw new Error("no table band");
+	return table.columns.map(column => column.header);
+};
+
+test("B: a column that is zero in SOME rows is kept — it carries a variation", () => {
+	const spec = costTableSpec([modelColumn, { header: "Cache write", align: "right", source: costField("costCacheWrite") }]);
+	const data = costData([costRow("priced", 10), costRow("free", 4, { costCacheWrite: 0 })]);
+	expect(headersOf(spec, data)).toContain("Cache write");
+});
+
+test("B: a column that resolves to zero in EVERY row is dropped", () => {
+	// The screenshot: `By model` printed Cache read and Cache write as `$0` down
+	// every row. Neither varies, so each was a header, a gutter and a digit
+	// saying "nothing happened here" — which is not a figure.
+	const spec = costTableSpec([
+		modelColumn,
+		{ header: "Estimate", align: "right", source: costField("cost") },
+		{ header: "Cache write", align: "right", source: costField("costCacheWrite") },
+	]);
+	const data = costData([costRow("a", 10, { costCacheWrite: 0 }), costRow("b", 20, { costCacheWrite: 0 })]);
+	const headers = headersOf(spec, data);
+	expect(headers, "an all-zero column carries no information").not.toContain("Cache write");
+	expect(headers, "a column that varies must survive").toContain("Estimate");
+	expect(headers[0], "the identity column is never dropped").toBe("Model");
+});
+
+test("B: the unpriced column is KEPT even when every row is zero — it is the money caveat", () => {
+	// AGENTS.md:228, and CONTEXT.md's `Cost`: "a cost figure shown without its
+	// unpriced count beside it is a wrong number, not a rounded one". `0` HERE
+	// means nothing went unmeasured, and it says so beside the Estimate that
+	// would otherwise read as a floor with no stated cause. That is the one
+	// column an all-zero rule must not take, and it is why Cache write is the
+	// column that goes instead: an all-zero caveat REMOVES a claim, while an
+	// all-zero component only repeats a figure the cost bars already draw.
+	const spec = costTableSpec([
+		modelColumn,
+		{ header: "Estimate", align: "right", source: costField("cost") },
+		{ header: "Cache write", align: "right", source: costField("costCacheWrite") },
+		{ header: "Unpriced", align: "right", source: costField("unpricedRequests") },
+	]);
+	const data = costData([
+		costRow("a", 10, { costCacheWrite: 0, unpricedRequests: 0 }),
+		costRow("b", 20, { costCacheWrite: 0, unpricedRequests: 0 }),
+	]);
+	const headers = headersOf(spec, data);
+	expect(headers, "the caveat column must render beside cost").toContain("Unpriced");
+	expect(headers, "the other all-zero column is the one that goes").not.toContain("Cache write");
+	expect(headers, "and the money column it caveats is still there").toContain("Estimate");
 });
