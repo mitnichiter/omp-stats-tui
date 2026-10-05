@@ -1,4 +1,5 @@
 node_modules/
+.DS_Store
 
 # Machine-local dev-loop config. Anchored to the repo root and naming the single
 # file, so a legitimate future `.omp/` (e.g. committed per-project modelRoles)
