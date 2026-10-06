@@ -17,14 +17,9 @@
  * is a chrome line nobody reads. Keycaps and labels are therefore the same
  * weight, and the only thing that separates two hints is the separator.
  *
- * `←/→` IS THE SCREEN SWITCH. The panel's primary verb is moving between
- * screens, and the arrows are what the footer names for it — see THE KEYMAP
- * DECISION in `panel.ts`, which records the two decisions this mapping has had
- * and why the second one is the one that shipped. `tab`/`shift+tab` remain
- * bound as an alias and are deliberately absent from the hint row: the row
- * names the key a reader reaches for first, and listing both teaches the
- * slower one. The RANGE is on `r`/`R` (`panelAction`: `r` steps the range
- * forward, `R` back), so the two hints never share a key.
+ * `[`/`]` is the screen switch outside text entry; Ctrl+P/Ctrl+N is available
+ * during search. Controllers own Tab/Shift+Tab focus and contextual arrows.
+ * The range uses `r`/`R` outside text entry, so search terms remain literal.
  *
  * WHY THE HINTS ARE DATA. A footer built by concatenating strings is a footer
  * that drifts from the keymap: a key gets rebound, the hint does not, and the
@@ -75,10 +70,8 @@ export type HintMode = "idle" | "scrollable" | "syncing" | "error";
  */
 export function hintsFor(mode: HintMode): readonly PanelHint[] {
 	const scroll: PanelHint = { keys: ["up", "down"], label: "scroll" };
-	// The ARROWS are the advertised screen switch, and `tab` is deliberately NOT
-	// listed: the row names the key a reader would reach for first, and a hint
-	// set that lists both teaches the slower one. `tab` stays bound in
-	// `panelAction` — an alias nobody is told about beats a dead key.
+	// Contextual arrows and Tab belong to route controls; brackets stay global
+	// outside text entry. Search mode uses a separate Ctrl+P/Ctrl+N hint.
 	const screen: PanelHint = { keys: ["[", "]"], label: "screen" };
 	const range: PanelHint = { keys: ["r", "shift+r"], label: "range" };
 	const sync: PanelHint = { keys: ["s"], label: "sync" };

@@ -381,6 +381,23 @@ test("the scroll hint appears exactly when the body overflows, and not otherwise
 	expect(sawOverflow).toBe(true);
 });
 
+test("scroll position tracks the visible window and resize while preserving close", async () => {
+	for (const width of [24, 60, 100]) {
+		const panel = __testing.makePanel({ data: liveData(), rows: 10 });
+		await __testing.settled(panel);
+		let plain = panel.render(width).map(stripAnsi);
+		const initial = __testing.debugState(panel);
+		expect(initial.maxScroll).toBeGreaterThan(0);
+		if (width >= 60) expect(plain.at(-2)).toContain(`1–${initial.source.length - initial.maxScroll}/${initial.source.length}`);
+		panel.handleInput(END);
+		plain = panel.render(width).map(stripAnsi);
+		const last = __testing.debugState(panel);
+		if (width >= 60) expect(plain.at(-2)).toContain(`${last.scroll + 1}–${last.source.length}/${last.source.length}`);
+		expect(plain.at(-2)).toContain("close");
+		for (const row of plain) expect(Bun.stringWidth(row)).toBeLessThanOrEqual(width);
+	}
+});
+
 test("the composed frame at width 60: the nav becomes the strip row and everything still fits", async () => {
 	const width = 60;
 	const panel = __testing.makePanel({ data: dataFor(), range: "30d", rows: 40, screenId: "costs", now: () => FIXTURE_NOW });
