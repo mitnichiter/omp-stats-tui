@@ -12,7 +12,7 @@ command -v bun
 
 Verified runtime: compiled **omp 18.6.1**, standalone **Bun 1.4.2**, Linux arm64. Bun must be on the PATH inherited by omp: the compiled host still launches a separate Bun stats worker. Other omp versions/platforms are not claimed verified.
 
-Use an interactive terminal, initially about 100 columns by 40 rows. Print/headless/RPC modes cannot display this overlay. No browser server or upstream omp source checkout is required.
+Use an interactive terminal, initially about 150 columns by 38 rows, then resize to 100 and 40 columns. Paired widgets require at least 100 content cells after chrome/sidebar, not merely 100 terminal columns. Print/headless/RPC modes cannot display this overlay. No browser server or upstream omp source checkout is required.
 
 ## 2. Check out the PR and build
 
@@ -68,6 +68,9 @@ Complete or skip any first-run setup before entering `/stats-tui`. A fresh profi
 ## 4. Manual acceptance checklist
 
 Press jump keys sequentially: `g`, then the letter. Finish text entry before using jumps. After each route change, wait for its data/loading state to settle before interacting. `Tab` changes the route's focused area; controls are contextual, not universal shortcuts.
+
+Visual acceptance must exercise production controllers, not just `/stats-test` or injected `StatsPanelOptions.fetch` (the latter uses the pure IR path). Review sparse data too: one model, two cost buckets, two projects, four failures, no savings, and frustration samples below the default threshold. Expect balanced cards, readable neutral metadata, bounded chart marks, nearby legends, selected context beside sparse tables, and intentional empty explanations. Wide layout stacks on smaller content areas; scrolling is legitimate, overflowing borders or losing identities is not. Passing tests alone is not visual acceptance.
+
 
 | Scenario | Actions | Expected result |
 |---|---|---|
