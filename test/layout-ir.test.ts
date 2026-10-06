@@ -22,7 +22,7 @@ import {
 	type RowSource,
 	type ScreenSpec,
 } from "../src/layout/spec";
-import { DATA_NEEDS } from "../src/data/api";
+import { DATA_NEEDS, type DataNeed } from "../src/data/api";
 import { SCREENS } from "../src/tui/screens/types";
 
 

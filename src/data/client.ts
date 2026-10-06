@@ -140,7 +140,12 @@ export class StatsReadClient {
 
 	#receive(message: DataWorkerResponse): void {
 		if (this.#closed) return;
-		if ("type" in message && message.type === "live") {
+		// The live push is the only variant with no `id` — it is broadcast, not a
+		// reply — so keying the guard on `id` PRESENCE (rather than
+		// `"type" in message && message.type === "live"`) is what lets TypeScript
+		// narrow the remainder to the three reply variants. A compound `&&` guard
+		// leaves the union un-narrowed below, so `message.id` reads as an error.
+		if (!("id" in message)) {
 			this.#live = message.status;
 			this.#serviceError = undefined;
 			for (const listener of this.#listeners) listener.status(message.status);

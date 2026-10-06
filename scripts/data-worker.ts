@@ -1,13 +1,18 @@
 import { mkdir, stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
-import { initDb, getFileOffsets, getMessageCount } from "@oh-my-pi/omp-stats/db";
+import { initDb, getFileOffsets, getMessageCount } from "@oh-my-pi/omp-stats/db.js";
 import { listAllSessionFiles } from "@oh-my-pi/omp-stats/parser";
 import { fetchFor } from "../src/data/api";
 import { handleApi } from "@oh-my-pi/omp-stats/server";
 import type { DataWorkerRequest } from "../src/data/protocol";
 import { openStandaloneJudge, type StandaloneJudge } from "@oh-my-pi/pi-coding-agent/judgment/standalone";
 import { cancelFrustrationRun, setStatsJudgeProvider } from "@oh-my-pi/omp-stats/frustration";
-import { StatsLive } from "@oh-my-pi/omp-stats/live";
+// `.js` subpath: the package ships `dist/types/*.d.ts` built from UNPATCHED
+// source, so `StatsLive({ workers })` — added by patches/@oh-my-pi%2Fomp-stats
+// @18.6.1.patch — has no declaration. This subpath resolves to `src/live.ts`,
+// the code that actually runs. Verified the same resolved module as the bare
+// specifier, so this changes types only, never the runtime instance.
+import { StatsLive } from "@oh-my-pi/omp-stats/live.js";
 import { getSessionsDir } from "@oh-my-pi/pi-utils";
 const live = new StatsLive({ workers: 1 });
 
@@ -82,7 +87,10 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
 				continue;
 			}
 			for (const [key, value] of Object.entries(request.params)) url.searchParams.set(key, value);
-			const response = await handleApi(new Request(url, { method: request.method, headers: request.headers }));
+			// `url.toString()`, not the `URL`: with `lib: ESNext` (no DOM) Bun's
+			// `Request` overloads take a string, a `RequestInit & {url}`, or a
+			// `Request` — a `URL` object matches none of them.
+			const response = await handleApi(new Request(url.toString(), { method: request.method, headers: request.headers }));
 			data = await response.json();
 			if (!response.ok) throw new Error(`${request.path} -> ${response.status}: ${JSON.stringify(data)}`);
 		}
