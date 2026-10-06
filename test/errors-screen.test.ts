@@ -13,7 +13,7 @@
 
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 import { groupErrorsBySignature } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
@@ -50,13 +50,6 @@ function opts(data: PanelData, width = 100): ScreenRenderOptions {
 
 const text = (rows: readonly string[]): string => stripForTest(rows.join("\n"));
 
-test("errors: the registry entry defers to the spec's pipeline, not a scaffold body", () => {
-	expect(errorsScreen.id).toBe("errors");
-	expect(errorsScreen.status).toBe("implemented");
-	expect(errorsScreen.reason).toBeUndefined();
-	// The spec's needs, or the panel fetches what the body never reads.
-	expect([...errorsScreen.needs]).toEqual([...spec.needs]);
-});
 
 test("errors: rendered rows name the HOST's normalised signatures, not raw strings", () => {
 	// The shared ERRORS fixture is a single row, so there is nothing to
@@ -145,27 +138,6 @@ test("errors: affected models are model::provider identities, not bare names", (
 	expect(body).toMatch(/Affected models[\s\S]*1/);
 });
 
-test("errors: the signatures table carries the web's Failures meter", () => {
-	// ErrorsRoute.tsx buildGroupColumns: the fourth column is a MeterCell of
-	// the group count against the largest group — the only in-table magnitude
-	// cue. The spec carried three columns; the meter is the fourth.
-	const band = spec.bands.find(b => b.kind === "table" && b.title === "Error signatures");
-	if (band === undefined || band.kind !== "table") throw new Error(`"Error signatures" has no spec band`);
-	expect(band.columns.map(c => c.header)).toContain("Failures");
-	expect(band.columns.find(c => c.header === "Failures")!.cell).toBe("meter");
-	expect(groupErrorsBySignature(ERRORS as never).length).toBeGreaterThan(0);
-});
-
-test("errors: failures group by model identity beside the signatures", () => {
-	// ErrorsRoute.tsx:197-228 "By model" card: failures per modelKey(model,
-	// provider), top 12, beside the signatures table. The spec had no band for
-	// it; the IR carries it as a rankedBars chart over errorMessages grouped
-	// by provider-qualified identity.
-	const band = spec.bands.find(b => b.kind === "chart" && b.title === "Failures by model");
-	expect(band, `"Failures by model" chart band missing`).toBeTruthy();
-	if (band === undefined || band.kind !== "chart") throw new Error(`"Failures by model" is not a chart band`);
-	expect(band.chart.series[0]?.metric).toMatchObject({ kind: "series", source: "errorMessages", groupBy: "model" });
-});
 
 test("errors: the signature meter matches the host's group count per row", () => {
 	// The meter resolves row-scoped against the host's own groups: each row

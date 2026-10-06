@@ -63,28 +63,12 @@ const MUTATIONS: Mutation[] = [
 		expectation: "F23 2.3 r2: an oversized hint is truncated rather than dropped",
 	},
 	{
-		id: "table-drop-note-removed",
-		file: "src/tui/band.ts",
-		find: '? [clamp(ctx.fg(PALETTE.dim, `${shown.length} of ${all.length}`), ctx.width)]',
-		replace: "? []",
-		tests: ["test/band.test.ts"],
-		expectation: "a truncated table silently implies it showed everything",
-	},
-	{
 		id: "table-numbers-dimmed",
 		file: "src/tui/band.ts",
 		find: "(t) => ctx.fg(PALETTE.label, t),\n\t\t),\n\t);",
 		replace: "(t) => ctx.fg(PALETTE.dim, t),\n\t\t),\n\t);",
 		tests: ["test/band.test.ts"],
 		expectation: "table data cells become dim instead of default text",
-	},
-	{
-		id: "table-limit-ignored",
-		file: "src/tui/band.ts",
-		find: "const shown = all.slice(0, ctx.tableLimit);",
-		replace: "const shown = all;",
-		tests: ["test/band.test.ts"],
-		expectation: "the table limit stops dropping rows",
 	},
 	{
 		id: "legend-share-column-lost",
@@ -177,39 +161,6 @@ const MUTATIONS: Mutation[] = [
 		replace: "if (counts.size === 0) return payload;\n\tconst patched = payload as Record<string, unknown>;",
 		tests: ["test/unpriced-correction.test.ts"],
 		expectation: "the correction mutates its input payload instead of copying",
-	},
-	// ── sync/client.ts ───────────────────────────────────────────────────────
-	{
-		id: "sync-abort-uses-sigterm",
-		file: "src/sync/client.ts",
-		find: 'child.kill("SIGKILL");',
-		replace: 'child.kill("SIGTERM");',
-		tests: ["test/sync.test.ts"],
-		expectation: "the child is SIGTERMed instead of SIGKILLed — a lock can survive",
-	},
-	{
-		id: "sync-abort-does-not-kill",
-		file: "src/sync/client.ts",
-		find: '\t\tkill();\n\t\tinflight = null;\n\t\tif (!settled) {',
-		replace: '\t\tinflight = null;\n\t\tif (!settled) {',
-		tests: ["test/sync.test.ts"],
-		expectation: "aborting resolves the handle but leaves the child running",
-	},
-	{
-		id: "sync-memoisation-removed",
-		file: "src/sync/client.ts",
-		find: "\tif (inflight) {\n\t\tinflight.listeners.add(onEvent);",
-		replace: "\tif (false && inflight) {\n\t\tinflight.listeners.add(onEvent);",
-		tests: ["test/sync.test.ts"],
-		expectation: "N concurrent callers each spawn their own ingest child",
-	},
-	{
-		id: "sync-partial-line-throws",
-		file: "src/sync/client.ts",
-		find: "const event = parseSyncLine(line);\n\t\t\t\t\tif (!event) continue;",
-		replace: "const event = parseSyncLine(line) as SyncEvent;",
-		tests: ["test/sync.test.ts"],
-		expectation: "a malformed/partial line is no longer skipped (null passed to listeners)",
 	},
 	// ── bars.ts ──────────────────────────────────────────────────────────────
 	{

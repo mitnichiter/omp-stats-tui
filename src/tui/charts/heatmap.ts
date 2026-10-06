@@ -1,5 +1,5 @@
-import { buildHeatmapLayout } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { calendarLayout } from "./calendar";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 import type { GlyphSet } from "../glyphs";
 
@@ -12,15 +12,10 @@ import type { GlyphSet } from "../glyphs";
  * no I/O. Styling arrives injected (`dim`, `ramp`), because the theme
  * singleton throws when an extension reads it at module scope.
  *
- * What is reused, and what that buys: the LAYOUT is not reimplemented.
- * `buildHeatmapLayout` from `@oh-my-pi/pi-tui/overlays/usage-dashboard` is
- * exported, host-proven in production by `/usage`, and implements the rules
- * that are easy to get subtly wrong: zero-fill (a quiet day is level 0, not a
- * missing cell), max-anchored discrete levels (a quiet fortnight cannot look
- * like a busy one), `max <= 0` short-circuit (no division by zero), `null`
- * for future dates (absence, not zero), and LOCAL date keys (no UTC boundary
- * shift). The colour RAMP is not reimplemented either: callers pass the four
- * stops from `palette.heatRamp`, which ports `#heatRamp`'s own arithmetic.
+ * The terminal-owned calendar layout ports `/usage`'s local-date algorithm:
+ * zero-fill for quiet days, sqrt-compressed max-anchored levels, request
+ * fallback for unpriced activity, and `null` for future dates. The colour
+ * ramp arrives from `palette.heatRamp`, which ports `/usage`'s arithmetic.
  */
 
 /** Raw foreground reset. Deliberately not `theme.fg(...)` per cell: that would
@@ -78,7 +73,7 @@ export function renderHeatmap(
 	opts: HeatmapOptions,
 ): readonly string[] {
 	const weeks = Math.max(1, opts.weeks);
-	const layout = buildHeatmapLayout(points as DailyActivityPoint[], weeks, opts.today);
+	const layout = calendarLayout(points, weeks, opts.today);
 
 	// Fixed at 2: the host's own gutter (usage-dashboard.ts:833), one label
 	// cell plus one space. Callers pass it through; anything else is clamped.

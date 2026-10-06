@@ -23,9 +23,9 @@
  */
 
 import { expect, test } from "bun:test";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
 import { renderBands, type Band, type BandRenderOptions, type Column } from "../src/tui/band";
@@ -82,7 +82,6 @@ function bandCtx(overrides: Partial<BandRenderOptions>): BandRenderOptions {
 		fg: (_color, value) => value,
 		bold: value => value,
 		barHeight: 6,
-		tableLimit: 12,
 		labelWidth: 12,
 		valueWidth: 12,
 		...overrides,

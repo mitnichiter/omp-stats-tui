@@ -34,7 +34,7 @@
  * WHAT IS NOT HERE, and why:
  *
  *   - No database. The showcase never imports `bun:sqlite`, `initDb`,
- *     `fetchFor` or `startIngest`; `test/showcase-panel.test.ts` asserts that at
+ *     or `fetchFor`; `test/showcase-panel.test.ts` asserts that at
  *     the source level, because a future edit reaching for the DB would pass
  *     every other test and only fail in someone's real session.
  *   - No `theme`. Colour arrives injected, through the panel's own theme object.
@@ -705,9 +705,7 @@ export const SHOWCASE_EMPTY: ShowcaseRecord = {
  *
  *   - exactly ONE request row, so a single-record table must still draw its
  *     header and its one row rather than collapsing to nothing;
- *   - exactly 100 error rows, which is past any `tableLimit`, so the grammar has
- *     to drop rows and print its `N of M` count note. Fewer would not exercise the
- *     drop at all;
+ *   - exactly 100 error rows, so scrolling reaches failures beyond the initial viewport;
  *   - a NULL duration and TTFT, so an absent latency renders as the host's own
  *     hyphen rather than as a blank cell under a header that promises a figure.
  */

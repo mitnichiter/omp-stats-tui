@@ -40,8 +40,8 @@
  */
 
 import { costWithUnpriced, formatInteger } from "../format";
-import { glyph, type GlyphValue, type SymbolPreset } from "../glyphs";
-import { visibleWidth, truncateToWidth } from "@oh-my-pi/pi-tui/utils";
+import { glyph, glyphsFor, type GlyphValue, type SymbolPreset } from "../glyphs";
+import { visibleWidth, truncateToWidth } from "@oh-my-pi/pi-tui";
 
 /** Gap between a share bar's track and its readout, in cells. */
 const SHARE_GAP = 1;
@@ -74,6 +74,8 @@ export interface SparklineOptions {
 	max?: number;
 	/** Symbol preset. Passed through to `glyph()`; never branched on here. */
 	preset?: SymbolPreset;
+	/** Data ink, applied to each measured cell (level 0–7), never blank padding. */
+	accent?: (cell: string, level: number) => string;
 }
 
 /**
@@ -91,20 +93,17 @@ export function renderSparkline(values: readonly number[], opts: SparklineOption
 	// right edge — including the single-point case, where anchoring right is the
 	// whole point: a one-column panel should show now, not a one-character
 	// history pinned to the past.
-	const newest = values.length > width ? values.slice(values.length - width) : values;
-	const padding = width - newest.length;
+	const start = Math.max(0, values.length - width);
+	const padding = Math.max(0, width - values.length);
 
-	// Rule 1: the caller's max, else the series max. Never the series MIN.
-	const max = opts.max ?? Math.max(0, ...values);
-	// Rule 2: `max <= 0` is a real case, not a crash. Crush's guard is
-	// `if (max === 0) max = 1`, but that literal transcription is wrong for a
-	// ramp: dividing a non-zero value by 1 paints it FULL, so a panel told
-	// "the maximum is zero" would render a full-height bar. A zero maximum
-	// means there is nothing to show, so the whole run sits on the baseline.
-	const level = (v: number) =>
-		max <= 0 ? 0 : Math.max(0, Math.min(7, Math.round((Math.max(0, v) / max) * 7)));
+	// Invalid samples sit on the baseline without poisoning the valid scale.
+	let max = opts.max ?? 0;
+	if (opts.max === undefined) {
+		for (const value of values) if (Number.isFinite(value) && value > max) max = value;
+	}
+	const scale = Number.isFinite(max) && max > 0;
 
-	const preset = opts.preset ?? "unicode";
+	const ramp = glyphsFor(opts.preset ?? "unicode").sparkRamp;
 	// THE PADDING IS BLANK, NOT THE ZERO RUNG. It used to repeat
 	// `sparkRamp[0]`, which is the very glyph a measured zero draws — so a cell
 	// holding no data and a cell that recorded nothing were the same mark, which
@@ -113,7 +112,16 @@ export function renderSparkline(values: readonly number[], opts: SparklineOption
 	// than quiet. The web's in-cell `Sparkline` has no padding concept at all:
 	// it draws `n` points and the container is whatever width it is
 	// (`Sparkline.tsx:20-38`).
-	return " ".repeat(padding) + newest.map((v) => glyph(preset, "sparkRamp", level(v))).join("");
+	let result = " ".repeat(padding);
+	for (let index = start; index < values.length; index++) {
+		const value = values[index]!;
+		const level = scale && Number.isFinite(value)
+			? Math.max(0, Math.min(7, Math.round((Math.max(0, value) / max) * 7)))
+			: 0;
+		const cell = typeof ramp === "string" ? ramp : ramp[level]!;
+		result += opts.accent ? opts.accent(cell, level) : cell;
+	}
+	return result;
 }
 
 // ─── Ranked bar list ─────────────────────────────────────────────────────────

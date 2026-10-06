@@ -1,7 +1,7 @@
-import { colorLuma, hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils";
+import { hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils";
 import { colorToAnsi } from "@oh-my-pi/pi-tui/theme/color";
-import type { SymbolPreset } from "@oh-my-pi/pi-tui/theme/symbols";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { SymbolPreset } from "@oh-my-pi/pi-tui";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 /**
  * The colour layer.
@@ -415,7 +415,7 @@ export function resolveSeries(count: number, theme: PaletteTheme): ThemeColor[] 
 	const palette: ThemeColor[] = [];
 	const seen = new Set<string>();
 	for (const color of SERIES_COLORS) {
-		const key = theme.getColorHex(color);
+		const key = colorToAnsi(theme.getColorHex(color), theme.getColorMode());
 		if (seen.has(key)) continue;
 		seen.add(key);
 		palette.push(color);
@@ -423,7 +423,8 @@ export function resolveSeries(count: number, theme: PaletteTheme): ThemeColor[] 
 	}
 	if (palette.length === 0) palette.push("accent");
 	// Modulo-wrap so a 12-series chart is answerable even on a monochrome theme.
-	while (palette.length < count) palette.push(palette[palette.length % palette.length]);
+	const distinct = palette.length;
+	while (palette.length < count) palette.push(palette[palette.length % distinct]);
 	return palette.slice(0, count);
 }
 
@@ -438,11 +439,9 @@ const HEAT_STOPS = [0.3, 0.5, 0.72, 1] as const;
 /**
  * The foreground colour for heatmap level `level` (0–3), as an ANSI escape.
  *
- * Ported from `/usage`'s `#heatRamp`: blend a near-background anchor toward the
- * theme accent at four fixed stops. The anchor is chosen by the luma of the
- * theme's `text` colour so the ramp keeps its direction on light themes — a
- * ramp that always starts from dark would run "up" into a white background and
- * invert the meaning of every cell.
+ * Blend a near-background anchor, derived from the active text ink's complement,
+ * toward the accent. Bright text yields a dark anchor and dark text a light one;
+ * custom light/dark palettes do not inherit a fixed RGB background.
  *
  * Always routed through `colorToAnsi(hex, theme.getColorMode())`. `detectColorMode`
  * returns `"256color"` on any terminal without truecolor, and never a 16-colour
@@ -451,10 +450,8 @@ const HEAT_STOPS = [0.3, 0.5, 0.72, 1] as const;
  */
 export function heatRamp(theme: PaletteTheme, level: number): string {
 	const t = HEAT_STOPS[Math.max(0, Math.min(HEAT_STOPS.length - 1, Math.round(level)))];
-	// `(colorLuma(...) ?? 1)` mirrors `/usage`: an unresolvable text colour is
-	// assumed to sit on a dark background, the common case.
-	const darkBackground = (colorLuma(theme.getColorHex("text")) ?? 1) > 0.5;
-	const from = darkBackground ? { r: 20, g: 20, b: 24 } : { r: 244, g: 244, b: 246 };
+	const text = hexToRgb(theme.getColorHex("text"));
+	const from = { r: 255 - text.r, g: 255 - text.g, b: 255 - text.b };
 	const to = hexToRgb(theme.getColorHex("accent"));
 	return colorToAnsi(
 		rgbToHex({

@@ -25,11 +25,11 @@ import { glyph, glyphClass } from "../src/tui/glyphs";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 
 import { SCREEN_SPECS, type ScreenSpec, type StatTile as IRStatTile } from "../src/layout/spec";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";
 import { SERIES_COLORS, stripForTest } from "../src/tui/palette";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { DEFAULT_RANGE } from "../src/data/ranges";
 import { FIXTURE_NOW, liveData } from "./fixtures/panel";
 import type { Band, StatTile } from "../src/tui/band";

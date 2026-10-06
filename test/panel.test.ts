@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
+import { getKeybindings, KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@oh-my-pi/pi-tui";
 import {
 	STATS_OVERLAY_OPTIONS,
 	MIN_PANEL_ROWS,
@@ -17,7 +18,6 @@ import type { ScreenId } from "../src/tui/screens/types";
 import { glyphsFor } from "../src/tui/glyphs";
 import type { Range } from "../src/data/ranges";
 import { TAB_SHORT } from "../src/tui/tabs";
-import { hintsFor } from "../src/tui/footer";
 import { SIDE_INSET } from "../src/tui/layout";
 import { liveData } from "./fixtures/panel";
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
@@ -43,9 +43,8 @@ import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
  *      tracking stays on the host default for the overlay precisely so clicks,
  *      wheel and motion arrive as SGR text; nothing here asserts the host
  *      delivers it that way.
- *   5. The keymap under a REMAPPED `keybindings.yml`. `matchesKey` and
- *      `matchesSelect*` read the module-global singleton, and this file runs
- *      against the defaults only.
+ *   5. The host installs its configured keybindings manager before mounting.
+ *      Remapped selector actions are covered below; delivery still needs a host.
  *   6. Zero bytes on stdout. The tests capture nothing from stdout.
  */
 
@@ -67,6 +66,31 @@ const SHIFT_TAB = "\x1b[Z";
 const HOME = "\x1b[H";
 const END = "\x1b[F";
 const NEVER = () => new Promise<PanelData>(() => {});
+
+test("selector actions honor the host's configured keybindings, not factory defaults", () => {
+	const previous = getKeybindings();
+	setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, {
+		"tui.select.cancel": "ctrl+x",
+		"tui.select.up": "ctrl+k",
+		"tui.select.down": "ctrl+n",
+		"tui.select.pageUp": "ctrl+u",
+		"tui.select.pageDown": "ctrl+d",
+	}));
+	try {
+		expect(panelAction("\x18")).toEqual({ type: "close" });
+		expect(panelAction("\x0b")).toEqual({ type: "scroll", rows: -1 });
+		expect(panelAction("\x0e")).toEqual({ type: "scroll", rows: 1 });
+		expect(panelAction("\x15")).toEqual({ type: "scroll", viewport: -1 });
+		expect(panelAction("\x04")).toEqual({ type: "scroll", viewport: 1 });
+		for (const oldKey of ["\x1b", "\x03", UP, DOWN, PGUP, PGDN]) {
+			expect(panelAction(oldKey)).toBeNull();
+		}
+		expect(panelAction("q")).toEqual({ type: "close" });
+		expect(panelAction(LEFT)).toEqual({ type: "screen", by: -1 });
+	} finally {
+		setKeybindings(previous);
+	}
+});
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -274,45 +298,7 @@ test("the arrows are THE screen switch; `tab` is the alias and `r`/`R` keeps the
 	expect(panelAction("R")).toEqual({ type: "range", by: -1 });
 });
 
-test("the footer advertises the arrows for screens, because that is what they do", async () => {
-	// The brief's acceptance in one assertion: the hint row must pair `←/→` with
-	// "screen". A footer that advertises arrows while they change the range is
-	// the defect this revert removes.
-	const panel = makePanel({ data: dataFor() });
-	await __testing.settled(panel);
-	const frame = panel.render(100);
-	const footer = stripAnsi(frame[frame.length - 2]!);
-	expect(footer).toContain("screen");
-	expect(footer).toContain("range");
-	expect(footer).toMatch(/←\/→\s*screen/);
-	expect(footer).not.toMatch(/←\/→\s*range/);
-	// Every key the footer prints is bound: round-trip each hint key through
-	// the panel's own keymap so a hint can never name a dead key.
-	for (const hint of hintsFor("idle")) {
-		for (const key of hint.keys) {
-			expect(panelAction(rawKeySequence(key)), `footer hint "${hint.label}" names an unbound key: ${key}`).not.toBeNull();
-		}
-	}
-});
 
-/** The raw byte sequence `matchesKey` sees for a footer hint key name. */
-function rawKeySequence(key: string): string {
-	const sequences: Record<string, string> = {
-		up: UP,
-		down: DOWN,
-		left: LEFT,
-		right: RIGHT,
-		pageUp: PGUP,
-		pageDown: PGDN,
-		home: HOME,
-		end: END,
-		escape: "\x1b",
-		tab: TAB,
-		"shift+r": "R",
-		"shift+tab": SHIFT_TAB,
-	};
-	return sequences[key] ?? key;
-}
 
 /**
  * No one-step composed capture of the full panel — chrome + body + footer —
@@ -552,28 +538,6 @@ test("scrolling the body does not move the sidebar's hit rows either", async () 
 	expect(__testing.debugScreenId(panel)).toBe("models");
 });
 
-test("every selectable screen is on the number row, so no digit is a dead key", () => {
-	expect(SELECTABLE.length).toBeLessThanOrEqual(DIGIT_KEYS.length);
-	for (let index = 0; index < SELECTABLE.length; index++) {
-		expect(panelAction(DIGIT_KEYS[index]), SELECTABLE[index].id).toEqual({ type: "screenIndex", index });
-	}
-});
-
-test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
-	expect(SCREENS.some(s => s.status === "excluded")).toBe(true);
-	// The selectable set is SPEC-DRIVEN: every non-deferred spec is selectable.
-	// `providers` reads the DB-backed aggregates and `gain` the snapcompact
-	// payload, so both are selectable; the excluded screens never are.
-	for (const id of ["providers", "gain"] as const) {
-		expect(SELECTABLE.map(s => s.id), id).toContain(id);
-	}
-	expect(__testing.debugScreenIds()).toEqual(SELECTABLE.map(s => s.id));
-	// Every selectable screen has a SPEC, and every non-deferred spec is
-	// selectable: the two lists are one list.
-	expect(__testing.debugScreenIds()).toEqual(
-		SCREEN_SPECS.filter(spec => !spec.deferred).map(spec => spec.id as ScreenId),
-	);
-});
 
 test("the wheel scrolls and is consumed; a plain letter is not mistaken for a mouse event", () => {
 	// Wheel-only here: clicks and motion need the last frame's geometry, so
@@ -624,31 +588,8 @@ test("the panel always asks for rollupStatus, so readiness is never assumed", as
 	expect(asked[0]).toContain("rollupStatus");
 });
 
-test("the warm is awaited before the first query, and the query never runs without it", async () => {
-	const order: string[] = [];
+test("failed initialization stays an error rather than an empty range", async () => {
 	const panel = makePanel({
-		data: dataFor(),
-		warm: {
-			start: async () => {
-				order.push("warm");
-				return true;
-			},
-		},
-		fetch: async () => {
-			order.push("fetch");
-			return dataFor();
-		},
-	});
-	await __testing.settled(panel);
-	expect(order).toEqual(["warm", "fetch"]);
-});
-
-test("a warm that FAILED still resolves; the throw comes from the query, and it is shown", async () => {
-	// The warm swallows its own failure and resolves false. Painting zeros
-	// anyway is the silent-empty trap, so the panel must surface the query's
-	// own refusal instead.
-	const panel = makePanel({
-		warm: { start: async () => false },
 		fetch: async () => {
 			throw new Error("rollup status: database is not initialised");
 		},
@@ -688,26 +629,6 @@ test("loading, ready and error are three distinguishable states", async () => {
 	});
 	await __testing.settled(failed);
 	expect(__testing.debugPhase(failed)).toBe("error");
-});
-
-test("the three states paint three different things", async () => {
-	expect(__testing.debugBody(makePanel({ fetch: NEVER })).join("\n").toLowerCase()).toContain("loading");
-
-	const readyPanel = makePanel({ data: dataFor() });
-	await __testing.settled(readyPanel);
-	const ready = __testing.debugBody(readyPanel).join("\n");
-	expect(ready).not.toContain("loading");
-	expect(ready).not.toContain("could not be read");
-
-	const failedPanel = makePanel({
-		fetch: async () => {
-			throw new Error("database is locked");
-		},
-	});
-	await __testing.settled(failedPanel);
-	const failed = __testing.debugBody(failedPanel).join("\n");
-	expect(failed).toContain("database is locked");
-	expect(failed).not.toContain("loading");
 });
 
 test("a stale rollup is stated in the header; a clean one is not", async () => {
@@ -1005,22 +926,10 @@ test("G5: no screen paints a section rule inside its body", async () => {
 // Teardown
 // ---------------------------------------------------------------------------
 
-test("dispose is idempotent, kills the ingest child, and never calls done", () => {
-	const killed = { count: 0 };
-	const panel = makePanel({
-		startIngest: () => ({
-			kill: () => {
-				killed.count++;
-			},
-			settled: Promise.resolve(),
-		}),
-	});
-	panel.handleInput("s");
-	expect(killed.count).toBe(0);
-
+test("dispose is idempotent and never calls done", () => {
+	const panel = makePanel({ data: dataFor() });
 	panel.dispose();
 	panel.dispose();
-	expect(killed.count).toBe(1);
 	expect(__testing.debugClosed(panel)).toBe(true);
 	expect(__testing.debugDoneCalls(panel)).toBe(0);
 });

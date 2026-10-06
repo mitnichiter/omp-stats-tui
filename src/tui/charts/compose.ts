@@ -56,8 +56,8 @@
 import { renderDailyBars } from "./bars";
 import { glyphsFor, type SymbolPreset } from "../glyphs";
 import { resolveSeries, type PaletteTheme } from "../palette";
-import { truncateToWidth } from "@oh-my-pi/pi-tui/utils";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import { truncateToWidth } from "@oh-my-pi/pi-tui";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 /**
  * What an all-zero chart says, byte-identical to the single-series primitive's

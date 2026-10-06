@@ -15,7 +15,7 @@
 // the frame with it.
 import { __testing, type StatsPanel } from "../src/tui/panel";
 import { liveData } from "../test/fixtures/panel";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 const WIDTHS = [150, 100, 60, 40];

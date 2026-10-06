@@ -37,10 +37,10 @@
  * init. No terminal reads, no data access, no timers.
  */
 
-import { formatKeyHints } from "@oh-my-pi/pi-tui/key-hint-format";
-import type { KeyName } from "@oh-my-pi/pi-tui/key-hint-format";
+import { formatKeyHints } from "@oh-my-pi/pi-coding-agent";
+import type { KeyName } from "@oh-my-pi/pi-coding-agent";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 
 /** One hint: the keys that do it, and what they do. */
 export interface PanelHint {
@@ -79,7 +79,7 @@ export function hintsFor(mode: HintMode): readonly PanelHint[] {
 	// listed: the row names the key a reader would reach for first, and a hint
 	// set that lists both teaches the slower one. `tab` stays bound in
 	// `panelAction` — an alias nobody is told about beats a dead key.
-	const screen: PanelHint = { keys: ["left", "right"], label: "screen" };
+	const screen: PanelHint = { keys: ["[", "]"], label: "screen" };
 	const range: PanelHint = { keys: ["r", "shift+r"], label: "range" };
 	const sync: PanelHint = { keys: ["s"], label: "sync" };
 	const close: PanelHint = { keys: ["escape", "q"], label: "close" };

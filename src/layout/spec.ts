@@ -75,6 +75,8 @@ export type MetricSource =
 	| "folders"
 	| "recentMessages"
 	| "errorMessages"
+	| "errorGroups"
+	| "errorModels"
 	| "toolsByTool"
 	| "toolsByToolModel"
 	| "toolsSeries"
@@ -150,6 +152,8 @@ export const NEED_BY_SOURCE: Readonly<Record<MetricSource, DataNeed | null>> = {
 	folders: "folders",
 	recentMessages: "recent",
 	errorMessages: "errors",
+	errorGroups: "errors",
+	errorModels: "errors",
 	toolsByTool: "tools",
 	toolsByToolModel: "tools",
 	toolsSeries: "tools",
@@ -271,8 +275,6 @@ export interface ChartSpec {
 export interface RowSource {
 	source: MetricSource;
 	initialSort?: { by: MetricRef; direction: "asc" | "desc" };
-	/** Rows dropped past this count, as `limit={25}` does in the web tables. */
-	limit?: number;
 }
 
 export interface Column {
@@ -488,16 +490,16 @@ const overview: ScreenSpec = {
 				{ key: "cacheRead", label: "Cache read", metric: overall("totalCacheReadTokens") },
 				{ key: "cacheWrite", label: "Cache write", metric: overall("totalCacheWriteTokens") },
 				{ key: "output", label: "Output", metric: overall("totalOutputTokens") },
-				{ key: "main", label: "Main agent", metric: overall("totalRequests") },
-				{ key: "subagent", label: "Subagents", metric: overall("totalRequests") },
-				{ key: "advisor", label: "Advisor", metric: overall("totalRequests") },
+				{ key: "main", label: "Main agent", metric: { kind: "derived", name: "agentTokens:main", op: "sum", of: { kind: "aggregate", source: "byAgentType", field: "totalInputTokens" } } },
+				{ key: "subagent", label: "Subagents", metric: { kind: "derived", name: "agentTokens:subagent", op: "sum", of: { kind: "aggregate", source: "byAgentType", field: "totalInputTokens" } } },
+				{ key: "advisor", label: "Advisor", metric: { kind: "derived", name: "agentTokens:advisor", op: "sum", of: { kind: "aggregate", source: "byAgentType", field: "totalInputTokens" } } },
 			],
 		},
 		{
 			kind: "table",
 			title: "Latest requests",
 			source: "OverviewRoute.tsx:247-273, columns 278-314",
-			rows: { source: "recentMessages", initialSort: { by: { kind: "aggregate", source: "recentMessages", field: "timestamp" }, direction: "desc" }, limit: 12 },
+			rows: { source: "recentMessages", initialSort: { by: { kind: "aggregate", source: "recentMessages", field: "timestamp" }, direction: "desc" } },
 			columns: [
 				{ header: "Model", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "model" } },
 				{ header: "Provider", align: "left", source: { kind: "aggregate", source: "recentMessages", field: "provider" } },
@@ -638,7 +640,6 @@ const models: ScreenSpec = {
 			rows: {
 				source: "byModel",
 				initialSort: { by: byModel("totalRequests"), direction: "desc" },
-				limit: 25,
 			},
 			columns: [
 				{
@@ -695,6 +696,7 @@ const costs: ScreenSpec = {
 				// days that carried usage. `max` over the same series is the busiest
 				// day, which is a real number and a different one.
 				metric: { kind: "derived", name: "avgDailyCost", op: "sum", of: costSeries("cost", "model") },
+				hint: { kind: "derived", name: "unpricedRequests", op: "sum", of: costSeries("unpricedRequests", "model") },
 			},
 			{
 				label: "Top model",
@@ -759,10 +761,10 @@ const costs: ScreenSpec = {
 			rows: {
 				source: "costSeries",
 				initialSort: { by: costSeries("cost", "model"), direction: "desc" },
-				limit: 20,
 			},
 			columns: [
 				{ header: "Model", align: "left", source: { kind: "label", source: "costSeries", field: "model" } },
+				{ header: "Provider", align: "left", source: { kind: "label", source: "costSeries", field: "provider" } },
 				{ header: "Requests", align: "right", source: costSeries("requests", "model") },
 				{ header: "Estimate", align: "right", source: costSeries("cost", "model") },
 				{ header: "Share", align: "right", source: { kind: "derived", name: "modelCostShare", op: "share", of: costSeries("cost", "model"), againstScope: "total", against: { kind: "derived", name: "totalCost", op: "sum", of: costSeries("cost", "model") } } },
@@ -1003,22 +1005,12 @@ const errors: ScreenSpec = {
 			kind: "table",
 			title: "Error signatures",
 			source: "ErrorsRoute.tsx:159-196, 296-340",
-			rows: {
-				source: "errorMessages",
-				initialSort: {
-					by: { kind: "aggregate", source: "errorMessages", field: "errorMessage" },
-					direction: "desc",
-				},
-			},
+			rows: { source: "errorGroups" },
 			columns: [
-				{
-					header: "Signature",
-					align: "left",
-					source: { kind: "label", source: "errorMessages", field: "errorMessage" },
-				},
-				{ header: "Models", align: "left", source: { kind: "label", source: "errorMessages", field: "model" } },
-				{ header: "Last seen", align: "right", source: { kind: "aggregate", source: "errorMessages", field: "timestamp" } },
-				{ header: "Failures", align: "right", cell: "meter", source: { kind: "derived", name: "signatureFailures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } } },
+				{ header: "Signature", align: "left", source: { kind: "label", source: "errorGroups", field: "signature" } },
+				{ header: "Models", align: "left", source: { kind: "label", source: "errorGroups", field: "modelLabels" } },
+				{ header: "Last seen", align: "right", source: { kind: "aggregate", source: "errorGroups", field: "lastSeen" } },
+				{ header: "Failures", align: "right", cell: "meter", source: { kind: "aggregate", source: "errorGroups", field: "count" } },
 			],
 		},
 		{
@@ -1033,7 +1025,7 @@ const errors: ScreenSpec = {
 					{
 						key: "failures",
 						label: "Failures per model",
-						metric: { kind: "series", source: "errorMessages", field: "id", groupBy: "model" },
+						metric: { kind: "series", source: "errorModels", field: "count", groupBy: "model" },
 					},
 				],
 			},
@@ -1271,7 +1263,6 @@ const providers: ScreenSpec = {
 			rows: {
 				source: "providerStats",
 				initialSort: { by: { kind: "aggregate", source: "providerStats", field: "totalTokens" }, direction: "desc" },
-				limit: 12,
 			},
 			columns: [
 				// Drop order, from the panel outward. The web declares no
@@ -1392,6 +1383,10 @@ export const SCREEN_SPECS: readonly ScreenSpec[] = Object.freeze([
 	tools,
 	providers,
 	gain,
+	{ id: "traces", label: "Traces", short: "Traces", needs: ["rollupStatus"],
+		source: { file: "@oh-my-pi/omp-stats/src/client/routes/TracesRoute.tsx", lines: "interactive timeline" }, bands: [] },
+	{ id: "frustration", label: "Frustration", short: "Frustr.", needs: ["rollupStatus"],
+		source: { file: "@oh-my-pi/omp-stats/src/client/routes/FrustrationRoute.tsx", lines: "passive metrics and explicit judge actions" }, bands: [] },
 ]);
 
 // ─── The one answer to "is this a screen?" ───────────────────────────────────

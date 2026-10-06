@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderRankedBars, renderShareBar, renderSparkline } from "../src/tui/charts/sparkline";
 import { glyphsFor } from "../src/tui/glyphs";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 const identity = (t: string) => t;
 const U = glyphsFor("unicode");
