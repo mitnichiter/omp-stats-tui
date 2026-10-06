@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
 import { stripTerminalSequences, visibleWidth } from "@oh-my-pi/pi-tui";
-import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
+import { ensureThemeSync, theme, type Theme } from "@oh-my-pi/pi-tui/theme";
 import type { SessionSummary, SessionTrace, TraceSpan, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
 import { createTracesFeature } from "../src/tui/features/traces";
 import type { FeatureContext } from "../src/tui/features/types";
 import { ancestors, buildLanes, buildScale, fit, overviewViewport, remapViewport, resizeOverview, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport } from "../src/tui/features/traces/model";
+import { renderTimeline } from "../src/tui/features/traces/render";
+import { glyph } from "../src/tui/glyphs";
+import { SPAN_COLORS } from "../src/tui/palette";
 
 ensureThemeSync();
 const START = 1_700_000_000_000;
@@ -221,7 +224,7 @@ test("marker-only child tracks remain visible, selectable and inspectable withou
 	await controller.openTrace!(ROOT);
 	let text = stripTerminalSequences(controller.render(120, 60).join("\n"));
 	expect(text).toContain("marker-child [marker-child]");
-	expect(text).toContain("◆");
+	expect(text).toContain(glyph(ctx.theme.getSymbolPreset(), "trackMarker"));
 	expect(text).toContain("empty-child [empty-child]");
 	for (let i = 0; i < 3; i++) controller.handleInput("\x1b[B");
 	controller.handleInput("\r");
@@ -283,6 +286,9 @@ test("root discovery reveals and searches only actual candidates up to the upstr
 	await settle();
 	const text = stripTerminalSequences(controller.render(120, 40).join("\n"));
 	expect(text).toContain("Recorded 250");
+	expect(text).toContain("1 matching");
+	expect(text).toContain("At most 300");
+
 	controller.dispose();
 });
 
@@ -430,4 +436,43 @@ test("blank root titles use recorded project and session identity without changi
 		expect(stripTerminalSequences(lines[0]!)).toContain("project · root");
 	}
 	controller.dispose();
+});
+
+test("native trace marks match the legend and retain selected backgrounds under every preset", () => {
+	const trace = nestedTrace();
+	trace.tracks[0]!.markers.push({ time: START + 4000, kind: "compaction", label: "Recorded compaction" });
+	const scale = buildScale(trace.tracks, "time", false), viewport = fit(scale);
+	for (const preset of ["ascii", "unicode", "nerd"] as const) {
+		const colors: string[] = [];
+		const nativeTheme = {
+			getSymbolPreset: () => preset,
+			fg: (token: Parameters<Theme["fg"]>[0], text: string) => { colors.push(token); return theme.fg(token, text); },
+			bg: (_token: string, text: string) => `\x1b[44m${text}\x1b[49m`,
+			bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
+		} as unknown as Theme;
+		const options = {
+			trace, scale, viewport, collapsed: new Set<string>(), cursor: 0.5, width: 140, height: 80,
+			search: "", theme: nativeTheme, overviewCursor: 0.25, overviewAnchor: 0.1,
+		};
+		const markerLines = renderTimeline({ ...options, selected: "main:marker:0" });
+		const plain = markerLines.map(stripTerminalSequences);
+		const markers = markerLines.find(line => stripTerminalSequences(line).includes("Markers"))!;
+		expect(stripTerminalSequences(markers)).toContain(glyph(preset, "trackMarker"));
+		expect(stripTerminalSequences(markers)).toContain(glyph(preset, "rowCursor"));
+		expect(markers).toContain("\x1b[44m");
+		expect(plain.join("\n")).toContain(`${glyph(preset, "trackMarker")} marker`);
+		for (const name of ["Cursor", "Minimap"]) {
+			const ruler = plain.find(line => line.startsWith(name))!;
+			expect(ruler).toContain(glyph(preset, "axisRule"));
+			expect(ruler).toContain(glyph(preset, "playhead"));
+		}
+		for (const kind of ["turn", "model", "tool", "subagent"] as const) expect(colors).toContain(SPAN_COLORS[kind]);
+		const spanLines = renderTimeline({ ...options, selected: "main:later" });
+		const selectedLane = spanLines.find(line => stripTerminalSequences(line).includes(`${glyph(preset, "rowCursor")} main model`))!;
+		expect(selectedLane).toContain("\x1b[44m");
+		expect(stripTerminalSequences(selectedLane).split(glyph(preset, "rowCursor"))).toHaveLength(3);
+		for (const width of [40, 100, 160]) {
+			expect(renderTimeline({ ...options, selected: "main:marker:0", width }).every(line => visibleWidth(line) <= width)).toBe(true);
+		}
+	}
 });

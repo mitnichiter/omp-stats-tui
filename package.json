@@ -7,6 +7,7 @@
   "scripts": {
     "build": "bun run scripts/build.ts",
     "test": "bun test",
+    "verify:patch": "bun -e \"const f='node_modules/@oh-my-pi/omp-stats/src/db.ts';const s=await Bun.file(f).text();if(!s.includes('messages_cost_unpriced_v2')){console.error('dependency patch NOT applied: '+f+' has no messages_cost_unpriced_v2 marker');process.exit(1)}console.log('dependency patch applied: '+f)\"",
     "probe:data": "bun run scripts/probe-data.ts",
     "probe:glyphs": "bun run scripts/probe-glyphs.ts",
     "probe:render": "bun run scripts/probe-render.ts",

@@ -6,6 +6,7 @@ import type { FeatureContext, FeatureController } from "./types";
 import { ancestors, buildScale, clampViewport, fit, localWindow, overviewViewport, remapViewport, resizeOverview, revealSpan, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport, type AxisMode, type TraceRow, type TraceScale, type Viewport } from "./traces/model";
 import { bounded, clean, renderEntry, renderTimeline, rowLabel, sessionIdentity } from "./traces/render";
 import { dataTable, focusTabs, metricGrid, sectionHeading } from "./presentation";
+import { SPAN_COLORS } from "../palette";
 
 type Focus = "timeline" | "transcript" | "tools" | "children" | "minimap";
 type SessionSort = "started" | "title" | "duration" | "requests" | "tools" | "agents" | "tokens" | "cost";
@@ -346,7 +347,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 					{ key: "event", header: "Event", align: "left" }, { key: "at", header: "At", align: "right" },
 					{ key: "duration", header: "Wall", align: "right", priority: 1 }, { key: "track", header: "Track", align: "left", priority: 2 },
 				], window.rows.map(row => ({
-					event: clean(`${row.span?.isError ? "ERROR · " : ""}${row.span?.label ?? row.marker?.label}${row.span?.unterminated ? " · pending" : ""}`),
+					event: ctx.theme.fg(row.span?.isError ? "error" : row.span ? SPAN_COLORS[row.span.kind] : "muted", clean(`${row.span?.isError ? "ERROR · " : ""}${row.span?.label ?? row.marker?.label}${row.span?.unterminated ? " · pending" : ""}`)),
 					at: `+${formatDurationMs(row.time - trace.startedAt)}`, duration: row.span ? formatDurationMs(row.span.end - row.span.start) : "–", track: clean(row.track.id),
 				})), index - window.offset));
 				if (!all.length) add("No matching transcript events.");

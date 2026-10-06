@@ -1,7 +1,9 @@
 # HOLDING NOTE — docs-owner (2026-10-03, EOD)
 
-Do NOT apply to CONTEXT.md / AGENTS.md yet — 4 workstreams still landing.
-Queued suggestions only; zero doc edits landed.
+**CLOSED — retained as a historical record, not as instructions.** The "do NOT apply yet" hold
+was lifted when all four workstreams landed. Everything below was subsequently written into
+`AGENTS.md`/`CONTEXT.md` or superseded by PR #1 (`c1396d3`); the "unreachable today" and
+"uncommitted working tree" notes describe 2026-10-03 and no longer hold. Do not act on this file.
 
 ## Relay 1: responsive-frame (eb1f053 + 352f214)
 - New `src/tui/responsive.ts`: framePolicy(width) deriving sidebar/topbar modes from layout.ts BREAKPOINTS — wide/medium/narrow/tiny bands.

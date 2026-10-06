@@ -1,4 +1,5 @@
 import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+
 /** Keep the selected record visible without borrowing the panel's global scroll. */
 export function recordViewport<T>(rows: readonly T[], selected: number, height: number, reveal: number): { rows: readonly T[]; start: number } {
 	const count = Math.max(1, Math.min(reveal, Math.max(3, height - 13)));

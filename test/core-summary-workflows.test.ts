@@ -59,6 +59,7 @@ test("overview tokens mode does not reset hidden request series and search owns 
 	expect(feature.handleInput("]")).toBe(true);
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("m]");
 	feature.handleInput("\r"); feature.handleInput("\x1b");
+
 	feature.dispose();
 });
 
@@ -94,6 +95,7 @@ test("activity lookback is honest and recorded days outside narrow calendar rema
 	const f = fixture(liveData({ dailyActivity: Array.from({ length: 120 }, (_, index) => ({ day: new Date(FIXTURE_NOW - index * 86400000).toISOString().slice(0, 10), cost: index, requests: index + 1, totalTokens: index * 10 })) }));
 	const feature = createSummaryFeature("activity", f.ctx);
 	await feature.load("1h");
+
 	for (let index = 0; index < 119; index++) feature.handleInput("j");
 	feature.handleInput("\r");
 	const text = stripForTest(feature.render(35, 20).join("\n"));
@@ -114,7 +116,7 @@ test("sorting a retained selected row beyond initial reveal still keeps it in lo
 	list.descending = false;
 	const sorted = list.rows(rows, { value: row => row.value });
 	const text = stripForTest(list.render(sorted, 40, 20, [{ key: "row", header: "Row", align: "left", value: row => `row ${row.id}` }], f.ctx, "Records").join("\n"));
-	expect(text).toContain("> row 179");
+	expect(text).toContain("row 179");
 	expect(list.current(sorted)?.id).toBe(179);
 });
 
@@ -153,6 +155,7 @@ test("summary newer range wins and disposed late payload cannot publish", async 
 	await late;
 	expect(stripForTest(feature.render(100, 24).join("\n"))).not.toContain("closed-range");
 });
+
 
 test("calendar focus navigates quiet local days, historical windows, boundaries and retained selection", async () => {
 	const today = new Date(FIXTURE_NOW);

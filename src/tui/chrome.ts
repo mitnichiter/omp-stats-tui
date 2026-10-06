@@ -44,7 +44,7 @@ import { describeSyncProgress, type SyncEvent } from "../sync/client";
 import { formatInteger } from "./format";
 import type { SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
-import { SIDEBAR_INK } from "./palette";
+import { SELECTION_BG, SIDEBAR_INK } from "./palette";
 import { HORIZONTAL_INSET } from "./layout";
 import { framePolicy } from "./responsive";
 import { TAB_ICON, TAB_SHORT, tabBarTheme } from "./tabs";
@@ -363,7 +363,7 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 				// `.nav-row kbd` is a child of the row (styles.css:565-570).
 				lines.push(
 					theme.bg(
-						"selectedBg",
+						SELECTION_BG.band,
 						theme.fg(SIDEBAR_INK.rowActive, `${theme.nav.cursor} `) +
 							theme.fg(SIDEBAR_INK.iconActive, theme.bold(icon)) +
 							" " +
@@ -380,7 +380,7 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 				// above on how the two states are told apart without alpha.
 				lines.push(
 					theme.bg(
-						"selectedBg",
+						SELECTION_BG.band,
 						`  ${theme.fg(SIDEBAR_INK.iconInactive, icon)} ${theme.fg(SIDEBAR_INK.rowHover, label)}${tail}${jump(key)}`,
 					),
 				);
@@ -458,7 +458,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 	const brand =
 		theme.bold(theme.fg("accent", "omp")) + theme.fg("dim", "/") + theme.bold(theme.fg("accent", "stats"));
 	/** The chip as an enclosed object, the port of `.live-chip`'s fill+border. */
-	const chip = opts.chip === "" ? "" : theme.bg("selectedBg", ` ${opts.chip} `);
+	const chip = opts.chip === "" ? "" : theme.bg(SELECTION_BG.band, ` ${opts.chip} `);
 	/** `.segmented`: flush options, one `activeTab` thumb among uniform inactives. */
 	const tray = (ids: readonly Range[]): string =>
 		ids

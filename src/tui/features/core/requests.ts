@@ -136,7 +136,6 @@ const requestColumns: readonly ListColumn<MessageStats>[] = [
 	{ key: "project", header: "Project", align: "left", priority: 7, value: r => r.folder },
 ];
 const errorColumns: readonly ListColumn<MessageStats>[] = [...requestColumns, { key: "error", header: "Error", align: "left", priority: 3, value: r => r.errorMessage ?? "—" }];
-
 export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureContext): FeatureController {
 	const details = new RequestDetails(ctx);
 	const list = new ListState<MessageStats>(rowKey, "time");

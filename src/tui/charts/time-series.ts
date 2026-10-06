@@ -57,7 +57,7 @@ export function renderTimeSeries(ctx: FeatureContext, axis: readonly number[], r
 	const date = new Date(axis[selected]).toISOString().slice(5, 16).replace("T", " ");
 	const lines = wrapTextWithAnsi(ctx.theme.fg("dim", `${options.unit ? options.unit + " · " : ""}${date} UTC · ${start + 1}–${start + slots}/${axis.length} buckets`), w);
 	if (!active.length) lines.push(...wrapTextWithAnsi(ctx.theme.fg("dim", "All series hidden; select a legend and toggle visibility to restore it."), w));
-	else if (!measured || max === 0) lines.push(...wrapTextWithAnsi(ctx.theme.fg("dim", measured ? "No positive measured activity in this range." : "No readings in the visible series; gaps are not zero."), w));
+	else if (!measured || max === 0) lines.push(...wrapTextWithAnsi(ctx.theme.fg("dim", measured ? "No positive measured values in this range." : "No readings in the visible series; gaps are not zero."), w));
 	else {
 		const grid = Array.from({ length: height }, () => Array<string>(plotWidth).fill(" "));
 		for (let slot = 0; slot < slots; slot++) {
@@ -90,7 +90,7 @@ export function renderTimeSeries(ctx: FeatureContext, axis: readonly number[], r
 					const value = row.values[i];
 					if (value === null || value === undefined) continue;
 					const y = height - 1 - Math.max(0, Math.min(height - 1, Math.round(value / max * (height - 1))));
-					const mark = ctx.theme.fg(colors[row.colorIndex ?? r], glyph(preset, options.cumulative ? "barFill" : "heatCell", 1));
+					const mark = ctx.theme.fg(colors[row.colorIndex ?? r], glyph(preset, options.cumulative ? "pointFilled" : "pointHollow"));
 					if (options.cumulative) for (let x = slot * cellWidth; x < (slot + 1) * cellWidth; x++) grid[y][x] = mark;
 					else grid[y][slot * cellWidth + Math.floor((cellWidth - 1) / 2)] = mark;
 				}
@@ -98,9 +98,9 @@ export function renderTimeSeries(ctx: FeatureContext, axis: readonly number[], r
 		}
 		for (let y = 0; y < height; y++) {
 			const label = y === 0 ? format(max) : y === height - 1 ? format(0) : y === Math.floor((height - 1) / 2) ? format(max * (height - 1 - y) / (height - 1)) : "";
-			lines.push(ctx.theme.fg("dim", truncateToWidth(label, yWidth).padStart(yWidth) + " " + glyph(preset, "columnGap")) + grid[y].join(""));
+			lines.push(ctx.theme.fg("dim", truncateToWidth(label, yWidth).padStart(yWidth) + " " + glyph(preset, "plotSpine")) + grid[y].join(""));
 		}
-		lines.push(" ".repeat(yWidth + 2 + (selected - start) * cellWidth + Math.floor((cellWidth - 1) / 2)) + ctx.theme.fg("accent", glyph(preset, "trendUp")));
+		lines.push(" ".repeat(yWidth + 2 + (selected - start) * cellWidth + Math.floor((cellWidth - 1) / 2)) + ctx.theme.fg("accent", glyph(preset, "plotCursor")));
 	}
 	const first = new Date(axis[start]).toISOString().slice(5, 16).replace("T", " ");
 	const last = new Date(axis[start + slots - 1]).toISOString().slice(5, 16).replace("T", " ");
@@ -109,7 +109,7 @@ export function renderTimeSeries(ctx: FeatureContext, axis: readonly number[], r
 		const row = rows[r], hidden = options.hidden?.has(row.key);
 		const value = row.values[selected];
 		const detail = (options.formatValue?.(row.key, value, selected) ?? (value === null || value === undefined ? "—" : format(value))) + (row.legendValue === undefined ? "" : ` · ${row.legendValue}`);
-		const prefix = `${row.key === options.selectedKey ? ">" : " "} ${ctx.theme.fg(hidden ? "dim" : colors[row.colorIndex ?? r], glyph(preset, "heatCell", 1))} `;
+		const prefix = `${row.key === options.selectedKey ? glyph(preset, "rowCursor") : " "} ${ctx.theme.fg(hidden ? "dim" : colors[row.colorIndex ?? r], glyph(preset, "legendKey"))} `;
 		const label = truncateToWidth((hidden ? "off " : "") + row.label, Math.max(1, w - visibleWidth(prefix) - visibleWidth(detail) - 2));
 		const line = prefix + label + " ".repeat(Math.max(1, w - visibleWidth(prefix + label) - visibleWidth(detail))) + detail;
 		lines.push(hidden ? ctx.theme.fg("dim", line) : line);

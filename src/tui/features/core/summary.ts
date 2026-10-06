@@ -9,7 +9,7 @@ import type { FeatureContext, FeatureController } from "../types";
 import { renderHeatmap, weeksForWidth } from "../../charts/heatmap";
 import { calendarLayout } from "../../charts/calendar";
 import { glyphsFor } from "../../glyphs";
-import { heatRamp } from "../../palette";
+import { heatRamp, SELECTION_BG } from "../../palette";
 import { ChartState, ListState, fields, wrap, type CoreSeries, type Sorters } from "./shared";
 import { RequestDetails } from "./requests";
 import { dataTable, focusTabs, metricGrid, sectionHeading } from "../presentation";
@@ -213,7 +213,7 @@ class SummaryFeature implements FeatureController {
 			{ key: "tokens", header: "Tokens", align: "right", priority: 2, value: point => formatCompact(point.totalTokens) },
 		], this.ctx, "Recorded days");
 		const calendar = [sectionHeading(this.ctx, width, "Activity calendar", `${weeks} weeks`, this.focus === 1),
-			...renderHeatmap(points, { innerWidth: width, labelWidth: 2, weeks, glyphs: glyphsFor(this.ctx.theme.getSymbolPreset()), ramp: [1, 2, 3, 4].map(level => heatRamp(this.ctx.theme, level)), dim: text => this.ctx.theme.fg("dim", text), today, selectedDay: selected.day, selected: text => this.ctx.theme.bg("selectedBg", this.ctx.theme.fg("accent", text)) }),
+			...renderHeatmap(points, { innerWidth: width, labelWidth: 2, weeks, glyphs: glyphsFor(this.ctx.theme.getSymbolPreset()), ramp: [1, 2, 3, 4].map(level => heatRamp(this.ctx.theme, level)), dim: text => this.ctx.theme.fg("dim", text), today, selectedDay: selected.day, selected: text => this.ctx.theme.bg(SELECTION_BG.band, this.ctx.theme.fg("accent", text)) }),
 			...wrap([this.ctx.theme.fg("dim", `${localDay(layout.start)}–${localDay(today)} · ${layout.totalRequests} requests · ${formatEstimatedCost(layout.totalCost, 0)}`),
 				this.ctx.theme.fg("dim", "j/k day · h/l week · t today · Enter details")], width)];
 		return [...wrap(prefix, width), ...metricGrid(this.ctx, width, [

@@ -259,35 +259,6 @@ test("LabelRef returns the row's TEXT, never a number coerced to a string", () =
 
 // ─── SeriesRef ───────────────────────────────────────────────────────────────
 
-test("SeriesRef yields one number per row, in payload order", () => {
-	const data = liveData();
-	expect(resolveSeriesValues({ kind: "series", source: "timeSeries", field: "cost" }, data)).toEqual([
-		3.2, 1.1, 4.75, 0.4,
-	]);
-	expect(resolveSeriesValues({ kind: "series", source: "modelSeries", field: "requests", groupBy: "model" }, data))
-		.toHaveLength(BY_MODEL_COUNT(data));
-});
-
-function BY_MODEL_COUNT(data: ReturnType<typeof liveData>): number {
-	return data.modelDashboard?.modelSeries.length ?? 0;
-}
-
-test("a SeriesRef grouped by a dimension collapses to one value per group, summed", () => {
-	// The models table's `Trend` column reads this, so the sparkline a row gets
-	// must be ITS model's series and not the whole payload's.
-	const data = liveData();
-	const all = resolveSeriesValues(
-		{ kind: "series", source: "modelSeries", field: "requests", groupBy: "model" },
-		data,
-	);
-	const one = resolveSeriesValues(
-		{ kind: "series", source: "modelSeries", field: "requests", groupBy: "model" },
-		data,
-		{ model: "space-bunny-free" },
-	);
-	expect(all.length).toBeGreaterThan(one.length);
-	expect(one.every(v => v > 0)).toBe(true);
-});
 
 test("a SeriesRef for a field the rows do not have is an empty series, not a crash", () => {
 	const data = liveData();

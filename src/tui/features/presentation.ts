@@ -2,6 +2,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tu
 import { renderBands, type BandRenderOptions, type Column, type StatTile } from "../band";
 import { glyphsFor } from "../glyphs";
 import { renderSparkline } from "../charts/sparkline";
+import { SELECTION_BG } from "../palette";
 import type { FeatureContext } from "./types";
 
 function options(ctx: FeatureContext, width: number): BandRenderOptions {
@@ -12,7 +13,7 @@ function options(ctx: FeatureContext, width: number): BandRenderOptions {
 		barHeight: 4, labelWidth: 14, valueWidth: 12,
 		identityWidth: Math.max(8, Math.floor(width * 0.42)),
 		sparkline: (values, columns) => renderSparkline(values, { width: columns, preset, accent: cell => ctx.theme.fg("accent", cell) }),
-		selected: text => ctx.theme.bg("selectedBg", text + " ".repeat(Math.max(0, width - visibleWidth(text)))),
+		selected: text => ctx.theme.bg(SELECTION_BG.band, text + " ".repeat(Math.max(0, width - visibleWidth(text)))),
 	};
 }
 
@@ -33,7 +34,7 @@ export function sectionHeading(ctx: FeatureContext, width: number, title: string
 /** Short, wrapping focus pills use the host's selection background rather than custom colors. */
 export function focusTabs(ctx: FeatureContext, width: number, labels: readonly string[], selected: number): string[] {
 	const line = labels.map((label, index) => index === selected
-		? ctx.theme.bg("selectedBg", ctx.theme.bold(ctx.theme.fg("accent", ` ${label} `)))
+		? ctx.theme.bg(SELECTION_BG.band, ctx.theme.bold(ctx.theme.fg("accent", ` ${label} `)))
 		: ctx.theme.fg("dim", ` ${label} `)).join("  ");
 	return wrapTextWithAnsi(line, Math.max(1, width));
 }

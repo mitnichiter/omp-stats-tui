@@ -120,8 +120,9 @@ than complete spend, so cost is displayed together with its unpriced count.
 **Unpriced request**:
 A request whose provider/model price card is absent and whose spend cannot be determined. Unknown spend
 reads `N/A`, not `$0.00`. A recorded zero charge or explicit all-zero/free price card is not unknown.
-The locked upstream patch uses pricing-v2 replay and rollup-v3 invalidation to repair historic markers;
-the panel does not infer or approximate missing prices with its own SQL.
+The locked upstream patch (ADR 0008) uses pricing-v2 replay and rollup-v3 invalidation to repair
+historic markers; the panel does not infer or approximate missing prices with its own SQL, and the
+patch is applied by Bun at install time rather than computed at runtime.
 _Not to be confused with_: free request. A measured zero and an unmeasured cost are different facts.
 
 ### The two surfaces
@@ -160,7 +161,6 @@ measured tables, adding current-theme selection, compact focus tabs and section 
 `src/tui/charts/time-series.ts` renders production native-bucket plots for core analytics, Providers
 and Gain with formatted units, real null gaps, stable series identity and selected-point legends.
 It does not fabricate observations or replace domain-specific calendars, version-rate plots or traces.
-
 **Stats read client**:
 One persistent isolated child per mounted panel, with request/reply and unsolicited live NDJSON over pipes
 (`src/data/client.ts`, `scripts/data-worker.ts`). The worker owns DB initialization, queries/transcript reads
@@ -196,10 +196,25 @@ neither and gets both from the grammar.
 
 **ScreenSpec**:
 One screen's declared pure layout: its id, labels, `needs`, and `Band[]` (`src/layout/spec.ts`).
-The registry/navigation and chart/probe renderer reuse that identity. Production interactive workflows
-are owned by feature controllers, not by static bands or `expandable` metadata.
+The IR is NOT the production render path — every `/stats-tui` screen is a `FeatureController` that draws
+its own body. A `ScreenSpec` exists for three jobs: the shipped `/stats-test` showcase, the nav/tabs
+identity, and the review probes. The reason is settled: a static band grammar cannot express focus,
+search, sort, staged loading or retained state.
 _Not to be confused with_: `FeatureController`, or the pure registry `Screen` record that defers rendering
-to `renderScreen`. The IR remains useful for chart/data probes without pretending to exercise route input.
+to `renderScreen`. Adding a `Band[]` changes what `/stats-test` draws and which ids `tabs.ts`/`chrome.ts`
+expose — and changes nothing a user sees in `/stats-tui`.
+
+**IR scope map** — which file survives for which reason, so this is not re-derived:
+
+| File | Kept because |
+|---|---|
+| `src/layout/spec.ts` | `/stats-test` band declarations; `tabs.ts`/`chrome.ts`/`panel.ts` read `SCREEN_SPECS` and `isDrawableScreen` for the real nav |
+| `src/layout/resolve.ts` | the showcase and `probe-render.ts` resolve every `MetricRef` through it |
+| `src/layout/host-derived.ts` | `resolve.ts`'s named figures — 18 `HOST_DERIVED` entries (three `agentTokens:*` variants and 15 metrics) — imported by `resolve.ts` alone |
+| `src/tui/band.ts` | draws band primitives for `render/screen.ts`; production `features/presentation.ts` also reuses metric-grid/table drawing, without adopting static screen specs or metric-ref resolution |
+| `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer, plus one **fixture-only** branch in `panel.ts:772` — reachable only when `options.fetch` is injected, because `#feature()` returns `undefined` in that case. The real worker path always has a controller |
+| `src/tui/charts/*` | **both** paths — `features/core/*` import them directly on `/stats-tui`, so these are production chart code, not IR |
+| `src/tui/screens/*.ts` | registry METADATA only (`id`/`label`/`short`/`status`/`needs`) for `SELECTABLE_SCREENS` and the digit row; the `render` bodies are unreachable in production and only `errors-screen.test.ts`/`activity.test.ts` still call them |
 
 **MetricRef**:
 A declared read of one figure — which payload, which field, which row (`src/layout/spec.ts`).

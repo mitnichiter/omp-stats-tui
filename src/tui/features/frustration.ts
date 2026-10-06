@@ -2,7 +2,7 @@ import type { FrustrationDashboardStats, FrustrationEstimate, FrustrationJobStat
 import { truncateToWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import type { Range } from "../../data/ranges";
 import { formatCost, formatElapsed, formatInteger, formatPercent } from "../format";
-import { resolveSeries } from "../palette";
+import { resolveSeries, SELECTION_BG } from "../palette";
 import { activeModelClass, classTotals, familyKey, filterFrustrationRows, fraction, FRUSTRATION_SORTS, layerFraction, MIN_MESSAGES, mostlyRegex, sortFrustrationRows, type FrustrationLayer, type FrustrationSort } from "./frustration-data";
 import type { FeatureContext, FeatureController } from "./types";
 import { dataTable, focusTabs, metricGrid, sectionHeading } from "./presentation";
@@ -316,7 +316,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 					const next = plot[index + 1];
 					const connectorY = next && next.messages > 0 ? Math.min(plotHeight - 1, Math.floor((fraction(row.atAssistant, row.messages) + fraction(next.atAssistant, next.messages)) / (2 * peak) * plotHeight)) : -1;
 					cell += trend && y === connectorY ? fg("text", glyph(preset, "trendFlat")) : fg(colors[Math.max(0, familyIndex) % colors.length], row.key === selectedKey ? glyph(preset, "columnGap") : y === 0 ? glyph(preset, "heatEmpty") : " ");
-					marks += row.key === selectedKey ? ctx.theme.bg("selectedBg", cell) : cell;
+					marks += row.key === selectedKey ? ctx.theme.bg(SELECTION_BG.band, cell) : cell;
 				}
 				lines.push(truncateToWidth(`${formatPercent(((y + 1) / plotHeight) * peak, 1).padStart(6)} ${glyph(preset, "columnGap")} ${marks}`, w));
 			}

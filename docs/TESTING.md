@@ -109,11 +109,13 @@ bun test
 bun run build
 ```
 
-Latest observed suite: **879 passed, 0 failed, 60 files**, 102,382 assertions. Production build passed. The UI refinement was reviewed and revised on the actual compiled host at **40x30, 100x40 and 160x45** across all twelve routes. Representative light/Unicode, dark/ASCII and custom/Nerd reviews also passed, including observed custom ANSI colors.
+Latest observed suite: **905 passed, 0 failed, 61 files**, 102,929 assertions. Production build and the dependency-patch check passed. After integrating current maintainer `main`, the UI was reviewed again on the compiled host at **40x30, 100x40 and 160x45** across all twelve routes; initialization was excluded from the settled-body review. Representative light/Unicode, dark/ASCII and custom/Nerd reviews also passed, including observed custom ANSI colors.
 
 Mounted scenarios included literal `q[]` search/clear, populated and filtered-empty lists, real recorded savings and quota histories, blank trace-title fallback, nested child navigation, minimap range selection, quiet-day details, missing-judge quote dismissal and an intentional missing-Bun read failure. Ctrl+C restored zero overlays, the normal screen and a visible editor cursor. These are local/recorded scenarios, not paid judging or credentialed networking. Prior packed-install coverage is documented in the [workflow roadmap](plans/2026-10-05-dashboard-parity.md); UI review details are in the [refinement plan](plans/2026-10-06-ui-polish.md).
 
-Whole-repository TypeScript checking is **not green**. On the verified environment, `@types/bun` lacked its declared `index.d.ts`; direct `bun-types` checking still reports the same 19 diagnostics in seven files outside the UI edit set. See the [roadmap evidence](plans/2026-10-05-dashboard-parity.md#remaining-feature-completion) for exact files and acceptance boundaries. Do not report a passing typecheck based only on Bun's production build.
+Whole-repository TypeScript checking **passes** (`tsc --noEmit`, exit 0). The maintainer baseline's typing corrections were preserved, including the layout-test `DataNeed` import. The review machine's incomplete `@types/bun` installation needed a forced locked reinstall from an isolated cache; the subsequent default typecheck passed. The old 19-diagnostic list is historical, not the current UI branch's status.
+
+CI (`.github/workflows/ci.yml`) runs locked installation, `bun run verify:patch`, tests and TypeScript, plus a separate compiled-host extension-load job. `verify:patch` remains required after installation: a passing build is not proof that the dependency's unknown-spend correction is installed.
 
 ## Troubleshooting and reporting
 
@@ -132,5 +134,7 @@ bun run build
 ```
 
 If that also fails, report the full installer error and Bun version; do not bypass the patch or describe the incomplete installation as working.
+
+If an existing local `@types/bun` package contains metadata but lacks its declared typing entry, a normal locked install can report no changes. On the review machine, `bun install --force --frozen-lockfile --cache-dir "$(mktemp -d)"` restored the package; `bun run verify:patch`, build and the default TypeScript check then passed. This repairs the local installation without bypassing the dependency patch or deleting the global cache.
 
 Report on [UI refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2): commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.

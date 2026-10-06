@@ -2,6 +2,7 @@ import { hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils";
 import { colorToAnsi } from "@oh-my-pi/pi-tui/theme/color";
 import type { SymbolPreset } from "@oh-my-pi/pi-tui";
 import type { ThemeColor } from "@oh-my-pi/pi-tui";
+import type { ThemeBg } from "@oh-my-pi/pi-tui/theme";
 
 /**
  * The colour layer.
@@ -373,6 +374,137 @@ export const TAB_TOKENS = {
 	muted: "--ink-4 · `styles.css:30`",
 	hint: "--ink-4 · `styles.css:30`",
 } as const satisfies Record<TabInkRole, string>;
+
+// ---------------------------------------------------------------------------
+// THE BACKGROUND AXIS
+
+/**
+ * The ONE background the panel fills, as a named role.
+ *
+ * WHY A SEPARATE TABLE, AND NOT A `PALETTE` ENTRY. The host declares TWO
+ * unions, not one: `ThemeColor` for ink and `ThemeBg` for the seven
+ * backgrounds (`@oh-my-pi/pi-tui/src/theme/schema.ts:174-179`). `selectedBg`
+ * is in the second, and the two are not interchangeable — `theme.fg()` accepts
+ * only `ThemeColor` and `theme.bg()` only `ThemeBg`. Folding this into
+ * {@link PALETTE} would widen that table to `ThemeColor | ThemeBg` and every
+ * `fg(PALETTE.x)` call site would stop compiling. Keeping the axes apart makes
+ * "painted the wrong kind of token" a TYPE ERROR rather than a cell that
+ * silently renders uncoloured.
+ *
+ * `test/palette.test.ts` asserts `isValidThemeColor` over every `PALETTE`
+ * role, and `isValidThemeColor("selectedBg")` is FALSE — the token is real,
+ * it is simply not ink. A role that could not pass its own table's membership
+ * test does not belong in that table.
+ *
+ * WHY IT NEEDED NAMING AT ALL. `.nav-row[data-active="true"]` is
+ * `background: var(--selected)` (styles.css:547-550), so the web FILLS the
+ * selected row rather than merely tinting it. Five call sites each wrote the
+ * bare literal `bg("selectedBg", …)`, which `test/theme-fidelity.test.ts`
+ * correctly reports as a colour with no named role: the fill was real, but
+ * nothing in the tree had given it a name, a citation, or a reason anybody
+ * could later reconstruct.
+ */
+export type SelectionBgRole = "band";
+
+export const SELECTION_BG = {
+	/**
+	 * `selectedBg` — the band behind whatever is selected: the nav's active row,
+	 * the nav's hovered row, the tab strip's active thumb, and the topbar's live
+	 * chip. `--selected` (styles.css:547, and the token table at
+	 * css-tokens.md:43, which records it as `rgba(255,255,255,0.075)`).
+	 *
+	 * ONE role for all four sites is the point, not a simplification. The web
+	 * spends `--hover` at 0.035 alpha against `--selected` at 0.075 to tell
+	 * `hover` from `active`, and a terminal has one background token and no
+	 * alpha — so the two states share the band here and are separated by the
+	 * ink, the cursor and the weight instead (see `SIDEBAR_INK.rowHover`).
+	 * That is a deliberate, already-documented divergence; a second
+	 * "hoverBg" role would imply a distinction the host cannot render.
+	 */
+	band: "selectedBg",
+} as const satisfies Record<SelectionBgRole, ThemeBg>;
+
+/**
+ * What the selection band matches in the web dashboard. Same machine-checked
+ * contract as {@link PALETTE_TOKENS} — see `test/palette.test.ts`.
+ */
+export const SELECTION_BG_TOKENS = {
+	band: "--selected · `styles.css:547`",
+} as const satisfies Record<SelectionBgRole, string>;
+
+// ---------------------------------------------------------------------------
+// THE TRACE SPAN LADDER
+
+/**
+ * Span kind → theme token, for the traces timeline.
+ *
+ * Traces legitimately needs a per-kind colour: the whole point of a flamegraph
+ * is that you can find "the tool spans" without reading a label. What it must
+ * NOT do is keep that mapping in a private table beside its only renderer —
+ * `test/theme-fidelity.test.ts` is right that a `Record<K, ThemeColor>` outside
+ * this file has no citation and cannot be re-derived when a role moves. (A
+ * lookup through a local table also carries no literal at the call site, so no
+ * use-site scan can see it; that is why it needed its own check.)
+ *
+ * THE ORDER AND EVERY VALUE BELOW ARE THE WEB'S, NOT OURS. `CATEGORY_VARS` in
+ * `@oh-my-pi/omp-stats/src/client/traces/trace-colors.ts:37-43` is the file the
+ * dashboard's own flamegraph canvas reads its five category fills from, and
+ * each entry here is the terminal's nearest ink for that CSS custom property.
+ * The web has no traces parity document — `docs/research/omp-stats-tui/REPORT.md`
+ * records traces as "excluded, a cursor-anchored app, not a dashboard" — so the
+ * upstream source is the only provenance there is, and citing it beats citing
+ * nothing.
+ */
+export type SpanKindRole = "turn" | "model" | "tool" | "subagent" | "background";
+
+export const SPAN_COLORS = {
+	/**
+	 * `muted` (`--ink-2`) — a conversation turn. `CATEGORY_VARS.turn` is
+	 * `--ink-2` (trace-colors.ts:38), and `muted` is our ink-2 rung
+	 * (styles.css:28). NOT `success`: a turn is not a success state, and
+	 * painting every turn green made an ordinary run look like a passing
+	 * metric.
+	 */
+	turn: "muted",
+	/**
+	 * `accent` (`--chart-primary`) — a model call. `CATEGORY_VARS.model` is
+	 * `--chart-primary` (trace-colors.ts:39), the web's default single-series
+	 * chart colour (styles.css:55), and `accent` is the panel's one primary.
+	 */
+	model: "accent",
+	/**
+	 * `warning` (`--warn`) — a tool call. `CATEGORY_VARS.tool` is `--warn`
+	 * (trace-colors.ts:40) and `caution` already rides `warning` (styles.css:45),
+	 * so this is the one entry that is token-for-token the web's.
+	 */
+	tool: "warning",
+	/**
+	 * `mdLink` (`--chart-secondary`) — a subagent. `CATEGORY_VARS.subagent` is
+	 * `--chart-secondary` (trace-colors.ts:41), the web's cost series
+	 * (styles.css:56). The nearest terminal ink for that pink is `mdLink`.
+	 */
+	subagent: "mdLink",
+	/**
+	 * `borderMuted` (`--ink-4`) — background work. `CATEGORY_VARS.background` is
+	 * `--ink-4` (trace-colors.ts:42), and `borderMuted` is the token behind our
+	 * `faint` role (styles.css:30). It is that rung and not `muted` so idle
+	 * background work recedes behind real spans instead of competing with turns.
+	 */
+	background: "borderMuted",
+} as const satisfies Record<SpanKindRole, ThemeColor>;
+
+/**
+ * What each span kind matches on the web. Same machine-checked contract as
+ * {@link PALETTE_TOKENS} — the upstream `CATEGORY_VARS` line, not a rule we
+ * invented.
+ */
+export const SPAN_TOKENS = {
+	turn: "--ink-2 · `trace-colors.ts:38`",
+	model: "--chart-primary · `trace-colors.ts:39`",
+	tool: "--warn · `trace-colors.ts:40`",
+	subagent: "--chart-secondary · `trace-colors.ts:41`",
+	background: "--ink-4 · `trace-colors.ts:42`",
+} as const satisfies Record<SpanKindRole, string>;
 
 /**
  * Categorical series colours, in preference order.

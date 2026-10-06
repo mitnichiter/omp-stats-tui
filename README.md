@@ -116,6 +116,7 @@ omp models -e /abs/path/to/omp-stats-tui/dist/index.js
 
 `probe-render` renders the pure chart/layout IR, not the interactive controller workflow. It accepts `--range` from the six keys and `--preset unicode|nerd|ascii`. Controller acceptance needs a mounted host in addition to fixture/render tests. Other probes: `bun run scripts/probe-data.ts`, `bun run scripts/probe-glyphs.ts`.
 
+`bun test` currently passes **905 tests across 61 files**, and the full TypeScript `--noEmit` check passes. CI (`.github/workflows/ci.yml`) runs both, plus a build and an `omp models -e` extension-load smoke check, on every push to `main` and every PR. Because the panel's money honesty depends on a dependency patch Bun applies at install time, CI asserts `bun run verify:patch` immediately after `bun install --frozen-lockfile` — if you ever cache `node_modules`, its key must include both `bun.lock` and `patches/*.patch`.
 Source-mode development uses standalone Bun and installed dependencies. `StatsReadClient` resolves `scripts/data-worker.ts` relative to its source module; the production build's `__STATS_READ_WORKER__` macro instead resolves `./data-worker.js` relative to `dist/index.js`. Workers use absolute paths, inherit the host working directory for project/judge configuration, and receive the active agent directory plus `OMP_PROFILE`/`PI_PROFILE`; `PI_BUNDLED` is cleared. Launching compiled omp from another directory does not relocate the worker. Directly loading `src/index.ts` in compiled omp is not the supported distribution entry.
 
 ## Architecture

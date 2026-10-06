@@ -91,6 +91,7 @@ test("tool selection scopes the model table only, preserves chart totals, and re
 	let text = feature.render(180, 60).map(stripForTest).join("\n");
 	expect(text).toContain("Tool filter: alpha");
 	expect(text).toContain("Tool call counts (all tools)");
+
 	expect(text).toContain("alpha · same-model · provider-a");
 	expect(text).toContain("alpha · same-model · provider-b");
 	expect(text).not.toContain("beta · beta-model");
@@ -191,6 +192,7 @@ test("tool share modes and selected legend visibility survive a range reload", a
 	feature.handleInput("m");
 	let text = feature.render(180, 60).map(stripForTest).join("\n");
 	expect(text).toContain("Tool call share (all tools)");
+
 	feature.handleInput("n");
 	feature.handleInput("v");
 	await feature.load("all");

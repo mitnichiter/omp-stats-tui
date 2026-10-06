@@ -1,5 +1,5 @@
 /**
- * The band grammar — the single place a screen body is composed.
+ * Shared band drawing primitives for the pure IR and production metric/table widgets.
  *
  * THE PROBLEM THIS FIXES. The panel read as a stack of text blocks with a
  * `───` rule above every section, which is what a terminal looks like when each
@@ -524,10 +524,11 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
 	// the rule is "not dimmed", and naming the token keeps the table inside the
 	// user's theme instead of inheriting whatever the terminal happens to
 	// default to.
+	const cursor = band.selectedRow === undefined ? "" : glyph(ctx.preset, "rowCursor");
 	const body = all.map((r, rowIndex) => {
 		const selected = rowIndex === band.selectedRow;
 		const rendered = line(
-			kept.map((c, index) => (index === 0 && band.selectedRow !== undefined ? `${selected ? ">" : " "} ` : "") + String(r[c.column.key] ?? "")),
+			kept.map((c, index) => (index === 0 && band.selectedRow !== undefined ? `${selected ? cursor : " "} ` : "") + String(r[c.column.key] ?? "")),
 			(t) => ctx.fg(selected ? PALETTE.primary : PALETTE.label, t),
 		).trimEnd();
 		return selected && ctx.selected ? ctx.selected(rendered) : rendered;
