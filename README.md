@@ -11,6 +11,8 @@ Fullscreen local usage-stats panel for [omp](https://github.com/can1357/oh-my-pi
 
 Prerequisites: [Bun](https://bun.sh) ≥ 1.4.2 and supported compiled omp **18.6.1** on `PATH`. Stats reads and live ingestion require a standalone `bun` executable even when omp itself is compiled.
 
+For the PR checkout commands, manual acceptance checklist, safety limits and troubleshooting, see the [testing guide](docs/TESTING.md).
+
 ```sh
 git clone https://github.com/yuzu-octopus/omp-stats-tui.git
 cd omp-stats-tui
