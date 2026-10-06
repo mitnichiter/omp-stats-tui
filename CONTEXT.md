@@ -189,10 +189,25 @@ neither and gets both from the grammar.
 
 **ScreenSpec**:
 One screen's declared pure layout: its id, labels, `needs`, and `Band[]` (`src/layout/spec.ts`).
-The registry/navigation and chart/probe renderer reuse that identity. Production interactive workflows
-are owned by feature controllers, not by static bands or `expandable` metadata.
+The IR is NOT the production render path — every `/stats-tui` screen is a `FeatureController` that draws
+its own body. A `ScreenSpec` exists for three jobs: the shipped `/stats-test` showcase, the nav/tabs
+identity, and the review probes. The reason is settled: a static band grammar cannot express focus,
+search, sort, staged loading or retained state.
 _Not to be confused with_: `FeatureController`, or the pure registry `Screen` record that defers rendering
-to `renderScreen`. The IR remains useful for chart/data probes without pretending to exercise route input.
+to `renderScreen`. Adding a `Band[]` changes what `/stats-test` draws and which ids `tabs.ts`/`chrome.ts`
+expose — and changes nothing a user sees in `/stats-tui`.
+
+**IR scope map** — which file survives for which reason, so this is not re-derived:
+
+| File | Kept because |
+|---|---|
+| `src/layout/spec.ts` | `/stats-test` band declarations; `tabs.ts`/`chrome.ts`/`panel.ts` read `SCREEN_SPECS` and `isDrawableScreen` for the real nav |
+| `src/layout/resolve.ts` | the showcase and `probe-render.ts` resolve every `MetricRef` through it |
+| `src/layout/host-derived.ts` | `resolve.ts`'s six named figures, imported by it alone |
+| `src/tui/band.ts` | renders one band kind; reached only through `render/screen.ts` |
+| `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer |
+| `src/tui/charts/*` | **both** paths — `features/core/*` import them directly on `/stats-tui`, so these are production chart code, not IR |
+| `src/tui/screens/*.ts` | registry METADATA only (`id`/`label`/`short`/`status`/`needs`) for `SELECTABLE_SCREENS` and the digit row; the `render` bodies are unreachable in production and only `errors-screen.test.ts`/`activity.test.ts` still call them |
 
 **MetricRef**:
 A declared read of one figure — which payload, which field, which row (`src/layout/spec.ts`).
