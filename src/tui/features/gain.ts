@@ -1,3 +1,4 @@
+import { wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import type { GainDashboardStats, GainSourceTotals } from "@oh-my-pi/omp-stats/shared-types";
 import { compactTokens, formatBytes, formatInteger, formatPercent } from "../format";
 import type { Range } from "../../data/ranges";
@@ -58,10 +59,18 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 	return {
 		load,
 		render(width, height) {
-			const lines = [ctx.theme.bold(`Gain · ${range} · ${project ?? "All projects"}`), ctx.theme.fg("dim", "Tab focus · p/P project · h/l day · j/k source · o sort · d direction · Enter detail · + reveal")];
+			const lines = [
+				ctx.theme.bold(`Gain · ${range} · ${project ?? "All projects"}`),
+				...wrapTextWithAnsi(ctx.theme.fg("dim", "Tab/Shift-Tab focus · p/P project · h/l day · j/k source · o sort · d direction · Enter detail · + reveal"), width),
+			];
 			lines.push(`Focus: ${["Project", "Savings history", "Sources"][focus]}${loading ? " · Loading scoped savings…" : ""}`);
 			if (error) lines.push(ctx.theme.fg("error", `Savings error: ${error}${data ? " · showing previous reading for this scope" : ""}`));
-			if (focus === 0) lines.push(...projectOptions(projects, project).map(p => `${p === project ? "▶" : " "} ${p ?? "All projects"}`));
+			if (focus === 0) {
+				const options = projectOptions(projects, project);
+				const viewport = recordViewport(options, options.indexOf(project), height, reveal);
+				lines.push(...viewport.rows.map(p => `${p === project ? "▶" : " "} ${p ?? "All projects"}`));
+				if (viewport.rows.length < options.length) lines.push(`Projects ${viewport.start + 1}–${viewport.start + viewport.rows.length}/${options.length} · p/P selects`);
+			}
 			if (!data) { lines.push(loading ? "Loading savings…" : "No savings payload available"); return boundLines(lines, width); }
 			const t = data.overall;
 			lines.push(`Saved tokens ${formatInteger(t.savedTokens)} · bytes ${formatBytes(t.savedBytes)} · hits ${formatInteger(t.hits)}`,
@@ -70,7 +79,7 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 			if (t.hits === 0 && data.timeSeries.length === 0) lines.push(`No savings recorded for ${project ?? "all projects"} in ${range}. ${range === "all" ? "Savings appear when snapcompact compacts tool output." : "Try a longer range."}`);
 			if (focus === 1) {
 				lines.push(ctx.theme.bold("Saved per UTC day"), ...timeline(ctx, history.axis, [{ key: "daily", label: "Saved per day", values: history.daily }], width, point));
-				lines.push(ctx.theme.bold("Cumulative saved tokens (range-scoped)"), ...timeline(ctx, history.axis, [{ key: "cumulative", label: "Cumulative", values: history.cumulative }], width, point, { cumulative: true }));
+				lines.push(ctx.theme.bold("Cumulative saved tokens (range-scoped)"), ...timeline(ctx, history.axis, [{ key: "cumulative", label: "Cumulative", values: history.cumulative, colorIndex: 1 }], width, point, { cumulative: true }));
 				const i = Math.max(0, Math.min(history.axis.length - 1, point));
 				if (history.axis.length) lines.splice(3, 0, `Day ${new Date(history.axis[i]).toISOString().slice(0, 10)} · saved ${formatInteger(history.daily[i])} · cumulative ${formatInteger(history.cumulative[i])}`);
 				lines.push(`Daily spark (newest ${Math.min(history.daily.length, Math.max(1, width - 15))} days)`, renderSparkline(history.daily, {
@@ -88,7 +97,7 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 		},
 		handleInput(input) {
 			if (closed || input === "q") return false;
-			if (input === "\t" || input === "v") focus = (focus + 1) % 3;
+			if (input === "\t" || input === "v" || input === "\x1b[Z") focus = (focus + (input === "\x1b[Z" ? 2 : 1)) % 3;
 			else if (input === "p" || input === "P") {
 				const options = projectOptions(projects, project);
 				project = options[(options.indexOf(project) + (input === "p" ? 1 : options.length - 1)) % options.length];

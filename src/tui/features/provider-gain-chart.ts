@@ -3,7 +3,7 @@ import type { FeatureContext } from "./types";
 import { resolveSeries } from "../palette";
 import { compactTokens, formatPercent } from "../format";
 
-export interface TimelineRow { key: string; label: string; values: readonly (number | null)[] }
+export interface TimelineRow { key: string; label: string; values: readonly (number | null)[]; legendValue?: string; colorIndex?: number }
 /** Focused local slice: real timestamps, no downsampled/imputed readings. */
 export function timeline(ctx: FeatureContext, axis: readonly number[], rows: readonly TimelineRow[], width: number, selected: number, options: { percent?: boolean; cumulative?: boolean; hidden?: ReadonlySet<string>; stacked?: boolean; format?: (value: number) => string } = {}): string[] {
 	if (axis.length === 0 || rows.length === 0) return [ctx.theme.fg("dim", "No recorded points")];
@@ -11,8 +11,8 @@ export function timeline(ctx: FeatureContext, axis: readonly number[], rows: rea
 	selected = Math.max(0, Math.min(axis.length - 1, selected));
 	const start = Math.max(0, Math.min(axis.length - columns, selected - Math.floor(columns / 2)));
 	const active = rows.filter(r => !options.hidden?.has(r.key));
-	const colors = resolveSeries(rows.length, ctx.theme);
-	const ranked = active.map(row => ({ row, color: colors[rows.indexOf(row)] }));
+	const colors = resolveSeries(Math.max(rows.length, ...rows.map(r => (r.colorIndex ?? 0) + 1)), ctx.theme);
+	const ranked = active.map(row => ({ row, color: colors[row.colorIndex ?? rows.indexOf(row)] }));
 	let max = options.percent ? 1 : 0;
 	for (let i = 0; i < axis.length; i++) {
 		let sum = 0;
@@ -44,7 +44,7 @@ export function timeline(ctx: FeatureContext, axis: readonly number[], rows: rea
 	lines.push(`${first} → ${last} UTC`);
 	for (let i = 0; i < rows.length; i++) {
 		const r = rows[i];
-		lines.push(`${ctx.theme.fg(colors[i], "■")} ${options.hidden?.has(r.key) ? "[hidden] " : ""}${r.label}`);
+		lines.push(`${ctx.theme.fg(colors[r.colorIndex ?? i], "■")} ${options.hidden?.has(r.key) ? "[hidden] " : ""}${r.label}${r.legendValue === undefined ? "" : ` · ${r.legendValue}`}`);
 	}
 	return lines.map(line => truncateToWidth(line, Math.max(0, width)));
 }

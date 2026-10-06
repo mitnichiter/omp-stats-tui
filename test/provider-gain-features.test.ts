@@ -186,3 +186,217 @@ test("old-range window failure cannot replace the newest empty-snapshot state", 
 	expect(controller.handleInput("\x1b[C")).toBe(false);
 	controller.dispose();
 });
+
+test("provider totals keep the chosen token mix through sorting and refreshed rankings", async () => {
+	const a = { ...local.providers[0], provider: "a", totalTokens: 900 };
+	const b = { ...local.providers[0], provider: "b", totalTokens: 600, totalCacheReadTokens: 75 };
+	let providers = [a, b];
+	const controller = createProvidersFeature(context(async <T>(path: string) => (
+		path.endsWith("/providers") ? { ...local, providers } : { windowInsights: [], usageSeries: [] }
+	) as T));
+	await controller.load("24h");
+	controller.render(120, 40);
+	controller.handleInput("j");
+	controller.handleInput("o");
+	controller.handleInput("d");
+	controller.handleInput("\r");
+	let text = stripForTest(controller.render(120, 40).join("\n"));
+	expect(text).toContain("Selected b");
+	expect(text).toContain("Cache read: 75");
+	providers = [{ ...b, totalTokens: 2_000 }, a];
+	await controller.load("24h");
+	text = stripForTest(controller.render(120, 40).join("\n"));
+	expect(text).toContain("Selected b");
+	expect(text).toContain("Cache read: 75");
+	controller.dispose();
+});
+
+test("burn tooltips aggregate Other and honor hidden series while legends expose range totals", async () => {
+	const series = [80, 70, 60, 50, 40, 30, 20, 10].map((tokens, i) => ({
+		timestamp: now, provider: `p${i}`, totalTokens: tokens, outputTokens: tokens / 2, requests: 1, cost: tokens / 100, unpricedRequests: 0,
+	}));
+	const controller = createProvidersFeature(context(async <T>(path: string) => (
+		path.endsWith("/providers") ? { ...local, series } : { windowInsights: [], usageSeries: [] }
+	) as T));
+	await controller.load("24h");
+	controller.handleInput("v");
+	let text = stripForTest(controller.render(120, 50).join("\n"));
+	expect(text).toContain("Other (2): 30 tokens");
+	expect(text).toContain("■ p0 · 80");
+	expect(text).toContain("■ Other (2) · 30");
+	expect(text).not.toContain("p6: 20");
+	for (let i = 0; i < 6; i++) controller.handleInput("n");
+	controller.handleInput(" ");
+	text = stripForTest(controller.render(120, 50).join("\n"));
+	expect(text).toContain("[hidden] Other (2) · 30");
+	expect(text).not.toContain("Other (2): 30 tokens");
+	controller.handleInput(" ");
+	controller.handleInput("m");
+	text = stripForTest(controller.render(120, 50).join("\n"));
+	expect(text).toContain("Other (2): 15 output");
+	controller.dispose();
+});
+
+test("retained account histories refresh independently of local and fleet-window failures", async () => {
+	const refreshWindows = deferred<{ windowInsights: ProviderWindowInsight[]; usageSeries: UsageWindowSeries[] }>();
+	let refreshed = false;
+	let accountLoads = 0;
+	const windows = [insight("a", "day")];
+	const controller = createProvidersFeature(context(async <T>(path: string, params?: Record<string, string>) => {
+		if (path.endsWith("/providers")) {
+			if (refreshed) throw new Error("local refresh unavailable");
+			return local as T;
+		}
+		if (!params?.provider) return (refreshed ? await refreshWindows.promise : { windowInsights: windows, usageSeries: [] }) as T;
+		accountLoads++;
+		return { windowInsights: windows, usageSeries: [account("a", "remembered", refreshed ? 0.95 : 0.2)] } as T;
+	}));
+	await controller.load("24h");
+	await Promise.resolve(); await Promise.resolve();
+	controller.handleInput("\x1b[Z");
+	controller.render(140, 50);
+	refreshed = true;
+	await controller.load("7d");
+	await Promise.resolve(); await Promise.resolve();
+	let text = stripForTest(controller.render(140, 50).join("\n"));
+	expect(text).toContain("local refresh unavailable");
+	expect(text).toContain("windows loading independently");
+	expect(text).toContain("Account key remembered");
+	expect(text).toContain("Latest 95.0%");
+	expect(text).toContain("headroom 5.0%");
+	refreshWindows.reject(new Error("fleet offline"));
+	await Promise.resolve(); await Promise.resolve();
+	text = stripForTest(controller.render(140, 50).join("\n"));
+	expect(text).toContain("fleet offline");
+	expect(text).toContain("Latest 95.0%");
+	expect(accountLoads).toBe(2);
+	controller.dispose();
+});
+
+test("retrying fleet and accounts does not issue a second account read when fleet completes later", async () => {
+	const retryWindows = deferred<{ windowInsights: ProviderWindowInsight[]; usageSeries: UsageWindowSeries[] }>();
+	let retry = false;
+	let accountLoads = 0;
+	const windows = [insight("a", "day")];
+	const controller = createProvidersFeature(context(async <T>(path: string, params?: Record<string, string>) => {
+		if (path.endsWith("/providers")) return local as T;
+		if (!params?.provider) return (retry ? await retryWindows.promise : { windowInsights: windows, usageSeries: [] }) as T;
+		accountLoads++;
+		return { windowInsights: windows, usageSeries: [account("a", "one", retry ? 0.6 : 0.3)] } as T;
+	}));
+	await controller.load("24h");
+	await Promise.resolve(); await Promise.resolve();
+	controller.handleInput("\x1b[Z");
+	retry = true; controller.handleInput("u");
+	await Promise.resolve(); await Promise.resolve();
+	expect(stripForTest(controller.render(130, 50).join("\n"))).toContain("Latest 60.0%");
+	retryWindows.resolve({ windowInsights: windows, usageSeries: [] });
+	await Promise.resolve(); await Promise.resolve();
+	expect(accountLoads).toBe(2);
+	expect(stripForTest(controller.render(130, 50).join("\n"))).toContain("Latest 60.0%");
+	controller.dispose();
+});
+
+test("account rows select independent limit windows and retain identity through sorting", async () => {
+	const day = account("a", "key-day", 0.9);
+	const week = { ...account("a", "key-week", 0.4), windowKey: "week", windowLabel: "Weekly" };
+	week.points = [
+		{ timestamp: now - 3_600_000, usedFraction: 0.8, exhausted: false },
+		{ timestamp: now, usedFraction: 0.4, exhausted: false },
+	];
+	const windows = [insight("a", "day", 2), { ...insight("a", "week"), accounts: 2, idealAccounts: 3, peakConcurrentFraction: 2.4, exhaustedEvents: 1 }];
+	const controller = createProvidersFeature(context(async <T>(path: string, params?: Record<string, string>) => (
+		path.endsWith("/providers") ? local : { windowInsights: windows, usageSeries: params?.provider ? [day, week] : [] }
+	) as T));
+	await controller.load("24h");
+	await Promise.resolve(); await Promise.resolve();
+	controller.handleInput("\x1b[Z");
+	controller.render(150, 50);
+	controller.handleInput("j");
+	controller.handleInput("o");
+	controller.handleInput("\r");
+	let text = stripForTest(controller.render(150, 50).join("\n"));
+	expect(text).toContain("window week");
+	expect(text).toContain("Account key key-week");
+	expect(text).toContain("headroom 60.0% · resets 1");
+	expect(text).toContain("shared@example #2: 40.0%");
+	controller.handleInput("\x1b[Z");
+	text = stripForTest(controller.render(150, 50).join("\n"));
+	expect(text).toContain("fleet 2 accounts");
+	expect(text).toContain("Accounts needed 3 at <90% · have 2 · short 1");
+	controller.dispose();
+});
+
+test("gain keeps long project selections in a bounded viewport and exposes selected-day and source details", async () => {
+	const projects = Array.from({ length: 30 }, (_, i) => `/project-${i}`);
+	const controller = createGainFeature(context(async <T>(_path: string, params?: Record<string, string>) => gain(params?.project ?? null, 25, projects) as T));
+	await controller.load("7d");
+	for (let i = 0; i < 26; i++) controller.handleInput("p");
+	await Promise.resolve(); await Promise.resolve();
+	let text = stripForTest(controller.render(130, 24).join("\n"));
+	expect(text).toContain("▶ /project-25");
+	expect(text).not.toContain("▶ All projects");
+	expect(text).toContain("Saved tokens 25");
+	expect(text).not.toContain("\n  /project-0\n");
+	controller.handleInput("\t");
+	controller.handleInput("h");
+	text = stripForTest(controller.render(130, 50).join("\n"));
+	expect(text).toContain("Day 2026-10-04 · saved 0 · cumulative 0");
+	controller.handleInput("l");
+	controller.handleInput("\r");
+	text = stripForTest(controller.render(130, 50).join("\n"));
+	expect(text).toContain("Source snapcompact · saved 25 tokens");
+	expect(text).toContain("original size unknown");
+	expect(text).toContain("original 0 B · output 0 B");
+	controller.handleInput("\x1b");
+	expect(stripForTest(controller.render(130, 50).join("\n"))).not.toContain("Source snapcompact · saved 25 tokens");
+	controller.dispose();
+});
+
+test("peak local hours filters all metrics, retains provider across views, and leaves zero hours empty", async () => {
+	const providers = ["a", "b"].map(provider => ({ ...local.providers[0], provider }));
+	const hourly = [
+		{ provider: "a", hour: 23, totalTokens: 50, outputTokens: 20, requests: 2 },
+		{ provider: "b", hour: 12, totalTokens: 100, outputTokens: 70, requests: 3 },
+	];
+	let empty = false;
+	const controller = createProvidersFeature(context(async <T>(path: string) => (
+		path.endsWith("/providers") ? { ...local, providers, hourly: empty ? [] : hourly } : { windowInsights: [], usageSeries: [] }
+	) as T));
+	await controller.load("24h");
+	controller.handleInput("v"); controller.handleInput("v");
+	expect(stripForTest(controller.render(140, 50).join("\n"))).toContain("Provider All providers · peak 12:00");
+	controller.handleInput("p"); controller.handleInput("h");
+	let text = stripForTest(controller.render(140, 50).join("\n"));
+	expect(text).toContain("Provider a · peak 23:00");
+	expect(text).toContain("Hour 23:00 local · 50 tokens · 20 output · 2 requests");
+	controller.handleInput("v"); controller.handleInput("\x1b[Z");
+	expect(stripForTest(controller.render(140, 50).join("\n"))).toContain("Provider a · peak 23:00");
+	empty = true; await controller.load("24h");
+	text = stripForTest(controller.render(140, 50).join("\n"));
+	expect(text).toContain("No activity in this range");
+	expect(text).not.toContain("█");
+	controller.dispose();
+});
+
+test("hidden account utilization omits numeric tooltip but preserves exhausted snapshots without fractions", async () => {
+	const missing = account("a", "one");
+	missing.points = [{ timestamp: now, usedFraction: null, exhausted: true }];
+	const windows = [insight("a", "day")];
+	const controller = createProvidersFeature(context(async <T>(path: string, params?: Record<string, string>) => (
+		path.endsWith("/providers") ? local : { windowInsights: windows, usageSeries: params?.provider ? [missing] : [] }
+	) as T));
+	await controller.load("24h");
+	await Promise.resolve(); await Promise.resolve();
+	controller.handleInput("\x1b[Z");
+	let text = stripForTest(controller.render(150, 50).join("\n"));
+	expect(text).toContain("Latest No numeric reading");
+	expect(text).toContain("shared@example: No reading (gap)");
+	expect(text).toContain("EXHAUSTED: shared@example");
+	controller.handleInput(" ");
+	text = stripForTest(controller.render(150, 50).join("\n"));
+	expect(text).toContain("[hidden] shared@example");
+	expect(text).not.toContain("shared@example: No reading (gap)");
+	expect(text).toContain("EXHAUSTED: shared@example");
+	controller.dispose();
+});
