@@ -1,0 +1,119 @@
+# CI for omp-stats-tui.
+#
+# Every step below is a command a contributor already runs locally, in the order
+# AGENTS.md documents them: install -> build -> `omp models -e`. If a step here
+# is not something you would type by hand, it does not belong here.
+#
+# ---------------------------------------------------------------------------
+# Caching: deliberately NONE beyond what oven-sh/setup-bun already does.
+# Read this before "optimising" it.
+#
+# This repo patches a dependency at install time:
+#   package.json -> patchedDependencies -> patches/@oh-my-pi%2Fomp-stats@18.6.1.patch
+#
+# That patch is what makes an absent price card read as unknown spend instead of
+# free usage. So the contents of node_modules/@oh-my-pi/omp-stats are NOT a pure
+# function of bun.lock -- they are a function of bun.lock AND the patch file.
+# A `node_modules` cache keyed only on bun.lock can therefore restore an
+# UNPATCHED tree and report green on money-honesty behaviour that is not
+# actually present. That is the exact silent-green failure this CI exists to
+# prevent, so the default is to not create the hazard in the first place.
+#
+# `bun run verify:patch` immediately after install is the backstop for that, and
+# it is cheap. But the cheaper fix is to not cache node_modules at all.
+#
+# If you ever do add `actions/cache` for node_modules, the key MUST contain BOTH
+# inputs:
+#
+#   key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}-${{ hashFiles('patches/*.patch') }}
+#
+# Omitting the patch hash is a silent-green bug, not a cache miss. It is not
+# worth the risk on the numbers either: node_modules is 933 MB and a cold
+# `bun install --frozen-lockfile` is ~3.4s. setup-bun already caches the Bun
+# executable download itself (its `no-cache` input, default false), which is the
+# only download here worth caching.
+# ---------------------------------------------------------------------------
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded PR run is cancelled so a stale red never outlives its own push.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: install, patch, test, typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned explicitly. setup-bun otherwise falls back to `package.json`
+      # `packageManager`/`engines.bun` and then to `latest`; this repo pins the
+      # toolchain in neither, so an explicit version is the only pin.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Assert the dependency patch is applied
+        run: bun run verify:patch
+
+      - name: Test
+        run: bun test
+
+      # NOTE: typescript is not a declared devDependency, so `bunx` resolves and
+      # downloads it unpinned on every run. That is a real reproducibility gap
+      # (it tracks whatever tsc is latest that day), but pinning it means adding
+      # it to devDependencies and re-locking, which is a deliberate change to
+      # bun.lock rather than something CI should quietly do.
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+  extension-load:
+    name: extension loads in the pinned omp host
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      - name: Assert the dependency patch is applied
+        run: bun run verify:patch
+
+      - name: Build
+        run: bun run build
+
+      # Version read from package.json rather than repeated here, so bumping the
+      # host dependency cannot leave CI verifying a build against a stale omp.
+      # setup-bun puts ~/.bun/bin on PATH, which is where `bun add -g` lands omp.
+      - name: Install the pinned omp host
+        run: bun add -g "@oh-my-pi/pi-coding-agent@$(bun -p 'require("./package.json").dependencies["@oh-my-pi/pi-coding-agent"]')"
+
+      # The credential-free, non-interactive load check from AGENTS.md.
+      # `-e` must come AFTER the subcommand: `omp -e <path> models` silently
+      # ignores the extension. The exit code is 0 even when the extension fails
+      # to load, so the assertion is on stderr, per AGENTS.md: "read stderr, do
+      # not check $?". A missing omp binary still fails the step via $?.
+      - name: Load dist/index.js in omp
+        run: |
+          err=$(mktemp)
+          omp models -e "$PWD/dist/index.js" >/dev/null 2>"$err"
+          cat "$err"
+          if grep -q 'Failed to load extension' "$err"; then
+            echo "::error::omp failed to load dist/index.js (stderr above)"
+            exit 1
+          fi
+          echo "omp loaded dist/index.js with no load errors"
