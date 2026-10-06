@@ -845,7 +845,11 @@ export class StatsPanel implements Component {
 		if (!editing && (data === "[" || data === "]")) {
 			this.#selectScreen(this.#indexOf(state.screenId) + (data === "[" ? -1 : 1)); return;
 		}
-		if (!armed && feature?.handleInput(data)) return;
+		if (!armed && feature?.handleInput(data)) {
+			if (editing || feature.inputMode === "text" || matchesKey(data, "tab") || matchesKey(data, "shift+tab") ||
+				matchesKey(data, "enter") || matchesKey(data, "escape")) state.scroll = 0;
+			return;
+		}
 		action ??= panelAction(data, armed);
 		if (action === null) return;
 		state.jumpArmedAt = 0;

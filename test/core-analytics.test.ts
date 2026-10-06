@@ -146,7 +146,7 @@ test("analytics reserves global keys even during search and remembers sorting an
 	feature.handleInput("/");
 	for (const key of ["\x0e", "\x10", "\x1b[C", "\x1b[D"]) expect(feature.handleInput(key)).toBe(false);
 	for (const key of ["q", "[", "]"]) expect(feature.handleInput(key)).toBe(true);
-	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("q[]");
+	expect(feature.render(180, 24).slice(0, 24).map(stripForTest).join("\n")).toContain("q[]");
 	for (let i = 0; i < 3; i++) feature.handleInput("\x7f");
 	feature.handleInput("alpha");
 	feature.handleInput("\r");

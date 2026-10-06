@@ -194,6 +194,8 @@ class AnalyticsFeature implements FeatureController {
 				return wrap(lines, width);
 			}
 		}
+		// Focused controls precede charts so selection/search stays visible in short terminals.
+		if (this.focus > 0) lines.push(...this.renderTable(this.focus - 1, width, height, filter));
 		const mode = this.mode();
 		if (mode) {
 			lines.push(mode.label);
@@ -216,12 +218,16 @@ class AnalyticsFeature implements FeatureController {
 			}
 		}
 		for (let i = 0; i < this.tables.length; i++) {
-			const t = this.tables[i];
-			lines.push(`${this.focus === i + 1 ? "> " : ""}${t.title}${this.id === "tools" && i === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : ""}`);
-			lines.push(...t.state.render(this.rows(i), width, Math.max(12, Math.floor(height / this.tables.length)), r => `${r.label} · ${Object.entries(r.display).filter(([key]) => !["model", "provider", "tool", "key"].includes(key)).map(([key, value]) => `${key}: ${value}`).join(" · ")}`, this.ctx));
+			if (i !== this.focus - 1) lines.push(...this.renderTable(i, width, height, filter));
 		}
 		lines.push(`Tab focus · m mode · n/v legend · ,/. point · Enter ${this.id === "tools" ? "select tool/details" : "details"}${this.id === "tools" ? " · f cycle tool filter · x reset" : ""} · b/Esc back/clear · q close`);
 		return wrap(lines, width);
+	}
+
+	private renderTable(index: number, width: number, height: number, filter: string | null): string[] {
+		const table = this.tables[index];
+		return [`${this.focus === index + 1 ? "> " : ""}${table.title}${this.id === "tools" && index === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : ""}`,
+			...table.state.render(this.rows(index), width, Math.max(12, Math.floor(height / this.tables.length)), row => `${row.label} · ${Object.entries(row.display).filter(([key]) => !["model", "provider", "tool", "key"].includes(key)).map(([key, value]) => `${key}: ${value}`).join(" · ")}`, this.ctx)];
 	}
 
 	private renderPerformance(key: string, width: number): string[] {

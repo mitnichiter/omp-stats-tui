@@ -19,6 +19,7 @@ export class StatsReadClient {
 	#sequence = 0;
 	#closed = false;
 	#stderr = "";
+	#writeError: unknown;
 	readonly #spawn: () => StatsWorkerProcess;
 	#live: LiveStatus | undefined;
 	#serviceError: Error | undefined;
@@ -57,24 +58,30 @@ export class StatsReadClient {
 				const child = this.#spawn();
 				this.#child = child;
 				this.#stderr = "";
+				this.#writeError = undefined;
 				void this.#watch(child);
 			}
 			const id = ++this.#sequence;
 			const result = Promise.withResolvers<unknown>();
 			this.#pending.set(id, { resolve: result.resolve, reject: result.reject, stage });
-			try {
-				const request: DataWorkerRequest = { ...input, id };
-				const stdin = this.#child.stdin;
-				if (typeof stdin === "number" || !stdin) throw new Error("Stats read worker stdin unavailable");
-				stdin.write(JSON.stringify(request) + "\n");
-				stdin.flush();
-			} catch (error) {
-				this.#pending.delete(id);
-				result.reject(error);
-			}
+			void this.#write(this.#child, { ...input, id });
 			return result.promise;
 		} catch (error) {
 			return Promise.reject(error);
+		}
+	}
+
+	async #write(child: StatsWorkerProcess, request: DataWorkerRequest): Promise<void> {
+		try {
+			const stdin = child.stdin;
+			if (typeof stdin === "number" || !stdin) throw new Error("Stats read worker stdin unavailable");
+			stdin.write(JSON.stringify(request) + "\n");
+			await stdin.flush();
+		} catch (error) {
+			if (this.#child !== child) return;
+			// Reap and drain stderr before rejecting requests, including startup EPIPE races.
+			this.#writeError = error;
+			child.kill("SIGKILL");
 		}
 	}
 
@@ -120,6 +127,7 @@ export class StatsReadClient {
 		const failure = results.find(result => result.status === "rejected");
 		const exit = results[2];
 		const diagnostic = failure?.status === "rejected" ? String(failure.reason)
+			: this.#writeError !== undefined ? String(this.#writeError)
 			: `Stats read worker exited (code ${exit.status === "fulfilled" ? exit.value : "unknown"})`;
 		const error = new Error(diagnostic + (this.#stderr ? `\n${this.#stderr}` : ""));
 		for (const pending of this.#pending.values()) pending.reject(error);
