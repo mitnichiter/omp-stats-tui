@@ -4,7 +4,8 @@ import type { SessionSummary, SessionTrace, TraceToolStat } from "@oh-my-pi/omp-
 import type { Range } from "../../data/ranges";
 import type { FeatureContext, FeatureController } from "./types";
 import { ancestors, buildScale, clampViewport, fit, localWindow, overviewViewport, remapViewport, resizeOverview, revealSpan, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport, type AxisMode, type TraceRow, type TraceScale, type Viewport } from "./traces/model";
-import { bounded, clean, COLORS, renderEntry, renderTimeline, rowLabel } from "./traces/render";
+import { bounded, clean, renderEntry, renderTimeline, rowLabel } from "./traces/render";
+import { SPAN_COLORS } from "../palette";
 
 type Focus = "timeline" | "transcript" | "tools" | "children" | "minimap";
 type SessionSort = "started" | "title" | "duration" | "requests" | "tools" | "agents" | "tokens" | "cost";
@@ -314,7 +315,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 				const index = all.findIndex(row => row.key === state?.selected);
 				const window = localWindow(all, Math.max(0, index), capacity);
 				lines.push(`Linked transcript + markers · ${all.length} events · ↑/↓ select · Enter inspect · o child`);
-				for (const row of window.rows) lines.push(ctx.theme.fg(row.span?.isError ? "error" : row.span ? COLORS[row.span.kind] : "muted", clean(`${row.key === state.selected ? "▶" : " "} ${rowLabel(row, trace.startedAt)}${row.span?.detail ? ` · ${row.span.detail}` : ""}`)));
+				for (const row of window.rows) lines.push(ctx.theme.fg(row.span?.isError ? "error" : row.span ? SPAN_COLORS[row.span.kind] : "muted", clean(`${row.key === state.selected ? "▶" : " "} ${rowLabel(row, trace.startedAt)}${row.span?.detail ? ` · ${row.span.detail}` : ""}`)));
 				if (!all.length) lines.push("No matching transcript events.");
 			} else if (state.focus === "tools") {
 				const tools = sortedTools();

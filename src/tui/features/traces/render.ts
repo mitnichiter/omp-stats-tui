@@ -4,9 +4,7 @@ import { formatDurationMs, formatInteger, formatEstimatedCost } from "@oh-my-pi/
 import type { SessionTrace, TraceSpanKind, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
 import { ancestors, buildLanes, KINDS, localWindow, MARKS, spanCells, visibleTracks, type Lane, type TraceRow, type TraceScale, type Viewport } from "./model";
 
-export const COLORS: Record<TraceSpanKind, ThemeColor> = {
-	turn: "success", model: "accent", tool: "warning", subagent: "toolTitle", background: "muted",
-};
+import { SPAN_COLORS } from "../../palette";
 export function clean(value: unknown): string {
 	return stripTerminalSequences(String(value ?? "")).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 }
@@ -50,7 +48,7 @@ export function renderTimeline(options: {
 			const cells = spanCells(scale, full, span, plotWidth);
 			if (cells) for (let x = cells[0]; x < cells[1]; x++) { density[x]++; errors[x] ||= !!span.isError; }
 		}
-		lines.push(`${`Overview ${kind}`.padEnd(labelWidth)} ${density.map((count, x) => count ? theme.fg(errors[x] ? "error" : COLORS[kind], count > 1 ? "▓" : MARKS[kind]) : "·").join("")}`);
+		lines.push(`${`Overview ${kind}`.padEnd(labelWidth)} ${density.map((count, x) => count ? theme.fg(errors[x] ? "error" : SPAN_COLORS[kind], count > 1 ? "▓" : MARKS[kind]) : "·").join("")}`);
 	}
 	lines.push(`Window +${formatDurationMs(scale.toT(viewport.u0) - trace.startedAt)} → +${formatDurationMs(scale.toT(viewport.u1) - trace.startedAt)} · ${(domainSize / (viewport.u1 - viewport.u0)).toFixed(1)}×`);
 	const ruler = Array<string>(plotWidth).fill("─");
@@ -102,7 +100,7 @@ export function renderTimeline(options: {
 				let glyph = label[x - start - 1] ?? MARKS[span.kind];
 				if (x === start && span.id === selected) glyph = "▶";
 				else if (x === start && match) glyph = "*";
-				const ink = theme.fg(span.isError ? "error" : COLORS[span.kind], glyph);
+				const ink = theme.fg(span.isError ? "error" : SPAN_COLORS[span.kind], glyph);
 				cells[x] = span.id === selected ? theme.bold(ink) : ink;
 			}
 		}

@@ -432,6 +432,80 @@ export const SELECTION_BG_TOKENS = {
 	band: "--selected · `styles.css:547`",
 } as const satisfies Record<SelectionBgRole, string>;
 
+// ---------------------------------------------------------------------------
+// THE TRACE SPAN LADDER
+
+/**
+ * Span kind → theme token, for the traces timeline.
+ *
+ * Traces legitimately needs a per-kind colour: the whole point of a flamegraph
+ * is that you can find "the tool spans" without reading a label. What it must
+ * NOT do is keep that mapping in a private table beside its only renderer —
+ * `test/theme-fidelity.test.ts` is right that a `Record<K, ThemeColor>` outside
+ * this file has no citation and cannot be re-derived when a role moves. (A
+ * lookup through a local table also carries no literal at the call site, so no
+ * use-site scan can see it; that is why it needed its own check.)
+ *
+ * THE ORDER AND EVERY VALUE BELOW ARE THE WEB'S, NOT OURS. `CATEGORY_VARS` in
+ * `@oh-my-pi/omp-stats/src/client/traces/trace-colors.ts:37-43` is the file the
+ * dashboard's own flamegraph canvas reads its five category fills from, and
+ * each entry here is the terminal's nearest ink for that CSS custom property.
+ * The web has no traces parity document — `docs/research/omp-stats-tui/REPORT.md`
+ * records traces as "excluded, a cursor-anchored app, not a dashboard" — so the
+ * upstream source is the only provenance there is, and citing it beats citing
+ * nothing.
+ */
+export type SpanKindRole = "turn" | "model" | "tool" | "subagent" | "background";
+
+export const SPAN_COLORS = {
+	/**
+	 * `muted` (`--ink-2`) — a conversation turn. `CATEGORY_VARS.turn` is
+	 * `--ink-2` (trace-colors.ts:38), and `muted` is our ink-2 rung
+	 * (styles.css:28). NOT `success`: a turn is not a success state, and
+	 * painting every turn green made an ordinary run look like a passing
+	 * metric.
+	 */
+	turn: "muted",
+	/**
+	 * `accent` (`--chart-primary`) — a model call. `CATEGORY_VARS.model` is
+	 * `--chart-primary` (trace-colors.ts:39), the web's default single-series
+	 * chart colour (styles.css:55), and `accent` is the panel's one primary.
+	 */
+	model: "accent",
+	/**
+	 * `warning` (`--warn`) — a tool call. `CATEGORY_VARS.tool` is `--warn`
+	 * (trace-colors.ts:40) and `caution` already rides `warning` (styles.css:45),
+	 * so this is the one entry that is token-for-token the web's.
+	 */
+	tool: "warning",
+	/**
+	 * `mdLink` (`--chart-secondary`) — a subagent. `CATEGORY_VARS.subagent` is
+	 * `--chart-secondary` (trace-colors.ts:41), the web's cost series
+	 * (styles.css:56). The nearest terminal ink for that pink is `mdLink`.
+	 */
+	subagent: "mdLink",
+	/**
+	 * `borderMuted` (`--ink-4`) — background work. `CATEGORY_VARS.background` is
+	 * `--ink-4` (trace-colors.ts:42), and `borderMuted` is the token behind our
+	 * `faint` role (styles.css:30). It is that rung and not `muted` so idle
+	 * background work recedes behind real spans instead of competing with turns.
+	 */
+	background: "borderMuted",
+} as const satisfies Record<SpanKindRole, ThemeColor>;
+
+/**
+ * What each span kind matches on the web. Same machine-checked contract as
+ * {@link PALETTE_TOKENS} — the upstream `CATEGORY_VARS` line, not a rule we
+ * invented.
+ */
+export const SPAN_TOKENS = {
+	turn: "--ink-2 · `trace-colors.ts:38`",
+	model: "--chart-primary · `trace-colors.ts:39`",
+	tool: "--warn · `trace-colors.ts:40`",
+	subagent: "--chart-secondary · `trace-colors.ts:41`",
+	background: "--ink-4 · `trace-colors.ts:42`",
+} as const satisfies Record<SpanKindRole, string>;
+
 /**
  * Categorical series colours, in preference order.
  *

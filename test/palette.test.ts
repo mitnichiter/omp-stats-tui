@@ -11,6 +11,8 @@ import {
 	SERIES_COLORS,
 	SELECTION_BG,
 	SELECTION_BG_TOKENS,
+	SPAN_COLORS,
+	SPAN_TOKENS,
 	SIDEBAR_INK,
 	TAB_INK,
 	TAB_TOKENS,
@@ -20,7 +22,9 @@ import {
 	type SidebarInkRole,
 	type TabInkRole,
 	type SelectionBgRole,
+	type SpanKindRole,
 } from "../src/tui/palette";
+import { KINDS } from "../src/tui/features/traces/model";
 
 /**
  * From here down the tests run against the REAL default theme, not `fakeTheme`.
@@ -322,6 +326,36 @@ test("no PALETTE role is a background token, so the two axes cannot be confused"
 	for (const role of Object.keys(PALETTE) as PaletteRole[]) {
 		expect(isValidThemeBg(PALETTE[role]), `PALETTE.${role} is a background token`).toBe(false);
 	}
+});
+
+test("every span kind cites the upstream CATEGORY_VARS entry it now matches", () => {
+	// The trace span ladder has the same contract as the ink ladders. It exists
+	// because traces legitimately needs per-kind colour, but a `Record<K,
+	// ThemeColor>` kept private beside its renderer has no provenance and cannot
+	// be re-derived when a role moves.
+	const roles = Object.keys(SPAN_COLORS) as SpanKindRole[];
+	expect(roles.length).toBeGreaterThan(0);
+	// Every kind the trace model can produce must have a colour, or a span kind
+	// added upstream renders as uncoloured — which throws nothing and is
+	// invisible to every behavioural test.
+	expect([...roles].sort()).toEqual([...KINDS].sort());
+	for (const role of roles) {
+		expect(SPAN_TOKENS[role], `SPAN_TOKENS has no entry for SPAN_COLORS.${role}`).toBeDefined();
+		expect(SPAN_TOKENS[role], `SPAN_COLORS.${role} citation`).toMatch(CITATION_SHAPE);
+		expect(isValidThemeColor(SPAN_COLORS[role]), `SPAN_COLORS.${role}`).toBe(true);
+	}
+});
+
+test("the span ladder is the web's CATEGORY_VARS, not a private ordering", () => {
+	// `CATEGORY_VARS` in the dashboard's own `trace-colors.ts:37-43` is the file
+	// its flamegraph canvas reads five category fills from. Three entries are
+	// pinned because they are the ones most likely to drift back toward a
+	// private preference: `turn` must be ink-2 and NOT a success green,
+	// `background` must be the faintest rung and NOT `muted`, and `tool` must be
+	// the one entry that is token-for-token the web's `--warn`.
+	expect(SPAN_COLORS.turn).toBe("muted");
+	expect(SPAN_COLORS.background).toBe("borderMuted");
+	expect(SPAN_COLORS.tool).toBe("warning");
 });
 
 // ─── DEFECT 3: THE PALETTE AUDIT ──────────────────────────────────────────────
