@@ -1,5 +1,9 @@
 # Hardcode plain Unicode for data ink; route only chrome through the symbol preset
 
+Status: width-one terminal-owned chart glyphs and explicit presets **retained**; the original Unicode-only ASCII mismatch below is **superseded** by the preset-aware glyph primitives. Unicode/Nerd/ASCII is a setting, not font detection. Sparkline/bar/calendar/timeline ink uses active omp theme colours per character/series; graph/legend identity is shared and aliased roles retain labels/glyph distinctions. The panel updates mutable injected `FeatureContext.theme` each render; pure primitives receive theme/paint arguments. No browser hex palette or independently coloured braille dots. Full light/custom/256-colour acceptance of the current controller cutover remains pending.
+
+## Historical rationale
+
 Chart ink — bar fills, ramp steps, heatmap cells — is written as plain Unicode block and shade characters,
 the way the host's own usage dashboard hardcodes its miniature bars. Chrome (box drawing, icons, progress
 bars) goes through the theme's symbol preset as usual. The reason is not convenience: `theme.symbol()` only

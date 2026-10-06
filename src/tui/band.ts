@@ -1,5 +1,5 @@
 /**
- * The band grammar — the single place a screen body is composed.
+ * Shared band drawing primitives for the pure IR and production metric/table widgets.
  *
  * THE PROBLEM THIS FIXES. The panel read as a stack of text blocks with a
  * `───` rule above every section, which is what a terminal looks like when each
@@ -54,7 +54,7 @@
  */
 
 import type { ThemeColor } from "@oh-my-pi/pi-tui";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { formatPercent } from "./format";
 import { glyph, type GlyphSet, type SymbolPreset } from "./glyphs";
 import { statsIcon, type IconRole } from "./icons";
@@ -111,7 +111,7 @@ export interface LegendItem {
 export type Band =
 	| { kind: "statRow"; stats: readonly StatTile[] }
 	| { kind: "chart"; title: string; chart: ChartSpec; source?: string; preset?: SymbolPreset }
-	| { kind: "table"; title: string; columns: readonly Column[]; rows: RowSource; source?: string }
+	| { kind: "table"; title: string; columns: readonly Column[]; rows: RowSource; source?: string; selectedRow?: number }
 	| { kind: "legend"; items: readonly LegendItem[]; source?: string }
 	| { kind: "note"; text: string }
 	| {
@@ -174,8 +174,6 @@ export interface BandRenderOptions {
 	 */
 	seriesColorFor?: (index: number) => ThemeColor;
 	barHeight: number;
-	/** Max data rows in a table before rows are dropped and counted. */
-	tableLimit: number;
 	labelWidth: number;
 	valueWidth: number;
 	/**
@@ -185,6 +183,10 @@ export interface BandRenderOptions {
 	 * dependency direction the whole refactor exists to remove.
 	 */
 	sparkline?: (values: readonly number[], width: number) => string;
+	/** Optional host-themed selection background; the table also retains a text marker. */
+	selected?: (text: string) => string;
+	/** Production tables bound identity text so measured numeric columns remain useful. */
+	identityWidth?: number;
 }
 
 /**
@@ -417,7 +419,7 @@ function renderChart(band: Extract<Band, { kind: "chart" }>, ctx: BandRenderOpti
 function columnWidths(
 	columns: readonly Column[],
 	rows: readonly Readonly<Record<string, string>>[],
-): readonly number[] {
+): number[] {
 	return columns.map(column => {
 		let widest = visibleWidth(column.header);
 		for (const row of rows) {
@@ -450,7 +452,7 @@ function fitColumns(
 	columns: readonly Column[],
 	widths: readonly number[],
 	available: number,
-): readonly number[] {
+): readonly { column: Column; width: number }[] {
 	// One cell between columns: the web's cell padding is 12px either side of a
 	// 13px font, which is about one terminal cell at this density.
 	const gutter = 1;
@@ -471,29 +473,31 @@ function fitColumns(
 
 	// Step 3, and only when even the identity column alone overflows.
 	const surplus = cost(kept) - available;
-	return kept.map((index, position) =>
-		position === 0 && surplus > 0 ? Math.max(1, (widths[index] ?? 1) - surplus) : (widths[index] ?? 1),
-	);
+	return kept.map((index, position) => ({
+		column: columns[index]!,
+		width: position === 0 && surplus > 0 ? Math.max(1, (widths[index] ?? 1) - surplus) : (widths[index] ?? 1),
+	}));
 }
 
-/** `table` — heading, header row, data rows, count note when rows were dropped. */
+/** `table` — heading, header row, and every fetched data row for panel scrolling. */
 function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOptions): readonly string[] {
 	const all = band.rows.kind === "inline" ? band.rows.rows : band.rows.series;
 	if (band.columns.length === 0 || all.length === 0) return [];
 
-	const shown = all.slice(0, ctx.tableLimit);
 	// Steps 1 and 2 of the policy above. `width` is a hard ceiling the caller may
 	// set below `innerWidth` (a two-column panel), so the table honours both.
 	const available = Math.max(1, Math.min(ctx.width, ctx.innerWidth));
-	const widths = fitColumns(band.columns, columnWidths(band.columns, shown), available);
-	const kept = widths.map((_, index) => band.columns[index]!);
+	const measured = columnWidths(band.columns, all);
+	if (ctx.identityWidth !== undefined) measured[0] = Math.min(measured[0] ?? 0, ctx.identityWidth);
+	if (band.selectedRow !== undefined) measured[0] = (measured[0] ?? 0) + 2;
+	const kept = fitColumns(band.columns, measured, available);
 
 	// `style` is applied to the TEXT only, never to the padding — padding inside
 	// a colour span would tint the whole column gutter.
 	const line = (cells: readonly string[], style: (t: string) => string): string =>
 		cells
 			.map((cell, index) => {
-				const width = widths[index] ?? 0;
+				const width = kept[index]?.width ?? 0;
 				// Step 3 of the policy, applied to the TEXT as well as the width:
 				// `padEndTo`/`padStartTo` can only ADD space, never remove it, so a
 				// cell wider than its column used to overflow the panel and eat the
@@ -505,12 +509,12 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
 				// A left-aligned column pads on the right so the next column starts
 				// at a fixed x; a right-aligned one pads on the left so its DIGITS
 				// line up down the table.
-				return kept[index]?.align === "left" ? padEndTo(text, width) : padStartTo(text, width);
+				return kept[index]?.column.align === "left" ? padEndTo(text, width) : padStartTo(text, width);
 			})
 			.join(" ");
 
 	const header = line(
-		kept.map((c) => c.header),
+		kept.map((c, index) => (index === 0 && band.selectedRow !== undefined ? "  " : "") + c.column.header),
 		// Host parity: `/settings` value column and `/usage` reset/suffix text
 		// are the quietest ink (tui-adapters.ts:339-340, usage-dashboard.ts:703).
 		// A muted header competes with the figures; a dim header scaffolds.
@@ -520,23 +524,20 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
 	// the rule is "not dimmed", and naming the token keeps the table inside the
 	// user's theme instead of inheriting whatever the terminal happens to
 	// default to.
-	const body = shown.map((r) =>
-		line(
-			kept.map((c) => String(r[c.key] ?? "")),
-			(t) => ctx.fg(PALETTE.label, t),
-		).trimEnd(),
-	);
-
-	const note =
-		shown.length < all.length
-			? [clamp(ctx.fg(PALETTE.dim, `${shown.length} of ${all.length}`), ctx.width)]
-			: [];
+	const cursor = band.selectedRow === undefined ? "" : glyph(ctx.preset, "rowCursor");
+	const body = all.map((r, rowIndex) => {
+		const selected = rowIndex === band.selectedRow;
+		const rendered = line(
+			kept.map((c, index) => (index === 0 && band.selectedRow !== undefined ? `${selected ? cursor : " "} ` : "") + String(r[c.column.key] ?? "")),
+			(t) => ctx.fg(selected ? PALETTE.primary : PALETTE.label, t),
+		).trimEnd();
+		return selected && ctx.selected ? ctx.selected(rendered) : rendered;
+	});
 
 	return [
-		heading(BAND_ICONS.table, band.title, band.source ?? "", ctx.preset, ctx),
+		...(band.title ? [heading(BAND_ICONS.table, band.title, band.source ?? "", ctx.preset, ctx)] : []),
 		header,
 		...body,
-		...note,
 	];
 }
 

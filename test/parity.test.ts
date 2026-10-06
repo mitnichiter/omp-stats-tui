@@ -290,10 +290,6 @@ function sameNumber(actual: number, expected: number, what: string): void {
 	void what;
 }
 
-/** `null` where the web shows a dash, so an absent figure never reads as a zero. */
-function nullable(value: number | null): number | null {
-	return value === 0 ? null : value;
-}
 
 // ─── Costs ───────────────────────────────────────────────────────────────────
 
@@ -446,10 +442,13 @@ test("requests: an aborted request is a request — it still carries tokens", ()
 test("costs: the unpriced hint on the estimate is the count, not a share", () => {
 	// `SharedDenominator` exists for legends; a stat tile's hint is the raw count.
 	// Pinning it because the two are easy to swap and only one is a request count.
-	expect(WEB_COSTS.unpricedRequests).toBe(WEB_COSTS.unpricedRequests);
+	// The assertion carrying weight is OUR resolver against the web's own
+	// `buildCostSummary`, on the same fixture. The line above it used to read
+	// `expect(WEB_COSTS.unpricedRequests).toBe(WEB_COSTS.unpricedRequests)` — a
+	// tautology that passed whatever the code did and read as coverage.
 	expect(number("costs", "Unpriced requests")).toBe(WEB_COSTS.unpricedRequests);
-	void nullable;
 });
+
 // ─── Series density: a sparkline's x-axis is buckets, not array indices ───────
 
 /**

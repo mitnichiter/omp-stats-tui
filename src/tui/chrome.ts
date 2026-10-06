@@ -37,14 +37,14 @@
 
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { RANGES, type Range } from "../data/ranges";
 import { isDrawableScreen, specForScreen, type ScreenSpec } from "../layout/spec";
 import { describeSyncProgress, type SyncEvent } from "../sync/client";
 import { formatInteger } from "./format";
 import type { SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
-import { SIDEBAR_INK } from "./palette";
+import { SELECTION_BG, SIDEBAR_INK } from "./palette";
 import { HORIZONTAL_INSET } from "./layout";
 import { framePolicy } from "./responsive";
 import { TAB_ICON, TAB_SHORT, tabBarTheme } from "./tabs";
@@ -129,6 +129,8 @@ const HOTKEYS: Record<string, string> = {
 	projects: "j",
 	providers: "v",
 	gain: "n",
+	traces: "t",
+	frustration: "f",
 };
 
 /**
@@ -141,8 +143,8 @@ const HOTKEYS: Record<string, string> = {
  */
 const GROUPS: Record<string, readonly string[]> = {
 	Usage: ["overview", "models", "costs", "providers"],
-	Activity: ["activity", "requests", "errors"],
-	Insights: ["tools", "projects", "gain"],
+	Activity: ["activity", "requests", "errors", "traces"],
+	Insights: ["tools", "projects", "gain", "frustration"],
 };
 
 /**
@@ -200,6 +202,7 @@ export function ago(now: number, lastSyncedAt: number | null): string {
 /** Everything the live chip reads. The panel derives this from its sync state; see panel.ts render. */
 export interface ChromeSync {
 	syncing: boolean;
+	live?: boolean;
 	current: number;
 	total: number;
 	/** True only for ingest progress with a known total — scan/rollup are indeterminate by phase. */
@@ -230,6 +233,7 @@ export function chipFor(theme: Theme, sync: ChromeSync): string {
 		}
 		return `${mark} Syncing`;
 	}
+	if (sync.live === false) return theme.fg("dim", "Cached");
 	if (sync.dirtyHours > INDEXING_VISIBLE_HOURS) {
 		const mark = theme.fg("accent", theme.symbol("status.running"));
 		return `${mark} Indexing ${theme.fg("dim", `${formatInteger(sync.dirtyHours)}h left`)}`;
@@ -359,7 +363,7 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 				// `.nav-row kbd` is a child of the row (styles.css:565-570).
 				lines.push(
 					theme.bg(
-						"selectedBg",
+						SELECTION_BG.band,
 						theme.fg(SIDEBAR_INK.rowActive, `${theme.nav.cursor} `) +
 							theme.fg(SIDEBAR_INK.iconActive, theme.bold(icon)) +
 							" " +
@@ -376,7 +380,7 @@ export function sidebar(theme: Theme, preset: SymbolPreset, activeId: string, ho
 				// above on how the two states are told apart without alpha.
 				lines.push(
 					theme.bg(
-						"selectedBg",
+						SELECTION_BG.band,
 						`  ${theme.fg(SIDEBAR_INK.iconInactive, icon)} ${theme.fg(SIDEBAR_INK.rowHover, label)}${tail}${jump(key)}`,
 					),
 				);
@@ -454,7 +458,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 	const brand =
 		theme.bold(theme.fg("accent", "omp")) + theme.fg("dim", "/") + theme.bold(theme.fg("accent", "stats"));
 	/** The chip as an enclosed object, the port of `.live-chip`'s fill+border. */
-	const chip = opts.chip === "" ? "" : theme.bg("selectedBg", ` ${opts.chip} `);
+	const chip = opts.chip === "" ? "" : theme.bg(SELECTION_BG.band, ` ${opts.chip} `);
 	/** `.segmented`: flush options, one `activeTab` thumb among uniform inactives. */
 	const tray = (ids: readonly Range[]): string =>
 		ids
@@ -466,9 +470,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 	const fullTray = tray(RANGES);
 	const oneTray = tray([opts.range]);
 
-	// The cluster's own gap is the web's `.topbar-actions { gap: 8px }`
-	// (styles.css:460). The brand↔cluster gap is the spacer, and it is BOUNDED —
-	// see the note on the cap below.
+	// The controls form one right-aligned cluster inside the measured viewport.
 	const cluster = (parts: readonly string[]): string => parts.filter(part => part !== "").join(TOPBAR_CLUSTER_GAP);
 	const layouts: readonly (readonly string[])[] =
 		mode === "full"
@@ -482,22 +484,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 		const actions = cluster(layout);
 		const actionsWidth = visibleWidth(actions);
 		if (brandWidth + TOPBAR_SPACER_MIN + actionsWidth > innerWidth) continue;
-		// THE CAP. The web's spacer is `flex: 1` — every cell the viewport has
-		// left — because a browser can justify unbounded slack between two fixed
-		// objects. A terminal cannot: there is no viewport, so the slack that
-		// reads as calm breathing room at 1440px reads as a broken row at 150
-		// columns. So the spacer is capped at the width OF THE CLUSTER IT
-		// SEPARATES. The rule is the cap's own justification — a gap wider than
-		// the thing it divides stops reading as "these are apart" and starts
-		// reading as "something failed to draw" — and it is measured from the
-		// cluster rather than picked, so a cluster that gains or loses a segment
-		// moves its own bound instead of drifting out of scale with it.
-		//
-		// The cap never costs the minimum separation, so the chip cannot weld
-		// itself back onto the wordmark at any width; where the row is too
-		// narrow for the cap to bind, the spacer is simply whatever is left,
-		// which is the web's behaviour in miniature.
-		const gap = Math.min(innerWidth - brandWidth - actionsWidth, actionsWidth);
+		const gap = innerWidth - brandWidth - actionsWidth;
 		return `${brand}${" ".repeat(gap)}${actions}`;
 	}
 	// Below even the narrowest layout, the brand and the active range still have

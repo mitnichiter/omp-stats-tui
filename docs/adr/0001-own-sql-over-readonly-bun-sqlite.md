@@ -1,5 +1,7 @@
 # Read the stats database with our own SQL over a read-only handle, not the omp-stats package
 
+Status: **superseded** by dependency-resolution research and the [dashboard-parity roadmap](../plans/2026-10-05-dashboard-parity.md). Current production reuses the declared stats dependency inside a persistent isolated data/live worker, not an own-SQL/read-only handle. The four upstream corrections this decision forced us to own are recorded as their own decision in [ADR 0008](0008-ship-upstream-corrections-as-a-locked-bun-dependency-patch.md): standard Bun `patchedDependencies` plus `bun.lock` ship pricing-v2 replay, rollup-v3 invalidation, range-before-limit recent requests and provider `outputTokens` in the built bundle. There is no plugin unpriced-count SQL exception. The text below is the historical decision, not the current architecture.
+
 `@oh-my-pi/omp-stats` cannot be imported by name from an extension in omp 18.4.10: the host's resolver
 allowlist covers seven `pi-*` packages and does not include it, so the bare specifier falls out of the
 host shim, misses the upward `node_modules` walk, and lands on Bun's flat install cache, which lacks the

@@ -125,4 +125,3 @@ export function screenById(id: ScreenId): Screen {
 	return screen;
 }
 
-export { PLACEHOLDER_MARKER, scaffold, sampleFooter, sampleBar, excluded } from "./placeholders";

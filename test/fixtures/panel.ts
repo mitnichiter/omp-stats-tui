@@ -17,6 +17,7 @@
  */
 
 import type { PanelData } from "../../src/data/api";
+import type { MessageStats } from "@oh-my-pi/omp-stats/types";
 import type {
 	AgentTypeStats,
 	AggregatedStats,
@@ -232,39 +233,8 @@ export const FOLDERS: readonly FolderStats[] = [
 	},
 ];
 
-/**
- * One request row, in exactly the shape `rowToMessageStats` builds.
- *
- * `MessageStats` is not re-exported from `@oh-my-pi/omp-stats`'s public barrel,
- * so the literal is declared here — which is the point: if the host renames
- * `usage.cacheRead`, the panel's own reads stop type-checking here rather than
- * quietly rendering blanks.
- */
-export interface MessageRow {
-	id: number;
-	sessionFile: string;
-	entryId: string;
-	folder: string;
-	model: string;
-	provider: string;
-	api: string;
-	timestamp: number;
-	duration: number | null;
-	ttft: number | null;
-	stopReason: string;
-	errorMessage: string | null;
-	usage: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-		totalTokens: number;
-		premiumRequests: number;
-		cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
-	};
-	agentType: string;
-	costUnpriced: boolean;
-}
+/** Recorded requests use the actual upstream contract. */
+export type MessageRow = MessageStats & { id: number; costUnpriced: boolean };
 
 /** What a test may override: `usage` and `usage.cost` merge one level deep. */
 export type MessageRowOverride = Partial<Omit<MessageRow, "usage">> & {
@@ -509,14 +479,9 @@ export const DAILY_ACTIVITY: readonly DailyActivityPoint[] = Array.from({ length
 	};
 });
 
-// `PanelData.recent`/`errors` are typed as `RecentRequest`, which upstream
-// declares as `TimeSeriesPoint & Record<string, unknown>` — a shape the recent
-// route does not actually return. The cast is at the SEAM and nowhere else:
-// inside this file the rows are `MessageRow`, exactly what `rowToMessageStats`
-// builds, and every reader goes through the resolver's string-keyed path.
 export function liveData(over: Partial<PanelData> = {}): PanelData {
-	const recent = [...RECENT] as unknown as PanelData["recent"];
-	const errors = [...ERRORS] as unknown as PanelData["errors"];
+	const recent = [...RECENT];
+	const errors = [...ERRORS];
 	return {
 		overview: {
 			overall: AGGREGATE,

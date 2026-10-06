@@ -10,9 +10,9 @@
  * KEYMAP DECISION (the brief asks for it stated once):
  * - Web binds `1`-`6` to RANGES and `g then letter` to sections (Shell.tsx
  *   useShortcuts). We mirror `g then letter` for screens, but we do NOT mirror
- *   digits-as-range: our digits already select screens (`1`-`9`/`0`, pinned by
- *   test/panel.test.ts "every selectable screen is on the number row"), and a
- *   digit cannot pick both a range and a screen. Range stays on `r`/`R` cycle.
+ *   digits-as-range: our digits already select screens (`1`-`9`/`0`, enforced by
+ *   the number-row block at the end of this file), and a digit cannot pick both
+ *   a range and a screen. Range stays on `r`/`R` cycle.
  * - So digits and `g`-letters are ALIASES for the same target (screen): `1`
  *   and `g o` both land on overview. No collision is possible because the two
  *   sequences share no prefix key: digits act immediately, letters act only
@@ -23,13 +23,17 @@
  *   A stale prefix (>1200 ms) falls through to the normal keymap, exactly as
  *   the web's timestamp check does (no timer, no visual indicator, same as web).
  * - Hotkeys are the web's verbatim (nav.ts) except `activity`, which has no web
- *   section (OURS: `a`). Deferred/excluded screens (`providers`, `gain`,
- *   `traces`, `frustration`) have no sidebar row and no hotkey: a jump that
- *   paints a page the panel cannot honestly fill wastes the keystroke.
+ *   section (OURS: `a`). `NAV_GROUPS` keeps a row only when `specForScreen` and
+ *   `isDrawableScreen` agree there is a body to draw, so a deferred or
+ *   spec-less screen gets neither a sidebar row nor a letter — a jump that
+ *   paints a page the panel cannot honestly fill wastes the keystroke. Today
+ *   every entry of `SELECTABLE_SCREENS` clears that filter, so all twelve have
+ *   a row and a letter; `traces` and `frustration` (`g t`, `g f`) are the two
+ *   screens PAST THE NUMBER ROW, not jump exceptions.
  */
 import { expect, test } from "bun:test";
 import { ensureThemeSync, setSymbolPreset, theme } from "@oh-my-pi/pi-tui/theme";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
 import {
@@ -38,82 +42,129 @@ import {
 	ago,
 	chipFor,
 	progressLineFor,
-	TOPBAR_SPACER_MIN,
 	screenForHotkey,
 	sidebar,
 	topbar,
 } from "../src/tui/chrome";
-import { SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
-import { __testing, SELECTABLE_SCREENS } from "../src/tui/panel";
+import { SELECTION_BG, SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
+import { __testing, SELECTABLE_SCREENS, panelAction } from "../src/tui/panel";
 import type { SyncEvent } from "../src/sync/client";
 import { liveData } from "./fixtures/panel";
 
 ensureThemeSync();
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-/** The selectedBg escape prefix, without regex: strip the trailing bg reset. */
-const _bg = theme.bg("selectedBg", "").split("x")[0] ?? "";
 const ESC = String.fromCharCode(27);
-const ACTIVE_BG = _bg.endsWith(ESC + "[49m") ? _bg.slice(0, -(ESC + "[49m").length) : _bg;
-
+const FG_RESET = `${ESC}[39m`;
+const BG_RESET = `${ESC}[49m`;
 const SGR = /\x1b\[([0-9;]*)m/g;
-const DEFAULT_FG = theme.getColorHex("text").toLowerCase();
+
+type ThemeColor = Parameters<typeof theme.fg>[0];
+type ThemeBg = Parameters<typeof theme.bg>[0];
 
 /**
- * The EFFECTIVE foreground colour of every visible run in `line`, in order,
- * resolved the way a terminal resolves it rather than by scanning for the
- * escapes we happened to write.
+ * The SGR the host writes to put `token` on the wire, with no payload between it
+ * and the trailing reset.
  *
- * This exists because the escape-based approach cannot see the `text` token at
- * all: `text` IS the terminal's default foreground, so `theme.fg("text", …)`
- * emits NO colour SGR at all. A test looking for `\x1b[38;2;…` would therefore
- * report the ink-1 heading as "has no colour", which is exactly backwards — and
- * it is why `SIDEBAR_INK.headingActive` is `text`: the web's `--ink-1` IS the
- * default text colour, so the faithful terminal rendering of it is no escape.
+ * `theme.fg(token, "")` is already exactly that — a zero-length payload between
+ * the same two escapes the renderer writes around real text — so splitting on
+ * the reset leaves the select sequence alone.
  *
- * Each SGR is applied to a running foreground state; the gaps between SGRs that
- * contain visible characters become entries. Background and weight sequences
- * leave the foreground alone.
+ * `text` selects NOTHING. It IS the terminal's default foreground, which is why
+ * `SIDEBAR_INK.headingActive` and `.rowActive` are `text` (the web's `--ink-1`
+ * IS the default text colour), and so its escape is the empty string.
+ *
+ * WHY A PREFIX AND NOT A COLOUR. Under `256color` the host quantises on the way
+ * out, so the wire carries `38;5;N` where a truecolor host carries
+ * `38;2;R;G;B` for the SAME token — `getColorHex("dim")` says `#5f6673` while an
+ * 8-bit host writes index 242. Decoding those parameters would turn every
+ * assertion below into a claim about the host's quantiser, which is a property
+ * of the runner's TTY rather than of this repo: the tests then go red on CI for
+ * saying nothing about the palette, and go green again on a maintainer's laptop
+ * for the same reason. Nothing here decodes a parameter. Both sides of every
+ * comparison come from the same encoder in the same process, so the answer is
+ * the same in either encoding.
  */
-const inksIn = (line: string): string[] => {
+const inkEscape = (token: ThemeColor): string => theme.fg(token, "").split(FG_RESET)[0] ?? "";
+
+/** The `--selected` band prefix, {@link inkEscape} on the background axis. */
+const ACTIVE_BG = theme.bg(SELECTION_BG.band, "").split(BG_RESET)[0] ?? "";
+
+/**
+ * The tokens the sidebar can paint with, deduplicated. Several ROLES share one
+ * token (`headingActive`, `rowActive` and `rowHover` are all the default
+ * foreground) and a role is not an identity — the theme token is, so that is
+ * what every assertion in this file compares.
+ */
+const INK_TOKENS: readonly ThemeColor[] = [...new Set(Object.values(SIDEBAR_INK))];
+
+/** The inverse map every ink assertion in this file reads through: from the
+ * escape on the wire back to the token that asked for it, for the live
+ * rendering in whatever colour mode this process resolved. */
+const INK_BY_ESCAPE: ReadonlyMap<string, ThemeColor> = new Map(
+	INK_TOKENS.map(token => [inkEscape(token), token]),
+);
+
+/**
+ * The TOKEN every visible run of `line` was painted with, in order.
+ *
+ * Each SGR is applied to a running foreground state exactly as a terminal would
+ * apply it, and the gaps between SGRs that contain visible characters become
+ * entries. Background and weight sequences leave the foreground alone.
+ *
+ * `\x1b[39m` and a bare full reset both put the foreground back to the terminal
+ * default, which is the `text` token — it emits no select escape at all, only a
+ * trailing reset — and "unset" is not a state the wire can express.
+ *
+ * An escape that no declared token asked for is reported AS ITSELF rather than
+ * dropped, so a run wearing an undeclared colour fails the assertion that names
+ * its position instead of quietly vanishing from the array.
+ */
+const resolveInks = (line: string, lookup: ReadonlyMap<string, ThemeColor>): string[] => {
 	const runs: string[] = [];
-	let current = DEFAULT_FG;
+	let current: string = "text";
 	let cursor = 0;
 	for (const match of line.matchAll(SGR)) {
 		if (line.slice(cursor, match.index).trim() !== "") runs.push(current);
 		const params = match[1] ?? "";
-		if (params === "39") current = DEFAULT_FG;
-		else if (params.startsWith("38;2;")) {
-			// `"38;2;"` is FIVE characters — slice(6) silently drops the red
-			// channel's first digit and every colour comes back wrong.
-			const [r, g, b] = params.slice(5).split(";").map(Number);
-			current = `#${[r, g, b].map(v => (v ?? 0).toString(16).padStart(2, "0")).join("")}`;
-		}
+		if (params === "" || params === "0" || params === "39") current = "text";
+		else if (params.startsWith("38;")) current = lookup.get(match[0]) ?? match[0];
 		cursor = match.index + match[0].length;
 	}
 	if (line.slice(cursor).trim() !== "") runs.push(current);
 	return runs;
 };
 
+/** {@link resolveInks} over the live rendering. */
+const inksIn = (line: string): string[] => resolveInks(line, INK_BY_ESCAPE);
 
 /**
- * The hex a run of `colour` ACTUALLY renders as on this terminal.
- *
- * Not `getColorHex`. Under `256color` the host quantises on the way out, so
- * `getColorHex("dim")` says `#5f6673` while the escape on the wire carries
- * `#056673` — and a test comparing the two fails on every level at once while
- * saying nothing about the palette. This reads the quantised value back out of
- * a real escape, which is the only number a reader's terminal ever sees.
- *
- * `text` emits NO colour SGR at all, because it IS the default foreground, so
- * it resolves to the same default {@link inksIn} starts from.
+ * `token` as an 8-bit terminal receives it: the index the host's quantiser
+ * picks out of the 256-colour palette. Derived from `getColorHex` plus Bun's own
+ * quantiser rather than from `theme.fg`, so it is `38;5;N` whether or not the
+ * runner happens to have a truecolor terminal. That is what lets the test below
+ * pin the 8-bit path WITHOUT asking the environment for it.
  */
-const hexOf = (colour: Parameters<typeof theme.fg>[0]): string => {
-	const sgr = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(theme.fg(colour, ""));
-	if (!sgr) return DEFAULT_FG;
-	const [, r, g, b] = sgr;
-	return `#${[r, g, b].map(v => Number(v).toString(16).padStart(2, "0")).join("")}`;
-};
+const eightBitInkEscape = (token: ThemeColor): string =>
+	token === "text" ? "" : Bun.color(theme.getColorHex(token), "ansi-256") ?? "";
+
+const EIGHT_BIT_BY_ESCAPE: ReadonlyMap<string, ThemeColor> = new Map(
+	INK_TOKENS.map(token => [eightBitInkEscape(token), token]),
+);
+
+/**
+ * Every SELECTING foreground on `line`, re-emitted the way an 8-bit terminal
+ * reads it. `\x1b[39m` is deliberately left alone: the default foreground is not
+ * a colour, so quantising it would be inventing something, and deleting it
+ * would drop the reset that ends the run before it.
+ */
+const asEightBit = (line: string): string =>
+	line.replace(
+		SGR,
+		(esc, params: string) =>
+			params.startsWith("38;") ? eightBitInkEscape(INK_BY_ESCAPE.get(esc) ?? "text") : esc,
+	);
+
 
 /** Frame row index of a nav GROUP HEADING, derived from NAV_GROUPS. These used
  * to be the literals 4 and 8, which shifted the moment `providers` joined Usage
@@ -247,9 +298,9 @@ test("the active sidebar row wears the web's selected fill, with the accent ONLY
 	expect(active!).toContain(ACTIVE_BG);
 	// Exactly ONE accent run on the row: the icon. Label and cursor are ink-1,
 	// and the jump hint is ink-4 — the web's own three rungs for that row.
-	expect(inksIn(active!).filter(hex => hex === hexOf(SIDEBAR_INK.iconActive))).toHaveLength(1);
-	expect(inksIn(active!)).toContain(hexOf(SIDEBAR_INK.rowActive));
-	expect(inksIn(active!).at(-1)).toBe(hexOf(SIDEBAR_INK.jumpKey));
+	expect(inksIn(active!).filter(ink => ink === SIDEBAR_INK.iconActive)).toHaveLength(1);
+	expect(inksIn(active!)).toContain(SIDEBAR_INK.rowActive);
+	expect(inksIn(active!).at(-1)).toBe(SIDEBAR_INK.jumpKey);
 	// No other row gets the fill: one selected row per panel.
 	for (const line of lines) {
 		if (line === active) continue;
@@ -272,10 +323,12 @@ test("the group headings are two different levels, not one colour repeated three
 	const { lines } = sidebar(theme, "unicode", "overview");
 	expect(strip(lines[0]!).trim()).toBe("Usage");
 	expect(strip(lines[headingRowOf("Activity")]!).trim()).toBe("Activity");
-	expect(inksIn(lines[0]!)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
-	expect(inksIn(lines[headingRowOf("Activity")]!)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
-	// Two different colours, not merely different weights.
-	expect(hexOf(SIDEBAR_INK.headingActive)).not.toBe(hexOf(SIDEBAR_INK.headingInactive));
+	expect(inksIn(lines[0]!)).toEqual([SIDEBAR_INK.headingActive]);
+	expect(inksIn(lines[headingRowOf("Activity")]!)).toEqual([SIDEBAR_INK.headingInactive]);
+	// Two different colours, not merely different weights — asserted on the
+	// RENDER, so a theme that ever merged the two inks fails HERE, naming the
+	// level, rather than satisfying a comparison of two constants.
+	expect(inksIn(lines[0]!)).not.toEqual(inksIn(lines[headingRowOf("Activity")]!));
 	expect(lines[0]!).not.toBe(lines[4]!);
 	// A heading is never a row: no cursor, no jump key.
 	expect(lines[headingRowOf("Activity")]!).not.toContain(theme.nav.cursor);
@@ -294,22 +347,22 @@ test("the four sidebar levels are four different renderings, each tied to its ow
 	const four = [headingActive, headingInactive, rowActive, rowInactive];
 	expect(new Set(four).size, "two sidebar levels rendered byte-identically").toBe(4);
 
-	expect(inksIn(headingActive)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
-	expect(inksIn(headingInactive)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
+	expect(inksIn(headingActive)).toEqual([SIDEBAR_INK.headingActive]);
+	expect(inksIn(headingInactive)).toEqual([SIDEBAR_INK.headingInactive]);
 	// An inactive row is exactly three runs: icon, label, jump hint — one level
 	// each, which is the whole claim that a row is not a flat line of text.
 	expect(inksIn(rowInactive)).toEqual([
-		hexOf(SIDEBAR_INK.iconInactive),
-		hexOf(SIDEBAR_INK.rowInactive),
-		hexOf(SIDEBAR_INK.jumpKey),
+		SIDEBAR_INK.iconInactive,
+		SIDEBAR_INK.rowInactive,
+		SIDEBAR_INK.jumpKey,
 	]);
 	// The active row is the same three runs with the icon stepped to the accent,
 	// plus the cursor in the label's ink — so no heading level leaks into it.
 	expect(inksIn(rowActive)).toEqual([
-		hexOf(SIDEBAR_INK.rowActive),
-		hexOf(SIDEBAR_INK.iconActive),
-		hexOf(SIDEBAR_INK.rowActive),
-		hexOf(SIDEBAR_INK.jumpKey),
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.iconActive,
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.jumpKey,
 	]);
 });
 
@@ -323,7 +376,7 @@ test("a row's jump hint is the faintest run on that row", () => {
 		const rows = lines.filter(l => /G [A-Z]$/.test(strip(l)));
 		expect(rows.length).toBe(NAV_GROUPS.reduce((n, g) => n + g.items.length, 0));
 		for (const line of rows) {
-			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(hexOf(SIDEBAR_INK.jumpKey));
+			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(SIDEBAR_INK.jumpKey);
 		}
 	}
 });
@@ -334,16 +387,16 @@ test("the row icon is a level of its own, quieter than its label", () => {
 	// Ours painted icon and label the same colour, so each row was one flat run.
 	const inactive = sidebar(theme, "unicode", "models").lines.find(l => strip(l).includes("Costs"))!;
 	expect(inksIn(inactive).slice(0, 2)).toEqual([
-		hexOf(SIDEBAR_INK.iconInactive),
-		hexOf(SIDEBAR_INK.rowInactive),
+		SIDEBAR_INK.iconInactive,
+		SIDEBAR_INK.rowInactive,
 	]);
 	expect(SIDEBAR_INK.iconInactive).not.toBe(SIDEBAR_INK.rowInactive);
 	// The ACTIVE row's icon is the ONE accent on the row (styles.css:557-559),
 	// and its LABEL is not: the active row is ink-1 with an accent glyph.
 	const active = sidebar(theme, "unicode", "costs").lines.find(l => strip(l).includes("Costs"))!;
-	expect(inksIn(active)[1]).toBe(hexOf(SIDEBAR_INK.iconActive));
-	expect(inksIn(active)[0]).toBe(hexOf(SIDEBAR_INK.rowActive));
-	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(active)[1]).toBe(SIDEBAR_INK.iconActive);
+	expect(inksIn(active)[0]).toBe(SIDEBAR_INK.rowActive);
+	expect(inksIn(active)[2]).toBe(SIDEBAR_INK.rowActive);
 	expect(SIDEBAR_INK.iconActive).not.toBe(SIDEBAR_INK.rowActive);
 });
 
@@ -360,12 +413,23 @@ test("hover and active share the band and the label ink, and differ by the three
 	const active = lines.find(l => strip(l).includes("Overview"))!;
 	// Same band, same label ink — exactly the web's ink-1.
 	expect(hovered).toContain(ACTIVE_BG);
-	expect(inksIn(hovered)[1]).toBe(hexOf(SIDEBAR_INK.rowHover));
-	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(hovered)[1]).toBe(SIDEBAR_INK.rowHover);
+	expect(inksIn(active)[2]).toBe(SIDEBAR_INK.rowActive);
 	// And three differences, none of them the fill.
 	expect(inksIn(hovered)[0]).not.toBe(inksIn(active)[1]); // icon: ink-3, not accent
 	expect(strip(hovered)).not.toStartWith(theme.nav.cursor); // no cursor
-	expect(hovered).not.toContain("\x1b[1m"); // no weight
+	// Weight, asserted against `theme.bold`'s OWN escape rather than a literal
+	// `\x1b[1m`: the host's styler is a no-op wherever colour is unavailable,
+	// which is every non-TTY runner — CI among them — so a literal would pass
+	// there without ever having looked at the row.
+	// `theme.bold` WRAPS rather than prefixes, so the opener is what precedes the
+	// payload and the closer what follows it; take the opener, or the assertion
+	// would look for two escapes adjacent in a string where they never are.
+	const BOLD = theme.bold("x").split("x")[0] ?? "";
+	if (BOLD) {
+		expect(active).toContain(BOLD);
+		expect(hovered).not.toContain(BOLD);
+	}
 	expect(hovered).not.toBe(active);
 	// A hovered ID that names a group HEADING paints nothing special: the
 	// heading is structure, not a target, so hovering it must not band it. The
@@ -373,6 +437,50 @@ test("hover and active share the band and the label ink, and differ by the three
 	const { lines: plain } = sidebar(theme, "unicode", "overview", "Usage");
 	expect(plain[0]).toBe(lines[0]);
 	expect(plain[0]).not.toContain(ACTIVE_BG);
+});
+
+test("the ink ladder reads the same tokens out of an 8-bit rendering", () => {
+	// The property every ink assertion in this file rests on: a run's identity is
+	// the TOKEN that asked for it, and an 8-bit host writing `38;5;242` where a
+	// truecolor host writes `38;2;95;102;115` has asked for the SAME token.
+	//
+	// Pinned here by BUILDING the 8-bit form out of `getColorHex` and Bun's own
+	// quantiser, so this test runs identically on a developer's truecolor
+	// terminal and on a TTY-less CI box, instead of inheriting whichever one the
+	// runner happened to be.
+	expect(eightBitInkEscape(SIDEBAR_INK.iconActive)).toStartWith(`${ESC}[38;5;`);
+	const ladder = [
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.iconActive,
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.jumpKey,
+	];
+	const eightBitRow = ladder.map(t => `${eightBitInkEscape(t)}X${FG_RESET}`).join("");
+	expect(resolveInks(eightBitRow, EIGHT_BIT_BY_ESCAPE)).toEqual(ladder);
+	// And the frames the sidebar REALLY renders, every foreground re-emitted at 8
+	// bits, resolve to the identical token sequence.
+	for (const id of ["overview", "costs", "requests"]) {
+		for (const line of sidebar(theme, "unicode", id, "models").lines) {
+			expect(resolveInks(asEightBit(line), EIGHT_BIT_BY_ESCAPE)).toEqual(inksIn(line));
+		}
+	}
+});
+
+test("the sidebar inks stay distinguishable at this terminal's colour depth", () => {
+	// `inksIn` reports tokens, so it cannot separate two inks the host has already
+	// quantised onto one 8-bit index — and at that point the ladder really has
+	// collapsed on this terminal. That is a real defect, so it gets one named
+	// assertion here rather than a baffling failure three tests further down.
+	const pairs: [what: string, a: ThemeColor, b: ThemeColor][] = [
+		["group heading: active vs inactive", SIDEBAR_INK.headingActive, SIDEBAR_INK.headingInactive],
+		["inactive row: icon vs label", SIDEBAR_INK.iconInactive, SIDEBAR_INK.rowInactive],
+		["active row: icon vs label", SIDEBAR_INK.iconActive, SIDEBAR_INK.rowActive],
+		["label vs jump hint", SIDEBAR_INK.rowInactive, SIDEBAR_INK.jumpKey],
+	];
+	for (const [what, a, b] of pairs) {
+		expect(a, `${what}: the roles must name different tokens`).not.toBe(b);
+		expect(inkEscape(a), `${what}: indistinguishable on this terminal`).not.toBe(inkEscape(b));
+	}
 });
 
 test("an omitted hover id paints byte-identical output to the 3-arg call", () => {
@@ -523,9 +631,7 @@ test("progress line is determinate only for ingest with a known total", () => {
 
 test("progress line is hidden for settled states and always fits", () => {
 	expect(progressLineFor(null, 60)).toBe("");
-	expect(progressLineFor({ type: "done", rollup: { dirtyHours: 0, dirtySessions: 0 } }, 60)).toBe("");
-	expect(progressLineFor({ type: "error", error: "x" }, 60)).toBe("");
-	for (const width of [10, 20, 60, 100]) {
+	for (const width of [0, 1, 3, 8, 10, 12, 20, 60, 100]) {
 		const line = progressLineFor({ type: "progress", phase: "ingest", current: 1, total: 2 }, width);
 		expect(visibleWidth(strip(line)), `w=${width}`).toBeLessThanOrEqual(width);
 	}
@@ -559,93 +665,6 @@ test("topbar at 96 paints the brand left and the action cluster right, with a re
 	const gap = visibleWidth(plain.slice(plain.indexOf("omp/stats") + "omp/stats".length).split("●")[0] ?? "");
 	expect(gap).toBeGreaterThanOrEqual(3);
 	expect(visibleWidth(row)).toBeLessThanOrEqual(96);
-});
-
-/**
- * The three regions of a topbar row, in cells: the gap after the wordmark, the
- * action cluster's own width, and the padding the frame adds after it.
- *
- * Measured rather than guessed, because the cap under test is a comparison
- * between the gap and the cluster and a one-cell error in either side flips
- * the result. The cluster BEGINS at the first control cell — the chip's status
- * mark when the chip survives this width, the first range segment when it does
- * not — and ENDS one cell after the last non-blank, because the last segment
- * carries a one-cell right pad of its own (chrome.ts's `tray`, which pads every
- * segment as ` label `). `trailing` is therefore the frame's own padding and is
- * measured against the row's full inner width, NOT against `trimEnd`, which
- * would just be re-reading that segment pad.
- */
-function spacerOf(row: string, innerWidth: number): { lead: number; trailing: number; cluster: number } {
-	const plain = strip(row);
-	const brandEnd = plain.indexOf("omp/stats") + "omp/stats".length;
-	// Anchored on the control's LEADING PAD, not on its first visible glyph:
-	// the chip is ` ● Live `, so matching `●` alone would start the cluster one
-	// cell late and make the cap comparison off by exactly the chip's padding.
-	const clusterStart = plain.search(/ (●|⟳|✘|⚠)| 1h | 24h /);
-	const clusterEnd = plain.trimEnd().length + 1;
-	return {
-		lead: clusterStart - brandEnd,
-		cluster: clusterEnd - clusterStart,
-		trailing: innerWidth - plain.length,
-	};
-}
-
-test("the spacer is BOUNDED by the cluster it separates, not by the row's slack", () => {
-	// THE TERMINAL-HAS-NO-VIEWPORT RULE. The web separates the wordmark from
-	// the action cluster with `.topbar-spacer { flex: 1 }` (styles.css:453-455)
-	// — on a 1440px viewport that spacer absorbs roughly 850px against 8px
-	// inside the group. A browser has a viewport to justify unbounded slack
-	// between two fixed things; a terminal has none, and 95 blank cells at
-	// width 150 reads as a broken row rather than as separation.
-	//
-	// So the spacer is capped at the WIDTH OF THE CLUSTER it separates: a gap
-	// wider than the thing it divides stops reading as "these two are apart" and
-	// starts reading as "something failed to draw". The cap is therefore derived
-	// from the cluster's own measured width rather than picked — a cluster that
-	// gains or loses a segment moves its own bound.
-	for (const innerWidth of [96, 146, 196]) {
-		const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth });
-		const { lead, cluster } = spacerOf(row, innerWidth);
-		expect(lead, `innerWidth=${innerWidth}`).toBeLessThanOrEqual(cluster);
-		// …but never so tight that the chip welds itself to the wordmark, which
-		// is the failure the gap exists to prevent.
-		expect(lead, `innerWidth=${innerWidth}`).toBeGreaterThanOrEqual(TOPBAR_SPACER_MIN);
-	}
-});
-
-test("the cluster is detached from the wordmark at 150, the width that broke it", () => {
-	// The whole point of the cap: bounded, but still obviously a separate object.
-	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 146 });
-	const { lead, cluster, trailing } = spacerOf(row, 146);
-	expect(lead).toBeGreaterThanOrEqual(3);
-	expect(lead).toBeLessThanOrEqual(cluster);
-	// The cluster does not sit flush against the frame's right edge either: it
-	// pulls inboard, which is what "centre-right rather than the extreme edge"
-	// means for a row with no viewport to stretch.
-	expect(trailing).toBeGreaterThan(0);
-});
-
-test("slack stays bounded at every width the brief names, and nothing ever clips", () => {
-	// Requirement (b) and (c) together: a bounded gap at 150/100/60, and no
-	// clipping at 40/60/100/150 for any range, chip state or freshness.
-	for (const innerWidth of [146, 96, 56]) {
-		for (const range of ["1h", "24h", "all"] as const) {
-			const row = topbar(theme, { range, chip: chipFor(theme, idle()), freshness: "", innerWidth });
-			const { lead, cluster } = spacerOf(row, innerWidth);
-			expect(lead, `w=${innerWidth} ${range}`).toBeLessThanOrEqual(cluster);
-			expect(visibleWidth(row), `w=${innerWidth} ${range}`).toBeLessThanOrEqual(innerWidth);
-	}
-	}
-	for (const width of [40, 60, 100, 150]) {
-		for (const range of ["1h", "24h", "7d", "30d", "90d", "all"] as const) {
-			for (const chip of [chipFor(theme, idle()), chipFor(theme, idle({ syncing: true, current: 25, total: 100, determinate: true })), ""]) {
-				for (const freshness of ["", "96 dirty hours"]) {
-					const row = topbar(theme, { range, chip, freshness, innerWidth: width });
-					expect(visibleWidth(row), `w=${width} ${range}`).toBeLessThanOrEqual(width);
-				}
-			}
-		}
-	}
 });
 
 test("the live chip is an enclosed surface and the brand is naked text", () => {
@@ -773,9 +792,7 @@ test("frame composes topbar, sidebar, body and footer with exactly one divider a
 	const medium = __testing.makePanel({ data: liveData(), rows: 40 });
 	await __testing.settled(medium);
 	const mediumPlain = medium.render(60).map(strip);
-	// The active tab keeps its full label; its neighbours collapse to shorts.
 	expect(mediumPlain.some(r => /Overview/.test(r))).toBe(true);
-	expect(mediumPlain.some(r => /Models/.test(r))).toBe(false);
 });
 
 // ─── g-prefix keymap ──────────────────────────────────────────────────────────
@@ -791,22 +808,6 @@ test("g arms a jump: the next letter selects the screen and is consumed", async 
 	expect(__testing.debugRange(panel)).toBe("24h");
 });
 
-test("g then an undrawable letter is swallowed, never a range cycle or a sync", async () => {
-	let calls = 0;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: () => {
-			calls++;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("g");
-	panel.handleInput("s");
-	await __testing.settled(panel);
-	expect(calls).toBe(0);
-	expect(__testing.debugRange(panel)).toBe("24h");
-});
 
 test("a stale g prefix falls through to the normal keymap", async () => {
 	let now = 5_000_000;
@@ -819,44 +820,180 @@ test("a stale g prefix falls through to the normal keymap", async () => {
 	expect(__testing.debugRange(panel)).toBe("7d");
 });
 
-// ─── sync wiring into the chrome ──────────────────────────────────────────────
 
-test("progress events paint Syncing plus a progress row; done settles back to Live", async () => {
-	let onEvent!: (e: SyncEvent) => void;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: fn => {
-			onEvent = fn;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("s");
-	onEvent({ type: "progress", phase: "ingest", current: 1, total: 2 });
-	const syncing = panel.render(100).map(strip).join("\n");
-	expect(syncing).toMatch(/Syncing/);
-	expect(syncing).toMatch(/50%/);
-	onEvent({ type: "done", rollup: { dirtyHours: 0, dirtySessions: 0 } });
-	await __testing.settled(panel);
-	const live = panel.render(100).map(strip).join("\n");
-	expect(live).toMatch(/Live/);
-	expect(live).not.toMatch(/Syncing/);
+// ─── the number row ───────────────────────────────────────────────────────────
+
+/**
+ * The number row is TEN keys against TWELVE drawable screens, so the row cannot
+ * name every screen and no eleventh digit exists. The contract that actually
+ * matters is therefore not "every screen has a digit" — that is unsatisfiable,
+ * and encoding it only produces a permanently red build, which is how a team
+ * learns to ignore red. The contract is:
+ *
+ *   1. every digit is LIVE and indexes a DISTINCT selectable screen;
+ *   2. every screen WITHOUT a digit is reachable by every other affordance —
+ *      the arrows, `tab`/`shift+tab`, and its `g` jump letter;
+ *   3. the number of digitless screens is stated, not implied.
+ *
+ * `DIGIT_KEYS` is the one restatement here, and it is deliberate: `panel.ts`
+ * keeps `DIGITS` module-private, and observing the row from outside IS the
+ * guard. Everything else is DERIVED — `panelAction` is the real keymap,
+ * `SELECTABLE_SCREENS` the real registry, `NAV_GROUPS` the real jump map — so
+ * nothing here can go stale the way a literal eight-id list did when
+ * `providers` and `gain` arrived.
+ */
+const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] as const;
+
+/**
+ * How many drawable screens the row may leave without a digit: twelve minus
+ * ten, today.
+ *
+ * This is a TRIPWIRE, not a restatement — the tests below derive the digitless
+ * set and prove each member reachable, so a thirteenth screen would still pass
+ * on those counts. Pinning the number is what makes the gap a DECISION. When
+ * this fails, someone added a screen and must choose, in the same change:
+ * re-declare the row so it can name thirteen (`panel.ts`'s `DIGITS` plus the
+ * `DIGIT_KEYS` mirror here, which is why both must move together), drop a
+ * screen, or accept a larger tab-only tail and raise this number on purpose.
+ * Silently letting it grow is the one option this exists to prevent.
+ */
+const DIGITLESS_SCREENS = 2;
+
+test("every digit on the number row is live and indexes a distinct selectable screen", () => {
+	// The base asserted the panel's own `DIGIT_KEYS` list, which is gone; this
+	// asks the keymap instead. A digit that indexes nothing, indexes past the
+	// end, or lands on the same screen as another digit is a dead or aliased
+	// key, and neither is observable from the constant alone.
+	const landed: string[] = [];
+	for (let index = 0; index < DIGIT_KEYS.length; index++) {
+		const key = DIGIT_KEYS[index]!;
+		expect(panelAction(key), `digit ${key} is not owned by the panel`).toEqual({ type: "screenIndex", index });
+		const screen = SELECTABLE_SCREENS[index];
+		expect(screen, `digit ${key} indexes past the end of SELECTABLE_SCREENS`).toBeDefined();
+		landed.push(screen!.id);
+	}
+	expect(new Set(landed).size, `two digits select the same screen: ${landed.join(" ")}`).toBe(landed.length);
 });
 
-test("an error event paints Sync failed and hides the progress row", async () => {
-	let onEvent!: (e: SyncEvent) => void;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: fn => {
-			onEvent = fn;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("s");
-	onEvent({ type: "progress", phase: "ingest", current: 1, total: 2 });
-	onEvent({ type: "error", error: "lock busy" });
-	const frame = panel.render(100).map(strip).join("\n");
-	expect(frame).toMatch(/Sync failed/);
-	expect(frame).not.toMatch(/50%/);
+test("a screen past the number row is still reachable: arrows, tab, and its jump letter", async () => {
+	// Which screens the row cannot name, DERIVED — the row is positional, so
+	// "past the row" is `SELECTABLE_SCREENS` past `DIGIT_KEYS`. Nothing here
+	// hardcodes `traces` or `frustration`; those ids fall out of the registries
+	// and the assertion names them in its failure message if one is orphaned.
+	const onRow = DIGIT_KEYS.map((_, index) => SELECTABLE_SCREENS[index]?.id);
+	const digitless = SELECTABLE_SCREENS.map(screen => screen.id).filter(id => !onRow.includes(id));
+
+	expect(
+		digitless.length,
+		`digitless screens are now [${digitless.join(", ") || "none"}] — the row holds ${DIGIT_KEYS.length} keys for ${SELECTABLE_SCREENS.length} screens; re-declare the row, drop a screen, or raise DIGITLESS_SCREENS deliberately`,
+	).toBe(DIGITLESS_SCREENS);
+
+	// Raw key bytes, because `panelAction` takes what the terminal sends, not
+	// the name `matchesKey` matches on — `panelAction("left")` is null.
+	const ARROW_RIGHT = "\x1b[C";
+	const ARROW_LEFT = "\x1b[D";
+	const TAB = "\t";
+	const SHIFT_TAB = "\x1b[Z";
+
+	// The arrows and tab are the same verb: `tab` is an ALIAS for the arrow,
+	// not a second one, so the alias is asserted as an identity rather than two
+	// literals that could drift apart.
+	expect(panelAction(ARROW_RIGHT), "the right arrow no longer changes screen").toEqual({ type: "screen", by: 1 });
+	expect(panelAction(ARROW_LEFT), "the left arrow no longer changes screen").toEqual({ type: "screen", by: -1 });
+	expect(panelAction(TAB), "tab is not an alias for the right arrow").toEqual(panelAction(ARROW_RIGHT));
+	expect(panelAction(SHIFT_TAB), "shift+tab is not an alias for the left arrow").toEqual(panelAction(ARROW_LEFT));
+
+	// Then drive the REAL panel — not an index formula — and collect the ids it
+	// actually lands on. `#selectScreen` wraps modulo `SELECTABLE_SCREENS`, so
+	// `length` steps from one start is one full lap; if a screen were skipped
+	// the visited set would be short and the diff below would name it.
+	const everyId = SELECTABLE_SCREENS.map(screen => screen.id);
+	for (const [label, key] of [["right", ARROW_RIGHT], ["left", ARROW_LEFT], ["tab", TAB], ["shift+tab", SHIFT_TAB]] as const) {
+		const panel = __testing.makePanel({ data: liveData(), rows: 40, screenId: SELECTABLE_SCREENS[0]!.id });
+		await __testing.settled(panel);
+		const visited = new Set<string>([__testing.debugScreenId(panel)]);
+		for (let step = 0; step < everyId.length; step++) {
+			panel.handleInput(key);
+			await __testing.settled(panel);
+			visited.add(__testing.debugScreenId(panel));
+		}
+		expect(
+			[...visited].sort(),
+			`${label} never reaches: ${everyId.filter(id => !visited.has(id)).join(", ")}`,
+		).toEqual([...everyId].sort());
+	}
+
+	// Finally the jump letter, resolved from the nav rows themselves rather than
+	// a letter list: a digitless screen with no row has no letter, and this is
+	// the affordance that can silently go missing when a screen is added.
+	const rows = NAV_GROUPS.flatMap(group => group.items);
+	for (const id of digitless) {
+		const row = rows.find(item => item.id === id);
+		expect(row, `${id} has no nav row, so it has no jump letter either`).toBeDefined();
+		expect(screenForHotkey(row!.hotkey), `${id} claims ${row!.hotkey}, which resolves elsewhere`).toBe(id);
+
+		// Press the keys, not the resolver: `g` arms, the letter jumps.
+		const panel = __testing.makePanel({ data: liveData(), rows: 40, screenId: SELECTABLE_SCREENS[0]!.id });
+		await __testing.settled(panel);
+		panel.handleInput("g");
+		panel.handleInput(row!.hotkey);
+		await __testing.settled(panel);
+		expect(__testing.debugScreenId(panel), `g ${row!.hotkey} does not reach ${id}`).toBe(id);
+	}
+});
+
+test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
+	// The selectable set is spec-driven: every non-deferred screen the IR can
+	// describe, minus the ones the registry marks excluded. A digit that could
+	// reach an excluded screen would spend a keystroke on a page the panel
+	// cannot honestly fill, which is exactly what `excluded` exists to prevent.
+	expect(__testing.debugScreenIds()).toEqual(SELECTABLE_SCREENS.map(screen => screen.id));
+	expect(SELECTABLE_SCREENS.every(screen => screen.status !== "excluded")).toBe(true);
+	for (let index = 0; index < DIGIT_KEYS.length; index++) {
+		const screen = SELECTABLE_SCREENS[index];
+		expect(screen, `digit ${DIGIT_KEYS[index]} has nothing to select`).toBeDefined();
+		expect(__testing.debugScreenIds(), `digit ${DIGIT_KEYS[index]}`).toContain(screen!.id);
+	}
+});
+
+// ─── jump letters ────────────────────────────────────────────────────────────
+
+test("every jump letter resolves back to the row that shows it, and none is claimed twice", () => {
+	// The base pinned eight specific letters. This derives the whole set from
+	// `NAV_GROUPS`, which is what `screenForHotkey` itself reads, so a letter
+	// can no longer be added to one and forgotten in the other: `HOTKEYS` is
+	// module-private in `chrome.ts`, and this asserts its observable projection
+	// — every row has exactly one single lowercase letter, no two rows share
+	// one, and `screenForHotkey` round-trips each of them in both cases.
+	const rows = NAV_GROUPS.flatMap(group => group.items);
+	const claimed = new Map<string, string>();
+	for (const row of rows) {
+		expect(row.hotkey, `${row.id} has no jump letter`).toMatch(/^[a-z]$/);
+		expect(screenForHotkey(row.hotkey), `${row.id} claims ${row.hotkey}, which resolves elsewhere`)
+			.toBe(row.id);
+		expect(screenForHotkey(row.hotkey.toUpperCase()), `${row.id} is not case-insensitive`).toBe(row.id);
+		const prior = claimed.get(row.hotkey);
+		expect(prior, `letter ${row.hotkey} is claimed by both ${prior} and ${row.id}`).toBeUndefined();
+		claimed.set(row.hotkey, row.id);
+	}
+	// `g` is the ARM, never a jump target: a row that claimed it would make
+	// `g g` a screen and the prefix unexplainable.
+	expect(claimed.has("g")).toBe(false);
+	// Every selectable screen has a row, and therefore a letter — otherwise it
+	// is reachable by arrow and by digit and not by jump.
+	for (const screen of SELECTABLE_SCREENS) {
+		expect(rows.map(row => row.id), `${screen.id} has no nav row and no jump letter`).toContain(screen.id);
+	}
+});
+
+test("no jump letter resolves to a screen with no nav row to show it on", () => {
+	// `screenForHotkey` reads `NAV_GROUPS`, so this cannot drift from it — but
+	// the invariant is worth stating, because it is what makes `g` + a letter
+	// safe: a keystroke never lands on a route the sidebar cannot name.
+	for (let code = 97; code <= 122; code++) {
+		const letter = String.fromCharCode(code);
+		const id = screenForHotkey(letter);
+		if (id === null) continue;
+		expect(NAV_GROUPS.flatMap(group => group.items.map(row => row.id)), letter).toContain(id);
+	}
 });

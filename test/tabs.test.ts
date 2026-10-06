@@ -16,7 +16,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { TabBar } from "@oh-my-pi/pi-tui";
 import type { SymbolPreset, Theme } from "@oh-my-pi/pi-tui";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { STATS_ICONS } from "../src/tui/icons";
 import { TAB_BAR_INDENT, TAB_SHORT, buildTabs, tabBarTheme } from "../src/tui/tabs";

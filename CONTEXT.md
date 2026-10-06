@@ -55,8 +55,8 @@ One session file — a conversation's persisted history, and the unit that inges
 request, user message and tool call belongs to exactly one session, even when a subagent produced it.
 
 **Agent type**:
-Which agent produced a request: the main agent, a task subagent, or an advisor. Subagent work lands in the
-same session as the main agent's; agent type is how it is told apart.
+Which agent produced a request: the main agent, a task subagent, or an advisor. Nested agents can have their
+own child session files; agent type and the trace's parent/child relationships preserve that identity.
 
 **Ingest**:
 The write path that reads session files and records their requests, tool calls and user messages, then
@@ -114,19 +114,23 @@ The money saved by caching rather than billing the same tokens uncached — a ra
 negative when cache writes cost more than cache reads save.
 
 **Cost**:
-The money actually recorded against a request. It under-reports whenever any request went unpriced, so a
-cost figure shown without its unpriced count beside it is a wrong number, not a rounded one.
+The money recorded against priced requests. Unknown-price requests make a containing total a floor rather
+than complete spend, so cost is displayed together with its unpriced count.
 
 **Unpriced request**:
-A request whose recorded cost is zero because the price could not be determined — not because nothing was
-spent. Its spend is unknown, which makes every total that contains it a floor rather than a figure.
-_Not to be confused with_: free request. Nothing here is free; some of it is merely unmeasured.
+A request whose provider/model price card is absent and whose spend cannot be determined. Unknown spend
+reads `N/A`, not `$0.00`. A recorded zero charge or explicit all-zero/free price card is not unknown.
+The locked upstream patch (ADR 0008) uses pricing-v2 replay and rollup-v3 invalidation to repair
+historic markers; the panel does not infer or approximate missing prices with its own SQL, and the
+patch is applied by Bun at install time rather than computed at runtime.
+_Not to be confused with_: free request. A measured zero and an unmeasured cost are different facts.
 
 ### The two surfaces
 
 **Stats panel**:
-A full-screen, read-only view of the person's own usage, drawn inside the terminal from what the database
-already holds.
+A full-screen interactive view of the person's own usage, drawn inside the terminal from upstream stats
+records. Twelve retained controllers provide focus, search, sorting, selection, details and route actions.
+Its isolated live worker initializes/ingests shared records; it is not a read-only SQLite connection.
 _Not to be confused with_: stats dashboard.
 
 **Stats dashboard**:
@@ -141,9 +145,44 @@ An overlay that borrows the terminal's alternate screen buffer, so it claims the
 conversation untouched beneath it.
 
 **Seam**:
-A place where behaviour can be altered without editing the thing that holds it. Three seams matter here:
-the data seam, which decides whether an answer is read from rollups or from facts; the view seam, which
-decides how a set of rows becomes lines of text; and the mount seam, which decides how much of the terminal
+A place where behaviour can be altered without editing the thing that holds it. The data seam reuses upstream
+queries inside an isolated process; the feature seam owns route state/actions; the view seam converts data
+to terminal lines; the mount seam borrows the alternate screen and restores the underlying transcript.
+
+**Feature controller**:
+The production route contract: `load(range)`, `render(width, height)`, `handleInput(data)` and `dispose()`
+(`src/tui/features/types.ts`). Returning true consumes a key; returning false leaves it to the parent.
+Controllers retain focus, search, sort, selection and chart controls across screen changes. The panel
+owns global navigation, scrolling and mount lifetime, and updates the mutable injected theme per render.
+
+**Production presentation**:
+`src/tui/features/presentation.ts` bridges retained controllers to shared band metric grids and
+measured tables, adding current-theme selection, compact focus tabs and section headings.
+`src/tui/charts/time-series.ts` renders production native-bucket plots for core analytics, Providers
+and Gain with formatted units, real null gaps, stable series identity and selected-point legends.
+It does not fabricate observations or replace domain-specific calendars, version-rate plots or traces.
+**Stats read client**:
+One persistent isolated child per mounted panel, with request/reply and unsolicited live NDJSON over pipes
+(`src/data/client.ts`, `scripts/data-worker.ts`). The worker owns DB initialization, queries/transcript reads
+and patched upstream `StatsLive({ workers: 1 })`: initial ingest, transcript watching and manual sync share
+one live owner. Synchronous work is off the host rendering thread, not merely scheduled through a promise.
+
+**Passive frustration**:
+Cached judge/regex metrics and coverage. Reading or filtering them spends nothing. Paid judging is a
+separate estimate → explicit `y` confirmation → progress/results/cancel workflow, requiring a configured
+`judge` model role, provider credentials and user authorization. Judge resources open lazily
+only when requested; missing credentials do not make the passive view or its implemented controls absent.
+
+**Provider windows**:
+Subscription-window capacity/demand and per-account quota/utilization histories, loaded independently of
+local provider request/token/cost data. A missing broker credential, failed network read or absent snapshot
+does not imply no local usage.
+
+**Trace**:
+A root/child session hierarchy with duration-preserving spans, markers and linked transcript entries.
+The terminal supports time/turn/call axes, idle compression, zoom/pan/fit/focus, minimap, track visibility,
+span search/details, tool durations/errors and child navigation. Upstream root discovery considers at most
+300 candidates; a searchable loaded list is not exhaustive session history.
 
 ### The layout IR
 
@@ -156,11 +195,26 @@ _Not to be confused with_: a web card. A card carries its own border and header;
 neither and gets both from the grammar.
 
 **ScreenSpec**:
-One screen's declared layout: its id, labels, `needs`, and `Band[]` (`src/layout/spec.ts`).
-The tab strip, the screen registry and the fetch needs all read the same specs, so there is one
-source of truth rather than three lists that can disagree.
-_Not to be confused with_: the registry's `Screen` record, which carries identity and contract and
-defers rendering to the pipeline.
+One screen's declared pure layout: its id, labels, `needs`, and `Band[]` (`src/layout/spec.ts`).
+The IR is NOT the production render path — every `/stats-tui` screen is a `FeatureController` that draws
+its own body. A `ScreenSpec` exists for three jobs: the shipped `/stats-test` showcase, the nav/tabs
+identity, and the review probes. The reason is settled: a static band grammar cannot express focus,
+search, sort, staged loading or retained state.
+_Not to be confused with_: `FeatureController`, or the pure registry `Screen` record that defers rendering
+to `renderScreen`. Adding a `Band[]` changes what `/stats-test` draws and which ids `tabs.ts`/`chrome.ts`
+expose — and changes nothing a user sees in `/stats-tui`.
+
+**IR scope map** — which file survives for which reason, so this is not re-derived:
+
+| File | Kept because |
+|---|---|
+| `src/layout/spec.ts` | `/stats-test` band declarations; `tabs.ts`/`chrome.ts`/`panel.ts` read `SCREEN_SPECS` and `isDrawableScreen` for the real nav |
+| `src/layout/resolve.ts` | the showcase and `probe-render.ts` resolve every `MetricRef` through it |
+| `src/layout/host-derived.ts` | `resolve.ts`'s named figures — 18 `HOST_DERIVED` entries (three `agentTokens:*` variants and 15 metrics) — imported by `resolve.ts` alone |
+| `src/tui/band.ts` | draws band primitives for `render/screen.ts`; production `features/presentation.ts` also reuses metric-grid/table drawing, without adopting static screen specs or metric-ref resolution |
+| `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer, plus one **fixture-only** branch in `panel.ts:772` — reachable only when `options.fetch` is injected, because `#feature()` returns `undefined` in that case. The real worker path always has a controller |
+| `src/tui/charts/*` | **both** paths — `features/core/*` import them directly on `/stats-tui`, so these are production chart code, not IR |
+| `src/tui/screens/*.ts` | registry METADATA only (`id`/`label`/`short`/`status`/`needs`) for `SELECTABLE_SCREENS` and the digit row; the `render` bodies are unreachable in production and only `errors-screen.test.ts`/`activity.test.ts` still call them |
 
 **MetricRef**:
 A declared read of one figure — which payload, which field, which row (`src/layout/spec.ts`).
@@ -170,17 +224,19 @@ _Not to be confused with_: a formatter. A ref names the value; a formatter decid
 
 **Resolve**:
 The act of answering a `MetricRef` from a payload (`resolveCell` / `resolveNumber` /
-`resolveLabel` in `src/layout/resolve.ts`). The only place numbers become strings.
+`resolveLabel` in `src/layout/resolve.ts`). This is the pure IR's value-resolution boundary;
+interactive controllers reuse upstream formatters for their own detail/list presentations.
 
 **Resolver**:
 The test harness's name for the same code: `test/parity.test.ts` calls the web's own functions
 and asserts the resolver answers identically on one shared fixture.
 
 **Parity**:
-Agreement with the web dashboard on the same input, checked by machine rather than by eye.
-`test/parity.test.ts` calls the web's functions from `@oh-my-pi/omp-stats` and asserts our
-answers match, so "we show the same number" is a test result rather than a claim.
-_Not to be confused with_: pixel equivalence. Parity is about figures, not about drawing.
+Agreement with the web dashboard on the same input and reachable workflow. Fixture arithmetic parity
+(`test/parity.test.ts`) compares upstream functions and the resolver; it does not prove keyboard focus,
+selection, lazy details, paid judging or broker behavior. Full parity needs the mounted workflow matrix
+as well as integrated consumer-observable tests.
+_Not to be confused with_: pixel equivalence or source implementation. Neither proves exercised acceptance.
 
 **Symbol preset**:
 The person's choice of glyph repertoire — `unicode`, `nerd`, or `ascii`. It is a setting and never a
@@ -206,15 +262,11 @@ One width's answer: its frame band, sidebar and topbar modes, column count and w
 always agree with `planLayout` at the same width.
 
 **Loading state**:
-The panel's statement that a figure has not arrived yet. It is distinct from an empty result, and an
-empty result is distinct from an error, and the three are never merged. On the activity calendar a
-day with no requests is an empty day and reads as an empty cell; an entire empty range is "nothing
-recorded" and is stated in words, not drawn as a field of zero-day cells that would read as a quiet
-year; a payload that never arrived says so (`src/tui/screens/activity.ts`). A fetch that fails is not
-one of these states at all — it reaches the panel's own error phase, because `fetchFor` throws rather
-than returning a degraded payload.
+The panel's statement that a figure has not arrived yet. It is distinct from a fetched-empty result and
+from a failed read. None may be silently rendered as a measured zero; dirty rollups and pending transcript
+ingest also have explicit freshness states.
 
-_Deliberate deviation_: `/usage` renders a fetched-but-empty range as a zero-filled grid. We state it
-instead. A grid of empty cells is a claim about someone's usage, and a wrong one, where one line of
-words is not. Where a host view does pin wording we reuse it — the summary line's dim ` · syncing…`
-suffix is such a case (`src/tui/render/screen.ts`, host `usage-dashboard.ts:847`).
+Activity reads the latest 371 local days independently of the global stats range. Narrow calendars show
+fewer weeks, while the recorded-day list keeps every fetched day reachable through focus, search, sorting,
+selection, reveal and details. A day with no requests is different from missing data or an empty lookback;
+the controller states an empty lookback explicitly rather than hiding that boundary.

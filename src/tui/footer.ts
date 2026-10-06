@@ -1,46 +1,14 @@
 /**
- * `src/tui/footer.ts` — the panel's key hints, hand-rolled for the ANSI path.
- *
- * WHY HAND-ROLLED. `hintsRow` returns a `NativeNode`, so it is unusable
- * anywhere but the native renderer (F20: `native/overlay.ts:42-51`). `/usage`
- * builds its own hint string and renders it as a single dim span
- * (`overlays/usage-dashboard.ts:926`: `this.#footer.setLines([theme.fg("dim", hint)])`),
- * joining the pieces with `" · "`. `/settings` does the same for its ANSI twin
- * (`overlays/settings-selector.ts:107-145`, `settingsHintsNode`). This module is
- * that same shape, built from `formatKeyHints` so every keycap matches the rest
- * of the host UI rather than being spelled by hand.
- *
- * ONE TONE, NOT TWO. The row is wrapped ONCE in `theme.fg("dim", …)`. The
- * earlier split — dim keys beside muted labels — was this module's own idea,
- * and it is now wrong twice over: it is not what `/usage` does, and a footer is
- * a chrome line, not content. A hint row that competes with the data above it
- * is a chrome line nobody reads. Keycaps and labels are therefore the same
- * weight, and the only thing that separates two hints is the separator.
- *
- * `←/→` IS THE SCREEN SWITCH. The panel's primary verb is moving between
- * screens, and the arrows are what the footer names for it — see THE KEYMAP
- * DECISION in `panel.ts`, which records the two decisions this mapping has had
- * and why the second one is the one that shipped. `tab`/`shift+tab` remain
- * bound as an alias and are deliberately absent from the hint row: the row
- * names the key a reader reaches for first, and listing both teaches the
- * slower one. The RANGE is on `r`/`R` (`panelAction`: `r` steps the range
- * forward, `R` back), so the two hints never share a key.
- *
- * WHY THE HINTS ARE DATA. A footer built by concatenating strings is a footer
- * that drifts from the keymap: a key gets rebound, the hint does not, and the
- * panel advertises something it no longer does. {@link hintsFor} returns the keys
- * as `KeyName`s, so a test can round-trip every one of them through
- * `panelAction` and fail when a hint names an unbound key.
- *
- * PURE. The hint SET is a function of state; the colouring comes from an
- * injected `Theme`, so the module holds no singleton and loads before theme
- * init. No terminal reads, no data access, no timers.
+ * ANSI footer: host-formatted keycaps, readable neutral ink and state-owned hints.
+ * Close survives width pressure; contextual route controls remain controller-owned.
+ * Theme is injected so this module does not read an uninitialized host singleton.
  */
 
-import { formatKeyHints } from "@oh-my-pi/pi-tui/key-hint-format";
-import type { KeyName } from "@oh-my-pi/pi-tui/key-hint-format";
+import { formatKeyHints } from "@oh-my-pi/pi-coding-agent";
+import type { KeyName } from "@oh-my-pi/pi-coding-agent";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
+import { PALETTE } from "./palette";
 
 /** One hint: the keys that do it, and what they do. */
 export interface PanelHint {
@@ -75,11 +43,9 @@ export type HintMode = "idle" | "scrollable" | "syncing" | "error";
  */
 export function hintsFor(mode: HintMode): readonly PanelHint[] {
 	const scroll: PanelHint = { keys: ["up", "down"], label: "scroll" };
-	// The ARROWS are the advertised screen switch, and `tab` is deliberately NOT
-	// listed: the row names the key a reader would reach for first, and a hint
-	// set that lists both teaches the slower one. `tab` stays bound in
-	// `panelAction` — an alias nobody is told about beats a dead key.
-	const screen: PanelHint = { keys: ["left", "right"], label: "screen" };
+	// Contextual arrows and Tab belong to route controls; brackets stay global
+	// outside text entry. Search mode uses a separate Ctrl+P/Ctrl+N hint.
+	const screen: PanelHint = { keys: ["[", "]"], label: "screen" };
 	const range: PanelHint = { keys: ["r", "shift+r"], label: "range" };
 	const sync: PanelHint = { keys: ["s"], label: "sync" };
 	const close: PanelHint = { keys: ["escape", "q"], label: "close" };
@@ -102,9 +68,8 @@ export function hintsFor(mode: HintMode): readonly PanelHint[] {
 /**
  * The footer row.
  *
- * ONE `dim` SPAN for the whole row, `/usage`-style. Hints are separated by a
- * `borderMuted` dot — one step quieter than the text it divides — and every
- * keycap renders through `formatKeyHints` so it looks like a keycap everywhere
+ * One readable muted span; decorative separators stay a step quieter.
+ * Every keycap renders through `formatKeyHints` so it looks like a keycap everywhere
  * else in the host.
  *
  * Hints are dropped WHOLE, never truncated. A hint that ends mid-word is worse
@@ -149,7 +114,7 @@ export function footerHints(
 	if (tail !== undefined) candidates.push([tail]);
 
 	for (const parts of candidates) {
-		const row = theme.fg("dim", parts.map(hint => `${formatKeyHints(hint.keys)} ${hint.label}`).join(separator));
+		const row = theme.fg(PALETTE.muted, parts.map(hint => `${formatKeyHints(hint.keys)} ${hint.label}`).join(separator));
 		if (visibleWidth(row) <= width) return [row];
 	}
 	// Nothing fits: drop the row entirely rather than emit a truncated word.

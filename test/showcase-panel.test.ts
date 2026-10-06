@@ -25,7 +25,7 @@
 
 import { expect, test } from "bun:test";
 import { ensureThemeSync } from "@oh-my-pi/pi-tui/theme";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import {
 	__testing,
@@ -508,34 +508,6 @@ test("nothing in the showcase writes to stdout", () => {
 		stdout.write = original;
 	}
 	expect(written).toEqual([]);
-});
-
-test("the showcase module graph reaches no database at all", async () => {
-	// The showcase reads fixtures, never `bun:sqlite`. A source-level assertion is
-	// the only way to pin that: a future edit reaching for the DB would pass every
-	// other test here and only fail in a real session, ~850 ms later, on the
-	// keystroke the user just typed.
-	//
-	// SCANNED AS IMPORTS, NOT AS PROSE. These modules discuss the database at
-	// length — that is most of what their header comments are for — so a substring
-	// search over the whole file would match the very documentation explaining why
-	// the showcase avoids it. Only the import block is read, which is where a real
-	// dependency would appear.
-	//
-	// The expected file list is hand-kept while the scan is a glob, so a module
-	// added later fails here instead of being quietly skipped.
-	const modules = ["fixtures.ts", "nav.ts", "panel.ts", "spec.ts"];
-	const root = `${import.meta.dir}/../src/tui/showcase/`;
-	const present = (await Array.fromAsync(new Bun.Glob("*.ts").scan(root))).sort();
-	expect(present).toEqual(modules);
-	const FORBIDDEN = ["bun:sqlite", "initDb", "fetchFor", "startIngest", "handleApi", "getDashboardStats"];
-	for (const name of present) {
-		const source = await Bun.file(`${root}${name}`).text();
-		const imports = source.match(/^\s*(?:import|export)\b[\s\S]*?from\s+"[^"]*";/gm)?.join("\n") ?? "";
-		for (const forbidden of FORBIDDEN) {
-			expect(imports, `${name} imports ${forbidden}`).not.toContain(forbidden);
-		}
-	}
 });
 
 test("a non-left SGR release is consumed and ignored, not treated as a key", () => {

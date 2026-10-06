@@ -54,8 +54,11 @@
  */
 
 import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
+import { buildCostSummary } from "@oh-my-pi/omp-stats/client/data/view-models";
+import type { CostTimeSeriesPoint } from "@oh-my-pi/omp-stats/shared-types";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 
 import type { PanelData } from "../../data/api";
 import {
@@ -64,7 +67,6 @@ import {
 	resolveNumber,
 	resolveSeriesValues,
 	rowsFor,
-	sharedDenominator,
 	type DataRow,
 } from "../../layout/resolve";
 import { bucketMsFor, type Range } from "../../data/ranges";
@@ -83,7 +85,7 @@ import type {
 import { isProseHint, proseHintText } from "../../layout/spec";
 import { renderBands, type Band, type BandRenderOptions } from "../band";
 import { renderSeriesChart } from "../charts/compose";
-import { buildHeatmapLayout as heatmapLayoutFor } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
+import { calendarLayout } from "../charts/calendar";
 import { renderHeatmap, weeksForWidth } from "../charts/heatmap";
 import { BAR_TRACK_MAX, renderRankedBars, renderShareBar, renderSparkline, type RankedRow } from "../charts/sparkline";
 import {
@@ -91,7 +93,6 @@ import {
 	formatBytes,
 	formatCost,
 	formatDurationMs,
-	formatElapsed,
 	formatInteger,
 	formatPercent,
 } from "../format";
@@ -129,6 +130,7 @@ const GROUP_KEY: Partial<Record<MetricSource, string>> = {
 	modelSeries: "model",
 	modelPerformanceSeries: "model",
 	costSeries: "model",
+	errorModels: "model",
 	folders: "folder",
 	toolsByTool: "tool",
 	toolsByToolModel: "tool",
@@ -262,11 +264,8 @@ function errorRate(value: number): string {
  */
 const errorRateField: Formatter = value => errorRate(value);
 
-/** Raw seconds with the adapter's precision: `12.3s`. */
+/** Request and aggregate latency fields from upstream are milliseconds. */
 const duration: Formatter = value => formatDurationMs(value);
-
-/** A MEAN duration reads as a span: `12.3s` is not what "average" means. */
-const elapsed: Formatter = value => formatElapsed(value);
 
 /**
  * A rate of throughput keeps its unit. The host's `formatTokensPerSecond`
@@ -384,7 +383,7 @@ const FIELD_FORMAT: Readonly<Record<string, Formatter>> = {
 	attributedTokens: compact,
 
 	// Latencies.
-	avgDuration: elapsed,
+	avgDuration: duration,
 	duration: duration,
 	avgTtft: duration,
 	ttft: duration,
@@ -411,7 +410,7 @@ function when(value: number, now: number): string {
 	return new Date(value).toISOString().slice(0, 10);
 }
 
-const WHEN_FIELDS: readonly string[] = ["timestamp", "lastTimestamp", "firstTimestamp", "lastUsed"];
+const WHEN_FIELDS: readonly string[] = ["timestamp", "lastTimestamp", "firstTimestamp", "lastUsed", "lastSeen", "firstSeen"];
 
 /**
  * Does this field name money?
@@ -580,7 +579,7 @@ function toStatTile(tile: IRStatTile, opts: ScreenRenderOptions): StatTileOut | 
 		value: text,
 		...(hint === undefined || hint === "" ? {} : { hint }),
 		...(tile.emphasis === "primary" ? { emphasis: "primary" as const } : {}),
-		...(tile.spark ? { spark: resolveSeriesValues(tile.spark, opts.data) } : {}),
+		...(tile.spark ? { spark: resolveSeriesValues(tile.spark, opts.data, undefined, axisFor(opts, tile.spark)) } : {}),
 	};
 }
 
@@ -739,12 +738,13 @@ function bandOptions(opts: ScreenRenderOptions): BandRenderOptions {
 		bold: opts.bold,
 		seriesColorFor: opts.seriesColorFor,
 		barHeight: opts.plan.barHeight,
-		tableLimit: opts.plan.tableColumns,
 		labelWidth: opts.plan.labelWidth,
 		valueWidth: opts.plan.valueWidth,
 		// F23 §2.3's sparkline seam. Injected rather than imported so the band
 		// layer never depends on the chart layer.
-		sparkline: (values, width) => renderSparkline(values, { width, preset: opts.preset }),
+		sparkline: (values, width) => renderSparkline(values, {
+			width, preset: opts.preset, accent: cell => opts.fg(seriesHue(opts, 0), cell),
+		}),
 	};
 }
 
@@ -774,6 +774,15 @@ const seriesHue = (opts: ScreenRenderOptions, index: number): ThemeColor =>
  */
 function chartBand(title: string, chart: ChartSpec, opts: ScreenRenderOptions): Band | null {
 	if (!chart.series.some(series => isFetched(sourceOf(series.metric), opts.data))) return null;
+	const cost = chart.series.find(series => isCostField(leafFieldOf(series.metric)));
+	const unknown = cost
+		? rowsFor(sourceOf(cost.metric), opts.data).reduce((sum, row) => sum + (unpricedOf(row) ?? 0), 0)
+		: 0;
+	if (unknown > 0 && chart.series.every(series =>
+		resolveSeriesValues(series.metric, opts.data, undefined, axisFor(opts, series.metric))
+			.every(value => value === 0))) {
+		return { kind: "note", text: `${title}: no priced cost recorded; ${unknown} requests have unknown spend.` };
+	}
 	const body = chartRows(chart, opts);
 	if (body.length === 0) return null;
 	return {
@@ -799,7 +808,7 @@ function chartRows(chart: ChartSpec, opts: ScreenRenderOptions): readonly string
 			return [
 				renderSparkline(
 					resolveSeriesValues(series.metric, opts.data, undefined, axisFor(opts, series.metric)),
-					{ width, preset: opts.preset },
+					{ width, preset: opts.preset, accent: cell => opts.fg(seriesHue(opts, 0), cell) },
 				),
 			];
 		}
@@ -811,10 +820,8 @@ function chartRows(chart: ChartSpec, opts: ScreenRenderOptions): readonly string
 /**
  * A calendar heatmap over `dailyActivity`, coloured through the palette's ramp.
  *
- * `/usage` owns the grid layout (`buildHeatmapLayout` inside `renderHeatmap`),
- * which is why this is a delegation and not a reimplementation: zero-fill,
- * max-anchoring and the `null` future cell are three rules that are easy to get
- * subtly wrong and that the host has been running in production.
+ * Grid and totals use the terminal-owned port of `/usage`'s local-calendar
+ * algorithm, keeping zero-fill, sqrt levels and future-date absence identical.
  */
 function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[] {
 	const points = rowsFor("dailyActivity", opts.data);
@@ -846,7 +853,7 @@ function heatmapRows(opts: ScreenRenderOptions, width: number): readonly string[
  * (usage-dashboard.ts:839-844, shared with formatActivityTotals:467-475).
  */
 function gridTotals(points: readonly DataRow[], weeks: number, today?: Date): { cost: string; requests: string } {
-	const layout = heatmapLayoutFor(
+	const layout = calendarLayout(
 		points.map(row => {
 			const record = row as Record<string, unknown>;
 			const day = typeof record.day === "string" ? record.day : "";
@@ -904,31 +911,14 @@ function barRows(chart: ChartSpec, opts: ScreenRenderOptions, width: number): re
  * instead would put hourly buckets under midnight-aligned rows for `24h`, and
  * the chart would be silently empty.
  */
-/**
- * The bucket axis a chart plots on: EXACTLY `width` buckets, aligned the way the
- * host aligns them.
- *
- * `bucketAxis(range, …)` returns the range's NATURAL bucket count — 31 for `30d`
- * — and `renderDailyBars` then stretches those to the panel width by re-bucketing
- * on ARRAY INDEX, which smears one day's value across three columns and draws a
- * wall of identical full-height bars. A chart whose x-axis is an array index
- * rather than a time is not a time chart. So the axis is WIDENED rather than
- * stretched: same alignment rule, as many buckets as there are columns.
- *
- * The same axis is handed to `resolveSeriesValues` so a stat tile's sparkline and
- * the chart beside it agree bucket for bucket.
- */
+/** Use the web's real range axis; terminal width only compresses its buckets. */
 function bucketAxisFor(opts: ScreenRenderOptions, source: MetricSource): readonly number[] {
-	const rows = rowsFor(source, opts.data);
-	const newest = rows
-		.map(row => (row as Record<string, unknown>).timestamp)
-		.filter((value): value is number => typeof value === "number")
-		.reduce((max, value) => (value > max ? value : max), 0);
-	if (newest <= 0) return [];
+	const timestamps = rowsFor(source, opts.data).flatMap(row => {
+		const timestamp = (row as Record<string, unknown>).timestamp;
+		return typeof timestamp === "number" ? [timestamp] : [];
+	});
 	const bucketMs = source === "costSeries" ? COST_BUCKET_MS : bucketMsFor(opts.range);
-	const width = Math.max(1, opts.plan.innerWidth);
-	const end = Math.floor(newest / bucketMs) * bucketMs;
-	return Array.from({ length: width }, (_, i) => end - (width - 1 - i) * bucketMs);
+	return bucketAxis(opts.range, timestamps, bucketMs, opts.now);
 }
 
 /** The axis a SPARKLINE is drawn against, or `undefined` when there is none. */
@@ -1007,10 +997,9 @@ function sharesOf(items: readonly ShareItem[]): readonly ShareEntry[] {
  *
  * THIS IS THE D4 FIX, and it is a map rather than a second computation because
  * the two renderings previously disagreed: the bar divided the entries it
- * plotted, the legend divided by every item on its band, and Overview's legend
- * names the four token kinds AND three agent rows which the IR points at the
- * same `overall.totalRequests`. 196,380 requests leaked into a token
- * denominator and one quantity printed as 94.5% beside 94.6%.
+ * plotted while the legend divided by unrelated agent-request totals. Each
+ * composition now publishes its own denominator; agent items use their actual
+ * conversation-token totals from the upstream agent view.
  *
  * The web has one number and two renderings of it — `mix[key] / total`
  * (`OverviewRoute.tsx:186-224`). A `shareBar` chart IS that `total`: its series
@@ -1262,14 +1251,22 @@ function groupedEntries(chart: ChartSpec, opts: ScreenRenderOptions): readonly C
 		const base = series.metric.kind === "derived" ? series.metric.of : series.metric;
 		const byGroup = new Map<string, ChartEntry>();
 		for (const row of rowsFor(seriesSource(series.metric), opts.data)) {
-			const group = (row as Record<string, unknown>)[key];
+			const record = row as Record<string, unknown>;
+			const rawGroup = record[key];
+			const group = key === "model" && typeof rawGroup === "string"
+				? modelKey(rawGroup, typeof record.provider === "string" ? record.provider : "")
+				: rawGroup;
 			// ACCUMULATE across rows: the payload carries one row per (bucket,
 			// group), so a group's total is the sum over its buckets — the
 			// web's `pivotSeries` sums each series' values the same way. The
 			// time-bucketed plots go through `bucketedValues`, not here, so no
 			// double counting with the bar charts.
 			if (typeof group !== "string") continue;
-			const value = resolveNumber(base, opts.data, row);
+			const value = resolveNumber(
+				base.kind === "series" ? { kind: "aggregate", source: base.source, field: base.field } : base,
+				opts.data,
+				row,
+			);
 			if (value === null) continue;
 			// The `metric` carried on the entry is the series' OWN ref, not `base`:
 			// `base` is what the VALUE is summed through, but the readout formats
@@ -1326,36 +1323,6 @@ function foldTo(
 	];
 }
 
-/**
- * One row per MODEL over (bucket, model) cost rows: numeric cost fields sum,
- * the model/provider identity carries over, and the row keeps the earliest
- * bucket's timestamp. The web's `buildCostSummary` folds the same way (per
- * model::provider map); a table over unfolded rows would print one row per
- * day a model was active.
- */
-function foldByModel(rows: readonly DataRow[]): readonly DataRow[] {
-	const byModel = new Map<string, Record<string, unknown>>();
-	for (const row of rows) {
-		const record = row as Record<string, unknown>;
-		const model = typeof record.model === "string" ? record.model : "";
-		const provider = typeof record.provider === "string" ? record.provider : "";
-		const key = `${model}::${provider}`;
-		const entry = byModel.get(key);
-		if (!entry) {
-			byModel.set(key, { ...record });
-			continue;
-		}
-		for (const field of ["cost", "requests", "unpricedRequests", "costInput", "costOutput", "costCacheRead", "costCacheWrite"]) {
-			const base = typeof entry[field] === "number" ? (entry[field] as number) : 0;
-			const add = typeof record[field] === "number" ? (record[field] as number) : 0;
-			entry[field] = base + add;
-		}
-		if (typeof record.timestamp === "number" && typeof entry.timestamp === "number" && record.timestamp < entry.timestamp) {
-			entry.timestamp = record.timestamp;
-		}
-	}
-	return [...byModel.values()];
-}
 
 // ─── Tables ──────────────────────────────────────────────────────────────────
 
@@ -1377,7 +1344,9 @@ function tableBand(
 	// The By-model table folds (bucket, model) rows to one row per MODEL: the
 	// cost payload carries one row per day per model, and a table that listed
 	// bucket rows would print the same model once per day it was active.
-	const folded = rowSource.source === "costSeries" ? foldByModel(rowsFor(rowSource.source, opts.data)) : rowsFor(rowSource.source, opts.data);
+	const folded = rowSource.source === "costSeries"
+		? buildCostSummary(rowsFor("costSeries", opts.data) as readonly CostTimeSeriesPoint[]).models
+		: rowsFor(rowSource.source, opts.data);
 	const all = sortRows(folded, rowSource, opts);
 	if (all.length === 0) return null;
 
@@ -1401,7 +1370,6 @@ function tableBand(
 		|| !all.every(row => resolveNumber(column.source, opts.data, row) === 0),
 	);
 
-	const shown = all.slice(0, rowSource.limit ?? Math.max(4, opts.plan.tableColumns * 4));
 	const maxes = columnMaxes(kept, all, opts);
 	const cellWidth = Math.max(1, opts.plan.valueWidth);
 
@@ -1419,7 +1387,7 @@ function tableBand(
 		})),
 		rows: {
 			kind: "inline",
-			rows: shown.map(row => {
+			rows: all.map(row => {
 				const record: Record<string, string> = {};
 				for (const column of kept) {
 					record[column.header] = renderCell(column, row, maxes.get(column.header) ?? 0, cellWidth, opts);
@@ -1477,7 +1445,7 @@ function renderCell(
 			// idle for. A gap read as "no data" is a claim the payload does not make.
 			return renderSparkline(
 				resolveSeriesValues(column.source, opts.data, row, axisFor(opts, column.source)),
-				{ width: cellWidth, preset: opts.preset },
+				{ width: cellWidth, preset: opts.preset, accent: cell => opts.fg(seriesHue(opts, 0), cell) },
 			);
 		case "badge":
 			return badgeCell(column, row, opts);
@@ -1647,10 +1615,8 @@ function legendBand(
 		value: resolveNumber(item.metric, opts.data),
 	}));
 
-	// An item a chart above already PUBLISHED takes that share. Everything else is
-	// grouped by the metric it reads, so Overview's three agent rows — all on
-	// `totalRequests`, none of them a token kind — are shares of each other rather
-	// than fractions of a token total they have nothing to do with.
+	// Chart-published items keep their shares. Agent-token items form their own
+	// composition, independently of the input/cache/output token mix.
 	const entries = measured.map(item => {
 		const adopted = published.map(shares => shares.get(groupKeyOf(item.metric))).find(v => v !== undefined);
 		return { label: item.label, metric: item.metric, value: item.value, share: adopted };

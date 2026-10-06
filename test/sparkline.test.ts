@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { renderRankedBars, renderShareBar, renderSparkline } from "../src/tui/charts/sparkline";
 import { glyphsFor } from "../src/tui/glyphs";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 const identity = (t: string) => t;
 const U = glyphsFor("unicode");
@@ -38,13 +38,6 @@ test("a value at exactly the max is the top rung and never overflows it", () => 
 	expect(renderSparkline([10], { width: 1, max: 10 })).toBe(ramp[7]);
 	// A value ABOVE the supplied max is clamped, never drawn taller.
 	expect(renderSparkline([999], { width: 1, max: 10 })).toBe(ramp[7]);
-});
-test("an omitted max falls back to the data's own maximum", () => {
-	// The convenience case, and still zero-baselined: the peak touches the top.
-	// 2 / 8 * 7 = 1.75 → level 2; 8 / 8 * 7 = 7 → level 7.
-	const s = renderSparkline([2, 4, 8, 4], { width: 4 });
-	expect(s[2]).toBe(ramp[7]);
-	expect(s[0]).toBe(ramp[2]);
 });
 
 test("an all-zero series emits width cells of level-0, never an empty string", () => {

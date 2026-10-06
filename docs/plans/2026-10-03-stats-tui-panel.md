@@ -1,6 +1,6 @@
 # Stats Panel (`/stats-tui`) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Historical 18.4.10 implementation plan. Do not execute its old scope/version/read-only constraints as current instructions. The active [dashboard-parity roadmap](2026-10-05-dashboard-parity.md) supersedes them.
 
 **Goal:** Ship a distributable omp plugin whose `/stats-tui` command opens a fullscreen overlay rendering the person's own local usage records, drawn from `~/.omp/stats.db` through the `@oh-my-pi/omp-stats` data layer with no webserver and no SQL of our own.
 

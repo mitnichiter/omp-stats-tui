@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { colorLuma, hexToRgb } from "@oh-my-pi/pi-utils";
 import { colorToAnsi, FG_RESET } from "@oh-my-pi/pi-tui/theme/color";
-import { isValidThemeColor, type ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import { isValidThemeBg, isValidThemeColor, type ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import {
 	heatRamp,
@@ -9,6 +9,10 @@ import {
 	PALETTE,
 	PALETTE_TOKENS,
 	SERIES_COLORS,
+	SELECTION_BG,
+	SELECTION_BG_TOKENS,
+	SPAN_COLORS,
+	SPAN_TOKENS,
 	SIDEBAR_INK,
 	TAB_INK,
 	TAB_TOKENS,
@@ -17,7 +21,10 @@ import {
 	type PaletteRole,
 	type SidebarInkRole,
 	type TabInkRole,
+	type SelectionBgRole,
+	type SpanKindRole,
 } from "../src/tui/palette";
+import { KINDS } from "../src/tui/features/traces/model";
 
 /**
  * From here down the tests run against the REAL default theme, not `fakeTheme`.
@@ -287,6 +294,68 @@ test("every tab ink level cites the web token it now matches", () => {
 		expect(TAB_TOKENS[role], `TAB_TOKENS has no entry for TAB_INK.${role}`).toBeDefined();
 		expect(TAB_TOKENS[role], `TAB_INK.${role} citation`).toMatch(CITATION_SHAPE);
 	}
+});
+
+test("every selection band role cites the web token it now matches", () => {
+	// The BACKGROUND axis gets the same machine-checked contract as the two ink
+	// ladders. `selectedBg` was the one colour five call sites wrote as a bare
+	// literal, precisely because nothing in the tree had given it a name; a
+	// table with no citation requirement is how that happens again.
+	const roles = Object.keys(SELECTION_BG) as SelectionBgRole[];
+	expect(roles.length).toBeGreaterThan(0);
+	for (const role of roles) {
+		expect(SELECTION_BG_TOKENS[role], `SELECTION_BG_TOKENS has no entry for SELECTION_BG.${role}`).toBeDefined();
+		expect(SELECTION_BG_TOKENS[role], `SELECTION_BG.${role} citation`).toMatch(CITATION_SHAPE);
+	}
+});
+
+test("the selection band is a real ThemeBg, and is NOT a ThemeColor", () => {
+	// The host declares two disjoint unions (`schema.ts:174-179`): `fg` takes
+	// only `ThemeColor`, `bg` only `ThemeBg`. `selectedBg` belongs to the second,
+	// and this pins that so a future edit cannot quietly fold the background
+	// axis into `PALETTE`, where `test/palette.test.ts` asserts `isValidThemeColor`
+	// over every role and would fail for a reason that reads like a typo.
+	expect(isValidThemeBg(SELECTION_BG.band)).toBe(true);
+	expect(isValidThemeColor(SELECTION_BG.band)).toBe(false);
+});
+
+test("no PALETTE role is a background token, so the two axes cannot be confused", () => {
+	// The inverse of the test above, stated over the whole ink table: every
+	// `PALETTE` role must be INK. This is what makes "painted the wrong kind of
+	// token" a type error rather than a cell that silently renders uncoloured.
+	for (const role of Object.keys(PALETTE) as PaletteRole[]) {
+		expect(isValidThemeBg(PALETTE[role]), `PALETTE.${role} is a background token`).toBe(false);
+	}
+});
+
+test("every span kind cites the upstream CATEGORY_VARS entry it now matches", () => {
+	// The trace span ladder has the same contract as the ink ladders. It exists
+	// because traces legitimately needs per-kind colour, but a `Record<K,
+	// ThemeColor>` kept private beside its renderer has no provenance and cannot
+	// be re-derived when a role moves.
+	const roles = Object.keys(SPAN_COLORS) as SpanKindRole[];
+	expect(roles.length).toBeGreaterThan(0);
+	// Every kind the trace model can produce must have a colour, or a span kind
+	// added upstream renders as uncoloured — which throws nothing and is
+	// invisible to every behavioural test.
+	expect([...roles].sort()).toEqual([...KINDS].sort());
+	for (const role of roles) {
+		expect(SPAN_TOKENS[role], `SPAN_TOKENS has no entry for SPAN_COLORS.${role}`).toBeDefined();
+		expect(SPAN_TOKENS[role], `SPAN_COLORS.${role} citation`).toMatch(CITATION_SHAPE);
+		expect(isValidThemeColor(SPAN_COLORS[role]), `SPAN_COLORS.${role}`).toBe(true);
+	}
+});
+
+test("the span ladder is the web's CATEGORY_VARS, not a private ordering", () => {
+	// `CATEGORY_VARS` in the dashboard's own `trace-colors.ts:37-43` is the file
+	// its flamegraph canvas reads five category fills from. Three entries are
+	// pinned because they are the ones most likely to drift back toward a
+	// private preference: `turn` must be ink-2 and NOT a success green,
+	// `background` must be the faintest rung and NOT `muted`, and `tool` must be
+	// the one entry that is token-for-token the web's `--warn`.
+	expect(SPAN_COLORS.turn).toBe("muted");
+	expect(SPAN_COLORS.background).toBe("borderMuted");
+	expect(SPAN_COLORS.tool).toBe("warning");
 });
 
 // ─── DEFECT 3: THE PALETTE AUDIT ──────────────────────────────────────────────

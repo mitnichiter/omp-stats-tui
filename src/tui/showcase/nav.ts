@@ -30,11 +30,11 @@
  */
 
 import type { SymbolPreset, Tab, TabBarTheme, Theme } from "@oh-my-pi/pi-tui";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { JUMP_KEY_PREFIX, PREFIX_WIDTH, SIDEBAR_GAP } from "../chrome";
 import { statsIcon, type IconRole } from "../icons";
-import { SIDEBAR_INK } from "../palette";
+import { SELECTION_BG, SIDEBAR_INK } from "../palette";
 import { tabBarTheme } from "../tabs";
 import { SHOWCASE_SECTIONS } from "./spec";
 
@@ -160,7 +160,7 @@ export function showcaseSidebar(
 				// because `.nav-row kbd` is a child of the row (styles.css:565-570).
 				lines.push(
 					theme.bg(
-						"selectedBg",
+						SELECTION_BG.band,
 						`${theme.fg(SIDEBAR_INK.rowActive, `${theme.nav.cursor} `)}${theme.bold(
 							theme.fg(SIDEBAR_INK.iconActive, `${icon} ${label}`),
 						)}${theme.fg(SIDEBAR_INK.jumpKey, tail + key)}`,

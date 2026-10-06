@@ -356,7 +356,7 @@ const tables: ScreenSpec = {
 		{
 			kind: "table",
 			title: "Latest requests",
-			rows: { source: "recentMessages", initialSort: { by: recent("timestamp"), direction: "desc" }, limit: 6 },
+			rows: { source: "recentMessages", initialSort: { by: recent("timestamp"), direction: "desc" } },
 			columns: [
 				{ header: "Model", align: "left", source: recent("model"), cell: "text" },
 				{ header: "Provider", align: "left", source: recent("provider"), cell: "text", priority: 3 },
@@ -373,7 +373,7 @@ const tables: ScreenSpec = {
 			// magnitude column showing only a bar has told the reader nothing.
 			kind: "table",
 			title: "Cost by model",
-			rows: { source: "byModel", limit: 8 },
+			rows: { source: "byModel" },
 			columns: [
 				{ header: "Model", align: "left", source: byModel("model"), cell: "text" },
 				{ header: "Cost", align: "right", source: byModel("totalCost"), cell: "meter" },
@@ -387,7 +387,7 @@ const tables: ScreenSpec = {
 			// it needs a per-row series, which the grammar cannot know.
 			kind: "table",
 			title: "Model trend",
-			rows: { source: "byModel", limit: 8 },
+			rows: { source: "byModel" },
 			columns: [
 				{ header: "Model", align: "left", source: byModel("model"), cell: "text" },
 				{ header: "Trend", align: "left", source: modelSeries("requests"), cell: "sparkline" },
@@ -400,7 +400,7 @@ const tables: ScreenSpec = {
 			// into the border.
 			kind: "table",
 			title: "By folder",
-			rows: { source: "folders", limit: 8 },
+			rows: { source: "folders" },
 			columns: [
 				{ header: "Folder", align: "left", source: folder("folder"), cell: "text" },
 				{ header: "Requests", align: "right", source: folder("totalRequests"), cell: "meter" },
@@ -411,7 +411,7 @@ const tables: ScreenSpec = {
 		{
 			kind: "table",
 			title: "By tool",
-			rows: { source: "toolsByTool", limit: 8 },
+			rows: { source: "toolsByTool" },
 			columns: [
 				{ header: "Tool", align: "left", source: tool("tool"), cell: "text" },
 				{ header: "Calls", align: "right", source: tool("calls"), cell: "meter" },
@@ -426,7 +426,7 @@ const tables: ScreenSpec = {
 			// has to read the row.
 			kind: "table",
 			title: "Errors",
-			rows: { source: "errorMessages", limit: 6 },
+			rows: { source: "errorMessages" },
 			columns: [
 				{ header: "Model", align: "left", source: errors("model"), cell: "text" },
 				{ header: "Message", align: "left", source: errors("errorMessage"), cell: "text", priority: 2 },
@@ -462,7 +462,7 @@ const awkward: ScreenSpec = {
 			// and its one row rather than collapsing to nothing.
 			kind: "table",
 			title: "A single request",
-			rows: { source: "recentMessages", limit: 6 },
+			rows: { source: "recentMessages" },
 			columns: [
 				{ header: "Model", align: "left", source: recent("model"), cell: "text" },
 				{ header: "Provider", align: "left", source: recent("provider"), cell: "text", priority: 3 },
@@ -472,11 +472,10 @@ const awkward: ScreenSpec = {
 			],
 		},
 		{
-			// A hundred records, past every `tableLimit`, so the grammar drops rows and
-			// prints its `N of M` count note rather than implying it showed everything.
+			// Every fetched failure remains reachable through scrolling.
 			kind: "table",
 			title: "Every failure",
-			rows: { source: "errorMessages", limit: 120 },
+			rows: { source: "errorMessages" },
 			columns: [
 				{ header: "Message", align: "left", source: errors("errorMessage"), cell: "text" },
 				{ header: "Model", align: "left", source: errors("model"), cell: "text", priority: 3 },
@@ -568,7 +567,7 @@ const states: ScreenSpec = {
 			// beside an unpriced count for the second — never `$0.00` for both.
 			kind: "table",
 			title: "Zero is not unknown",
-			rows: { source: "byModel", limit: 8 },
+			rows: { source: "byModel" },
 			columns: [
 				{ header: "Model", align: "left", source: byModel("model"), cell: "text" },
 				{ header: "Cost", align: "right", source: byModel("totalCost"), cell: "meter" },

@@ -24,7 +24,7 @@
 import type { Band } from "../src/tui/band";
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 import type { CostTimeSeriesPoint } from "@oh-my-pi/omp-stats/shared-types";
 
 import { SCREEN_SPECS, type Band as IRBand, type Column as IRColumn, type MetricRef, type ScreenSpec } from "../src/layout/spec";
