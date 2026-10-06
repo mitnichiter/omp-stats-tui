@@ -1,6 +1,6 @@
 # Testing the terminal stats dashboard PR
 
-Review target: [the UI refinement branch](https://github.com/mitnichiter/omp-stats-tui/tree/omp/dashboard-terminal-parity). [Dashboard workflow PR #1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1) is merged; its historical head does not contain the subsequent UI refinement.
+Review target: [UI refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2), from [the fork branch](https://github.com/mitnichiter/omp-stats-tui/tree/omp/dashboard-terminal-parity). [Dashboard workflow PR #1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1) is merged; its historical head does not contain the subsequent UI refinement.
 
 ## 1. Check prerequisites
 
@@ -133,4 +133,4 @@ bun run build
 
 If that also fails, report the full installer error and Bun version; do not bypass the patch or describe the incomplete installation as working.
 
-Report on the [UI refinement pull request](https://github.com/yuzu-octopus/omp-stats-tui/pulls) for `omp/dashboard-terminal-parity`: commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
+Report on [UI refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2): commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
