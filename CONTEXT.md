@@ -120,8 +120,9 @@ than complete spend, so cost is displayed together with its unpriced count.
 **Unpriced request**:
 A request whose provider/model price card is absent and whose spend cannot be determined. Unknown spend
 reads `N/A`, not `$0.00`. A recorded zero charge or explicit all-zero/free price card is not unknown.
-The locked upstream patch uses pricing-v2 replay and rollup-v3 invalidation to repair historic markers;
-the panel does not infer or approximate missing prices with its own SQL.
+The locked upstream patch (ADR 0008) uses pricing-v2 replay and rollup-v3 invalidation to repair
+historic markers; the panel does not infer or approximate missing prices with its own SQL, and the
+patch is applied by Bun at install time rather than computed at runtime.
 _Not to be confused with_: free request. A measured zero and an unmeasured cost are different facts.
 
 ### The two surfaces
@@ -203,9 +204,9 @@ expose — and changes nothing a user sees in `/stats-tui`.
 |---|---|
 | `src/layout/spec.ts` | `/stats-test` band declarations; `tabs.ts`/`chrome.ts`/`panel.ts` read `SCREEN_SPECS` and `isDrawableScreen` for the real nav |
 | `src/layout/resolve.ts` | the showcase and `probe-render.ts` resolve every `MetricRef` through it |
-| `src/layout/host-derived.ts` | `resolve.ts`'s six named figures, imported by it alone |
-| `src/tui/band.ts` | renders one band kind; reached only through `render/screen.ts` |
-| `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer |
+| `src/layout/host-derived.ts` | `resolve.ts`'s named figures — 18 `HOST_DERIVED` entries (three `agentTokens:*` variants and 15 metrics) — imported by `resolve.ts` alone |
+| `src/tui/band.ts` | renders one band kind; its only importer is `render/screen.ts` |
+| `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer, plus one **fixture-only** branch in `panel.ts:772` — reachable only when `options.fetch` is injected, because `#feature()` returns `undefined` in that case. The real worker path always has a controller |
 | `src/tui/charts/*` | **both** paths — `features/core/*` import them directly on `/stats-tui`, so these are production chart code, not IR |
 | `src/tui/screens/*.ts` | registry METADATA only (`id`/`label`/`short`/`status`/`needs`) for `SELECTABLE_SCREENS` and the digit row; the `render` bodies are unreachable in production and only `errors-screen.test.ts`/`activity.test.ts` still call them |
 

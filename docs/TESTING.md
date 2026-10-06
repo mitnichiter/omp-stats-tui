@@ -1,6 +1,6 @@
-# Testing the terminal stats dashboard PR
+# Testing the terminal stats dashboard
 
-Review target: [yuzu-octopus/omp-stats-tui#1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1). Use the PR head, not upstream `main`, while the PR is unmerged.
+Review target: this branch of [yuzu-octopus/omp-stats-tui](https://github.com/yuzu-octopus/omp-stats-tui). PR [#1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1) merged as `c1396d3` and is the historical reference point; review `main`, not the PR head.
 
 ## 1. Check prerequisites
 
@@ -14,15 +14,13 @@ Verified runtime: compiled **omp 18.6.1**, standalone **Bun 1.4.2**, Linux arm64
 
 Use an interactive terminal, initially about 100 columns by 40 rows. Print/headless/RPC modes cannot display this overlay. No browser server or upstream omp source checkout is required.
 
-## 2. Check out the PR and build
+## 2. Check out and build
 
-From a directory that does not already contain `omp-stats-tui-pr1`:
+From a directory that does not already contain `omp-stats-tui`:
 
 ```sh
-git clone https://github.com/yuzu-octopus/omp-stats-tui.git omp-stats-tui-pr1
-cd omp-stats-tui-pr1
-git fetch origin pull/1/head:review/stats-tui
-git switch review/stats-tui
+git clone https://github.com/yuzu-octopus/omp-stats-tui.git
+cd omp-stats-tui
 bun install --frozen-lockfile
 bun run build
 ```
@@ -108,9 +106,11 @@ bun test
 bun run build
 ```
 
-Latest observed suite: **872 passed, 0 failed, 60 files**, 102,485 assertions. Production build and mounted compiled-host/packed-plugin workflows passed. Tests isolate their databases; they are not a substitute for the manual terminal checklist.
+Latest observed suite: **895 passed, 0 failed, 61 files**, 102,922 assertions. Production build and mounted compiled-host/packed-plugin workflows passed. Tests isolate their databases; they are not a substitute for the manual terminal checklist.
 
-Whole-repository TypeScript checking is **not green**. On the verified environment, `@types/bun` lacked its declared `index.d.ts`; checking with direct `bun-types` reported 19 diagnostics in seven files outside the remaining-feature edit set. See the [roadmap evidence](plans/2026-10-05-dashboard-parity.md#remaining-feature-completion) for exact files and acceptance boundaries. Do not report a passing typecheck based only on Bun's production build.
+Whole-repository TypeScript checking **is green** (`bunx tsc --noEmit`, exit 0). The `@types/bun` gap the roadmap recorded — a missing declared `index.d.ts` and 19 diagnostics under direct `bun-types` — no longer reproduces. Do not report a passing typecheck based only on Bun's production build, and do not carry the old diagnostic list forward as current.
+
+CI (`.github/workflows/ci.yml`) runs the automated part of this section on every push and PR: `bun install --frozen-lockfile`, `bun run verify:patch`, `bun test`, `bunx tsc --noEmit`, then a second job that builds and loads `dist/index.js` in the pinned omp host. `verify:patch` is not optional — the panel's unknown-spend behaviour comes from the dependency patch, so an unpatched `node_modules` is a tree that passes tests while lying about money.
 
 ## Troubleshooting and reporting
 
@@ -130,4 +130,4 @@ bun run build
 
 If that also fails, report the full installer error and Bun version; do not bypass the patch or describe the incomplete installation as working.
 
-Report on [PR #1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1): commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
+Report on an issue: commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
