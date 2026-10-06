@@ -1,15 +1,16 @@
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
-import { formatCost, formatDurationMs, formatEstimatedCost, formatInteger, formatPercent, formatTokensPerSecond } from "@oh-my-pi/omp-stats/client/data/formatters";
+import { formatCompact, formatCost, formatDurationMs, formatEstimatedCost, formatInteger, formatPercent, formatTokensPerSecond } from "@oh-my-pi/omp-stats/client/data/formatters";
 import { bucketAxis, rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import { densify, pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
 import { buildCostSummary, buildModelPerformanceLookup, buildToolRows, sumConversationTokens, type ModelPerformanceDataPoint, type ToolRowView } from "@oh-my-pi/omp-stats/client/data/view-models";
 import type { ModelStats, ToolDashboardStats } from "@oh-my-pi/omp-stats/shared-types";
 import type { CostPayload, ModelDashboardPayload } from "../../../data/api";
 import type { Range } from "../../../data/ranges";
-import { renderSeriesChart } from "../../charts/compose";
-import { renderSparkline } from "../../charts/sparkline";
+import { renderTimeSeries } from "../../charts/time-series";
+import type { StatTile } from "../../band";
+import { focusTabs, metricGrid, sectionHeading } from "../presentation";
 import type { FeatureContext, FeatureController } from "../types";
-import { ChartState, ListState, fields, wrap, type CoreSeries, type Sorters } from "./shared";
+import { ChartState, ListState, fields, wrap, type CoreSeries, type ListColumn, type Sorters } from "./shared";
 
 type AnalyticsId = "models" | "costs" | "tools";
 interface Row {
@@ -41,7 +42,7 @@ const sorters = (rows: readonly Row[]): Sorters<Row> => {
 	}]));
 };
 const denseSeries = (series: readonly { key: string; label: string; values: readonly (number | null)[] }[]): CoreSeries[] => series.map(s => ({ key: s.key, label: s.label, values: s.values.map(v => v ?? 0) }));
-const shares = (series: readonly CoreSeries[], totals: readonly number[]): CoreSeries[] => series.map(s => ({ ...s, values: s.values.map((v, i) => totals[i] > 0 ? v / totals[i] : 0) }));
+const shares = (series: readonly CoreSeries[], totals: readonly number[]): CoreSeries[] => series.map(s => ({ ...s, values: s.values.map((v, i) => totals[i] > 0 && v !== null ? v / totals[i] : null) }));
 const identity = (model: string, provider: string): string => `${model || "(unknown)"} · ${provider}`;
 
 class AnalyticsFeature implements FeatureController {
@@ -60,7 +61,7 @@ class AnalyticsFeature implements FeatureController {
 	private readonly tables: Table[];
 	private buckets: number[] = [];
 	private modes: { label: string; series: CoreSeries[]; unit: string }[] = [];
-	private summary: string[] = [];
+	private metrics: StatTile[] = [];
 	private performance = new Map<string, ModelPerformanceDataPoint[]>();
 	private unpriced: number[] = [];
 	private costSeriesUnknown = new Map<string, number[]>();
@@ -114,7 +115,9 @@ class AnalyticsFeature implements FeatureController {
 	}
 
 	private setModels(data: ModelDashboardPayload, range: Range): void {
-		this.buckets = this.axis(range, data.modelSeries.map(p => p.timestamp));
+		const timestamps = data.modelSeries.map(p => p.timestamp);
+		this.buckets = this.axis(range, timestamps);
+		this.chart.seedLatestPoint(this.buckets, timestamps);
 		const counts = denseSeries(pivotSeries(data.modelSeries, { buckets: this.buckets, key: p => modelKey(p.model, p.provider), label: key => {
 			const m = data.byModel.find(m => modelKey(m.model, m.provider) === key);
 			return m ? identity(m.model, m.provider) : key;
@@ -131,15 +134,20 @@ class AnalyticsFeature implements FeatureController {
 			avgDuration: formatDurationMs(m.avgDuration), avgTtft: formatDurationMs(m.avgTtft), avgTokensPerSecond: `${formatTokensPerSecond(m.avgTokensPerSecond)} tok/s`, conversationTokens: sumConversationTokens(m),
 		}));
 		const sum = (key: "totalRequests" | "failedRequests" | "totalCost" | "unpricedRequests") => data.byModel.reduce((total, m) => total + m[key], 0);
-		const top = data.byModel.reduce<ModelStats | undefined>((best, model) => !best || model.totalRequests > best.totalRequests ? model : best, undefined);
-		this.summary = [`Models: ${data.byModel.length} · Providers: ${new Set(data.byModel.map(m => m.provider)).size} · Requests: ${formatInteger(sum("totalRequests"))} · Failed: ${formatInteger(sum("failedRequests"))}`, `API-equivalent estimate: ${formatEstimatedCost(sum("totalCost"), sum("unpricedRequests"))} · Unpriced requests: ${formatInteger(sum("unpricedRequests"))}`];
-		this.summary.push(`Most used: ${top ? `${identity(top.model, top.provider)} · ${formatPercent(top.totalRequests / Math.max(1, sum("totalRequests")))} of requests` : "—"}`);
+		this.metrics = [
+			{ label: "Requests", value: formatInteger(sum("totalRequests")), emphasis: "primary", spark: totals },
+			{ label: "Models", value: formatInteger(data.byModel.length), hint: `${new Set(data.byModel.map(m => m.provider)).size} providers` },
+			{ label: "Failed", value: formatInteger(sum("failedRequests")) },
+			{ label: "API estimate", value: formatEstimatedCost(sum("totalCost"), sum("unpricedRequests")), hint: `${formatInteger(sum("unpricedRequests"))} unpriced` },
+		];
 	}
 
 	private setCosts(data: CostPayload, range: Range): void {
 		this.costs = data;
 		const summary = buildCostSummary(data.costSeries);
-		this.buckets = this.axis(range, data.costSeries.map(p => p.timestamp), DAY_MS);
+		const timestamps = data.costSeries.map(p => p.timestamp);
+		this.buckets = this.axis(range, timestamps, DAY_MS);
+		this.chart.seedLatestPoint(this.buckets, timestamps);
 		this.unpriced = densify(data.costSeries, this.buckets, p => p.unpricedRequests);
 		const byKey = new Map(summary.models.map(m => [m.key, m]));
 		const models = denseSeries(pivotSeries(data.costSeries, { buckets: this.buckets, key: p => modelKey(p.model, p.provider), label: key => {
@@ -161,12 +169,18 @@ class AnalyticsFeature implements FeatureController {
 			return row(c.key, c.label, values, { ...values, cost: `${formatEstimatedCost(values.cost, summary.unpricedRequests)} · Unknown requests: ${formatInteger(summary.unpricedRequests)}`, share: summary.totalCost > 0 ? `${formatPercent(values.share)} of priced estimate` : "N/A" });
 		});
 		const priced = summary.requests - summary.unpricedRequests;
-		this.summary = [`API-equivalent estimate: ${formatEstimatedCost(summary.totalCost, summary.unpricedRequests)} · Requests: ${formatInteger(summary.requests)} · Unpriced requests: ${formatInteger(summary.unpricedRequests)}`, `Average per active day: ${formatEstimatedCost(summary.avgDailyCost, summary.unpricedRequests)} · Unknown requests: ${formatInteger(summary.unpricedRequests)} · Active days: ${summary.activeDays} · Per priced request: ${priced > 0 ? formatCost(summary.totalCost / priced) : "N/A"} · Unknown requests excluded: ${formatInteger(summary.unpricedRequests)}`, "Unpriced subscription usage is excluded, not free. Estimates use public API rates."];
-		this.summary.push(`Top model: ${summary.topModel ? `${identity(summary.topModel.model, summary.topModel.provider)} · ${formatEstimatedCost(summary.topModel.cost, summary.topModel.unpricedRequests)} · ${formatPercent(summary.topModel.share)} of priced estimate` : "Nothing priced yet"}`);
+		this.metrics = [
+			{ label: "API estimate", value: formatEstimatedCost(summary.totalCost, summary.unpricedRequests), emphasis: "primary", hint: "Public API rates", spark: densify(data.costSeries, this.buckets, p => p.cost) },
+			{ label: "Requests", value: formatInteger(summary.requests), hint: `${formatInteger(summary.unpricedRequests)} unpriced` },
+			{ label: "Per active day", value: formatEstimatedCost(summary.avgDailyCost, summary.unpricedRequests), hint: `${summary.activeDays} active UTC days` },
+			{ label: "Per priced request", value: priced > 0 ? formatCost(summary.totalCost / priced) : "N/A", hint: "Priced requests only" },
+		];
 	}
 
 	private setTools(data: ToolDashboardStats, range: Range): void {
-		this.buckets = this.axis(range, data.series.map(p => p.timestamp));
+		const timestamps = data.series.map(p => p.timestamp);
+		this.buckets = this.axis(range, timestamps);
+		this.chart.seedLatestPoint(this.buckets, timestamps);
 		const calls = denseSeries(pivotSeries(data.series, { buckets: this.buckets, key: p => p.tool, value: p => p.calls, limit: 6 }));
 		const errors = denseSeries(pivotSeries(data.series, { buckets: this.buckets, key: p => p.tool, value: p => p.errors, limit: 6 }));
 		this.modes = [{ label: "Tool call counts (all tools)", series: calls, unit: "calls" }, { label: "Tool error counts (all tools)", series: errors, unit: "errors" }, { label: "Tool call share (all tools)", series: shares(calls, densify(data.series, this.buckets, p => p.calls)), unit: "share" }, { label: "Tool error share (all tools)", series: shares(errors, densify(data.series, this.buckets, p => p.errors)), unit: "share" }];
@@ -180,7 +194,14 @@ class AnalyticsFeature implements FeatureController {
 		});
 		this.toolNames = data.byTool.map(t => t.tool).sort((a, b) => a.localeCompare(b));
 		const totals = data.byTool.reduce((s, t) => ({ calls: s.calls + t.calls, errors: s.errors + t.errors, tokens: s.tokens + t.totalTokensShare, output: s.output + t.outputTokensShare, cost: s.cost + t.costShare, unpriced: s.unpriced + t.unpricedRequestsShare, result: s.result + t.resultChars, args: s.args + t.argsChars }), { calls: 0, errors: 0, tokens: 0, output: 0, cost: 0, unpriced: 0, result: 0, args: 0 });
-		this.summary = [`Tool calls: ${formatInteger(totals.calls)} · Errors: ${formatInteger(totals.errors)} · Error rate: ${formatPercent(totals.calls > 0 ? totals.errors / totals.calls : 0)} · Distinct tools: ${data.byTool.length}`, `Attributed tokens: ${formatInteger(totals.tokens)} · Output: ${formatInteger(totals.output)} · API-equivalent cost: ${formatEstimatedCost(totals.cost, totals.unpriced)} · Unpriced: ${formatInteger(totals.unpriced)}`, `Result text: ${formatInteger(totals.result)} chars · Call arguments: ${formatInteger(totals.args)} chars · Result/call: ${formatInteger(totals.calls > 0 ? Math.round(totals.result / totals.calls) : 0)} chars · Arguments/call: ${formatInteger(totals.calls > 0 ? Math.round(totals.args / totals.calls) : 0)} chars`, "Attribution: invoking-turn tokens and cost split evenly across that turn's tool calls."];
+		this.metrics = [
+			{ label: "Tool calls", value: formatInteger(totals.calls), emphasis: "primary", hint: `${data.byTool.length} distinct tools`, spark: densify(data.series, this.buckets, p => p.calls) },
+			{ label: "Errors", value: formatInteger(totals.errors), hint: formatPercent(totals.calls > 0 ? totals.errors / totals.calls : 0) },
+			{ label: "Attributed tokens", value: formatCompact(totals.tokens), hint: `${formatCompact(totals.output)} output` },
+			{ label: "API estimate", value: formatEstimatedCost(totals.cost, totals.unpriced), hint: `${formatInteger(totals.unpriced)} unpriced` },
+			{ label: "Result text", value: `${formatCompact(totals.result)} chars`, hint: `${formatCompact(totals.calls > 0 ? Math.round(totals.result / totals.calls) : 0)} / call` },
+			{ label: "Call arguments", value: `${formatCompact(totals.args)} chars`, hint: `${formatCompact(totals.calls > 0 ? Math.round(totals.args / totals.calls) : 0)} / call` },
+		];
 	}
 
 	private rows(index: number): Row[] {
@@ -194,7 +215,7 @@ class AnalyticsFeature implements FeatureController {
 	private mode() { return this.modes[this.chart.mode % Math.max(1, this.modes.length)]; }
 
 	render(width: number, height: number): readonly string[] {
-		const lines = [`${this.id.toUpperCase()} · ${this.range} · Focus: ${this.focus === 0 ? "chart" : this.tables[this.focus - 1].title}`];
+		const lines = [sectionHeading(this.ctx, width, this.id[0].toUpperCase() + this.id.slice(1), this.range)];
 		const filter = this.toolFilter !== null && this.toolNames.includes(this.toolFilter) ? this.toolFilter : null;
 		if (this.loading) lines.push(this.ctx.theme.fg("dim", "Loading… Previous observations remain visible."));
 		if (this.error) lines.push(this.ctx.theme.fg("error", this.error));
@@ -205,54 +226,62 @@ class AnalyticsFeature implements FeatureController {
 				if (this.id === "models" && this.detailMode === "performance") lines.push(...this.renderPerformance(selected.key, width), "m requests trend");
 				else if (this.id === "models" || this.id === "tools") {
 					const trend = this.trends.get(this.id === "tools" ? selected.tool ?? selected.key : selected.key);
-					lines.push(this.id === "tools" ? "Tool call trend (all models)" : "Model request trend", ...this.trendChart.render(this.ctx, width, this.buckets, trend ? [trend] : []), ...(this.id === "models" ? ["m performance chart"] : []));
+					lines.push(this.id === "tools" ? "Tool call trend (all models)" : "Model request trend", ...this.trendChart.render(this.ctx, width, this.buckets, trend ? [trend] : [], { height: 5, unit: this.id === "tools" ? "calls" : "requests", format: formatInteger }), ...(this.id === "models" ? ["m performance chart"] : []));
 				}
 				lines.push(...fields(selected.display));
 				lines.push("b/Esc back · Tab focus · q close");
 				return wrap(lines, width);
 			}
 		}
-		// Focused controls precede charts so selection/search stays visible in short terminals.
+		lines.push(...metricGrid(this.ctx, width, this.metrics));
+		if (this.id === "costs") lines.push(this.ctx.theme.fg("dim", `${formatInteger(this.unpriced.reduce((total, count) => total + count, 0))} unpriced · API estimate excludes unpriced usage, not free`));
+		if (this.id === "tools") lines.push(this.ctx.theme.fg("dim", "Attribution: invoking-turn tokens/cost split across tool calls."));
+		lines.push(...focusTabs(this.ctx, width, ["Chart", ...this.tables.map(table => table.title)], this.focus));
 		if (this.focus > 0) lines.push(...this.renderTable(this.focus - 1, width, height, filter));
-		if (this.focus > 0) lines.push(...this.summary);
 		const mode = this.mode();
 		if (mode) {
 			this.chart.reconcile(this.buckets, mode.series.map(series => series.key));
 			lines.push(mode.label);
 			const unknown = this.unpriced.reduce((total, count) => total + count, 0);
-			if (this.id === "costs" && unknown > 0 && mode.series.every(s => s.values.every(value => value === 0))) {
+			if (this.id === "costs" && unknown > 0 && mode.series.every(s => s.values.every(value => value === 0)))
 				lines.push(`No priced cost / unknown ${formatInteger(unknown)} requests. Unpriced usage is not zero spend.`);
-				lines.push(...mode.series.map((s, i) => `${i === this.chart.seriesIndex % mode.series.length ? ">" : " "} ${this.chart.hidden.has(s.key) ? "off" : "on"} ${s.label}`));
-			} else lines.push(...this.chart.render(this.ctx, width, this.buckets, mode.series));
+			lines.push(...this.chart.render(this.ctx, width, this.buckets, mode.series, {
+				unit: mode.unit === "USD" ? "known-priced USD / day" : mode.unit, percent: mode.unit === "share", stacked: true,
+				format: mode.unit === "USD" ? formatCost : mode.unit === "share" ? formatPercent : formatCompact, height: 5,
+				formatValue: mode.unit === "USD" ? (key, value, point) => value === null || value === undefined ? "—" : formatEstimatedCost(value, this.chart.mode % 2 === 0 ? this.costSeriesUnknown.get(key)?.[point] ?? 0 : this.unpriced[point] ?? 0) : undefined,
+			}));
 			this.chart.point = Math.min(this.chart.point, Math.max(0, this.buckets.length - 1));
 			const point = this.chart.point;
-			lines.push(...mode.series.map(s => {
-				const unpriced = this.chart.mode % 2 === 0 ? this.costSeriesUnknown.get(s.key)?.[point] ?? 0 : this.unpriced[point] ?? 0;
-				return `${s.label}: ${mode.unit === "share" ? formatPercent(s.values[point] ?? 0) : mode.unit === "USD" ? `${formatEstimatedCost(s.values[point] ?? 0, unpriced)} · Unknown requests: ${formatInteger(unpriced)}` : `${formatInteger(s.values[point] ?? 0)} ${mode.unit}`}`;
-			}));
+			// The legend already contains the selected values; don't repeat it as prose.
 			if (this.id === "costs" && this.buckets.length) {
 				const timestamp = this.buckets[point];
-				lines.push(`UTC bucket: ${new Date(timestamp).toISOString()} · Unpriced requests: ${formatInteger(this.unpriced[point] ?? 0)}`);
-				// Include unpriced-only identities even when pivotSeries omits zero-cost models.
-				for (const p of this.costs?.costSeries ?? []) if (p.timestamp === timestamp) lines.push(`${identity(p.model, p.provider)} · Estimate: ${formatEstimatedCost(p.cost, p.unpricedRequests)} · Requests: ${formatInteger(p.requests)} · Unpriced requests: ${formatInteger(p.unpricedRequests)}`);
+				lines.push(this.ctx.theme.fg("dim", `${formatInteger(this.unpriced[point] ?? 0)} unpriced in selected UTC day`));
+				// Unpriced-only identities may not have a positive-cost chart series.
+				for (const p of this.costs?.costSeries ?? []) if (p.timestamp === timestamp && p.unpricedRequests > 0) lines.push(`${identity(p.model, p.provider)} · ${formatEstimatedCost(p.cost, p.unpricedRequests)} · ${formatInteger(p.unpricedRequests)} unpriced`);
 			}
 		}
-		if (this.focus === 0) lines.push(...this.summary);
 		for (let i = 0; i < this.tables.length; i++) {
+			if (this.tables.every(table => table.rows.length === 0) && (this.focus > 0 || i > 0)) continue;
 			if (i !== this.focus - 1) lines.push(...this.renderTable(i, width, height, filter));
 		}
-		lines.push(`Tab focus · m mode · n/v legend · ,/. point · Enter ${this.id === "tools" ? "select tool/details · d tool details" : "details"}${this.id === "tools" ? " · f cycle tool filter · x reset" : ""} · b/Esc back/clear · q close`);
+		lines.push(this.ctx.theme.fg("dim", this.focus === 0 ? "Tab pane · m mode · n/v legend · ,/. point" : `Tab pane · / search · o/O sort · Enter ${this.id === "tools" ? "filter · d details · f/x tool" : "details"} · Esc clear`));
 		return wrap(lines, width);
 	}
 
 	private renderTable(index: number, width: number, height: number, filter: string | null): string[] {
 		const table = this.tables[index];
-		return [`${this.focus === index + 1 ? "> " : ""}${table.title}${this.id === "tools" ? ` · d details${index === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : " · Enter filters model table"}` : ""}`,
-			...table.state.render(this.rows(index), width, Math.max(12, Math.floor(height / this.tables.length)), row => {
-				const trend = this.trends.get(this.id === "tools" ? row.tool ?? row.key : row.key);
-				const spark = trend ? ` · trend ${renderSparkline(trend.values, { width: Math.min(12, Math.max(1, width)), preset: this.ctx.theme.getSymbolPreset(), accent: text => this.ctx.theme.fg("accent", text) })}` : "";
-				return `${row.label}${spark} · ${Object.entries(row.display).filter(([key]) => !["model", "provider", "tool", "key"].includes(key)).map(([key, value]) => `${key}: ${value}`).join(" · ")}`;
-			}, this.ctx)];
+		const numeric = (key: string, header: string, priority = 0): ListColumn<Row> => ({
+			key, header, align: "right", priority, value: row => {
+				const value = row.display[key];
+				return typeof value === "number" ? Math.abs(value) < 10_000 ? formatInteger(value) : formatCompact(value) : value == null ? "—" : String(value).split(" · ")[0];
+			},
+		});
+		const columns: ListColumn<Row>[] = [{ key: "identity", header: this.id === "tools" ? "Tool / model" : index === 1 ? "Component" : "Model / provider", align: "left", value: row => row.label }];
+		if (this.id === "models") columns.push(numeric("totalRequests", "Requests"), numeric("totalCost", "Estimate", 1), numeric("errorRate", "Errors", 3), numeric("conversationTokens", "Tokens", 4), numeric("avgDuration", "Duration", 5), numeric("avgTtft", "TTFT", 6), numeric("avgTokensPerSecond", "tok/s", 7));
+		else if (this.id === "costs") columns.push(numeric("cost", "Estimate"), numeric("unpricedRequests", "Unpriced", 1), numeric("share", "Share", 3), ...(index === 0 ? [numeric("requests", "Requests", 2), numeric("perPricedRequest", "/ priced req", 4)] : []));
+		else columns.push(numeric("calls", "Calls"), numeric("errors", "Errors", 2), numeric("costShare", "Estimate", 1), numeric("totalTokensShare", "Tokens", 3), numeric("errorRate", "Error %", 4));
+		const title = table.title + (this.id === "tools" && index === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : "");
+		return [...table.state.render(this.rows(index), width, Math.max(5, Math.min(14, Math.floor(height / this.tables.length))), columns, this.ctx, title)];
 	}
 
 	private renderPerformance(key: string, width: number): string[] {
@@ -260,11 +289,17 @@ class AnalyticsFeature implements FeatureController {
 		if (!points.length) return ["No performance samples. Timing is recorded for streamed responses."];
 		this.performanceChart.reconcile(points.map(point => point.timestamp), ["tps", "ttft"]);
 		const p = points[this.performanceChart.point];
-		const series = [{ key: "tps", label: "Throughput (tok/s)", values: points.map(p => p.avgTokensPerSecond ?? 0) }, { key: "ttft", label: "TTFT (seconds)", values: points.map(p => p.avgTtftSeconds ?? 0) }];
-		const lines = [`Performance point ${this.performanceChart.point + 1}/${points.length} · ${new Date(p.timestamp).toISOString()} · Requests: ${formatInteger(p.requests)}`, `Throughput: ${formatTokensPerSecond(p.avgTokensPerSecond)} tok/s · TTFT: ${p.avgTtftSeconds === null ? "—" : `${p.avgTtftSeconds}s`}`, ...series.map((s, i) => `${i === this.performanceChart.seriesIndex % series.length ? ">" : " "} ${this.performanceChart.hidden.has(s.key) ? "off" : "on"} ${s.label}`)];
-		// Different units need independent scales, not one mixed tok/s-and-seconds axis.
-		for (const s of series) if (!this.performanceChart.hidden.has(s.key)) lines.push(...renderSeriesChart([s], { width: Math.max(1, width), height: 8, preset: this.ctx.theme.getSymbolPreset(), theme: this.ctx.theme, paint: (color, text) => this.ctx.theme.fg(color, text), dim: text => this.ctx.theme.fg("dim", text) }));
-		lines.push("n select performance series · v toggle · ,/. inspect performance point");
+		const series = [{ key: "tps", label: "Throughput (tok/s)", values: points.map(p => p.avgTokensPerSecond) }, { key: "ttft", label: "TTFT (seconds)", values: points.map(p => p.avgTtftSeconds) }];
+		const lines = [...metricGrid(this.ctx, width, [
+			{ label: "Throughput", value: `${formatTokensPerSecond(p.avgTokensPerSecond)} tok/s`, emphasis: "primary" },
+			{ label: "TTFT", value: p.avgTtftSeconds === null ? "—" : formatDurationMs(p.avgTtftSeconds * 1000) },
+			{ label: "Requests", value: formatInteger(p.requests), hint: new Date(p.timestamp).toISOString() },
+		]), ...series.map((s, i) => `${i === this.performanceChart.seriesIndex % series.length ? ">" : " "} ${this.performanceChart.hidden.has(s.key) ? "off" : "on"} ${s.label}`)];
+		// Different units retain independent scales and honest missing samples.
+		for (const s of series) if (!this.performanceChart.hidden.has(s.key)) lines.push(...renderTimeSeries(this.ctx, points.map(point => point.timestamp), [s], width, this.performanceChart.point, {
+			height: 4, unit: s.key === "tps" ? "tok/s" : "s", format: value => s.key === "tps" ? formatTokensPerSecond(value) : formatDurationMs(value * 1000), legend: false,
+		}));
+		lines.push("n/v series · ,/. point");
 		return lines;
 	}
 

@@ -464,6 +464,25 @@ test("table rows remain reachable even when the table has few columns", () => {
 	for (let i = 0; i < 25; i++) expect(rendered[i + 2]).toContain(`m${i}`);
 });
 
+test("dropping a middle low-priority column preserves numeric column identity and selection", () => {
+	const rendered = renderBands([{
+		kind: "table", title: "", selectedRow: 1,
+		columns: [
+			{ key: "name", header: "Name", align: "left" },
+			{ key: "context", header: "Context", align: "left", priority: 100 },
+			{ key: "cost", header: "Cost", align: "right", priority: 0 },
+		],
+		rows: { kind: "inline", rows: [
+			{ name: "a", context: "long lower-priority context", cost: "$12.30" },
+			{ name: "bbbb", context: "different context", cost: "$0" },
+		] },
+	}], ctx({ width: 16, innerWidth: 16 }));
+	expect(rendered.slice(1).map(row => plain(row).trim().split(/\s+/))).toEqual([
+		["a", "$12.30"], [">", "bbbb", "$0"],
+	]);
+	for (const row of rendered) expect(visibleWidth(row)).toBeLessThanOrEqual(16);
+});
+
 test("a table body pads to aligned columns with single-space gutters, never tabs", () => {
 	// /usage window rows share one geometry per grid row: labels padded to a
 	// shared width, bars aligned, suffixes right-padded (usage-dashboard.ts:731-749).

@@ -18,6 +18,7 @@ Settled design, in order:
 4. One persistent `StatsReadClient` (`src/data/client.ts`) talks by NDJSON pipes to `scripts/data-worker.ts`. That child owns initialization, synchronous DB/file reads, upstream `handleApi(Request)` routing and patched `StatsLive({ workers: 1 })`. Initial ingest and transcript watching publish unsolicited live status; committed-data invalidation refreshes the active route without resetting controller controls. Manual `s` requests sync on this same owner.
 5. Local provider usage and subscription-window/account reads have independent states. Request details/transcripts and quota reads load on demand. Cached Frustration remains passive; the real standalone judge opens lazily only for requested judging, with estimate, explicit `y` confirmation and cancellation.
 6. The original `ScreenSpec → renderScreen → renderBands` IR remains a pure chart/probe renderer. It is not the production interaction model and static `expandable` metadata is not an implemented action.
+7. Production `features/presentation.ts` reuses band metric grids and measured tables; `charts/time-series.ts` owns shared core/Provider/Gain bucket plots. Keep selected-row styling, focus tabs, units, gaps and viewport policy here rather than introduce per-route formatting systems.
 
 **There is NO webserver or plugin-owned SQL workaround.** Synthetic localhost `Request`s call upstream handlers inside the isolated worker without binding a socket. Reuse upstream aggregators, shared types and pure client/data helpers, not React components or a second data backend.
 
@@ -54,7 +55,7 @@ These are historical measurements, not current latency guarantees. SQLite work b
 | `docs/research/omp-stats-tui/REPORT.md` | **exists** | The synthesis. Read this first after `CONTEXT.md`. |
 | `docs/research/omp-stats-tui/findings/` | **exists** | F1–F11, one file per investigation. F9 (import strategies), F10 (glyph system, numeric formatting) and F11 (zero-install paths) are the load-bearing ones for implementation. |
 | `docs/adr/0001…0006` | **exists** | Six settled decisions. See §Settled Decisions. |
-| `docs/plans/` | **exists** | `2026-10-05-dashboard-parity.md` — active roadmap; the 2026-10-03 plan is historical. |
+| `docs/plans/` | **exists** | `2026-10-05-dashboard-parity.md` — workflow roadmap; `2026-10-06-ui-polish.md` — production UI decisions and mounted review. The 2026-10-03 plan is historical. |
 | `src/` | **exists** | Source entry, isolated data client/protocol/adapter, layout spec/resolver, panel, twelve feature controllers, pure screen registry, band renderer and chart/palette helpers. `dist/index.js` is the production entry. |
 | `src/tui/chrome.ts` | **exists** | The one nav grammar: `NAV_GROUPS`, `screenForHotkey`, `ago`, `chipFor`, `progressLineFor`, `sidebar`, `topbar`. The sidebar column appears when the frame band allows it; the tab strip stands in as the drawer below that. |
 | `src/tui/responsive.ts` | **exists** | `framePolicy(width)` — the frame band (`wide`/`medium`/`narrow`/`tiny`) and the chrome each band gets, derived from `BREAKPOINTS` in `src/tui/layout.ts`. Pure: no theme, no terminal, no data. |
@@ -133,7 +134,7 @@ These are the non-obvious ones. Each has already cost a future agent time once.
 
 **Free functions over classes, where the evidence says so.** `renderProgressBar(...)` has 4 first-party call sites; the `ProgressBar` class has 0.
 
-**Keep interaction and pure rendering separate.** Production routes are retained `FeatureController`s. Extend their existing focus/list/chart state for workflow changes. The `src/tui/screens/` registry and `ScreenSpec → renderScreen → renderBands` path remain pure chart/probe composition: add `Band[]` there for IR layout changes, not another hand-written screen grammar or a replacement interaction model.
+**Keep interaction and pure rendering separate.** Production routes are retained `FeatureController`s. Extend their existing focus/list/chart state for workflow changes; reuse `features/presentation.ts` and shared production plots for presentation. The `src/tui/screens/` registry and `ScreenSpec → renderScreen → renderBands` path remain pure chart/probe composition, not a replacement interaction model. Band primitives are shared with production metric/table rendering.
 
 **Scroll clamping happens in `render()`, never in the key handler.** The handler adds and calls `requestRender`; the clamp to `maxScroll` happens during render, which makes shrink-on-resize automatic.
 
@@ -240,7 +241,7 @@ Dead ends already disproven by experiment. Re-testing any of these wastes hours.
 - **Do not port the React dashboard**, and do not reuse `UsageDashboardComponent` directly — read it, do not import it.
 - **Do not take the native/TSP rendering backend.** `usage-dashboard` implements a second rendering backend behind a capability probe; the ANSI path is the one we can rely on.
 - **Do not print to stdout from extension code.** It corrupts the TUI.
-- **Do not hand-write a multi-series chart.** `src/tui/charts/compose.ts` has no geometry of its own: every mark comes out of `renderDailyBars` called once per series, with band heights sized by each series' peak relative to the shared maximum. `test/chart-primitives.test.ts` asserts this by byte equality, so a second rendering path fails the suite rather than shipping beside the first.
+- **Do not duplicate charts per feature.** Production bucket plots use `src/tui/charts/time-series.ts` with injected theme, formatted units and explicit null gaps. The separate pure IR/probe path uses `compose.ts` over `renderDailyBars`; its composition tests do not exercise production route interaction. Calendars, categorical version rates and trace timelines keep their existing domain-specific primitives.
 - **Do not emit a full-width rule in any body.** `src/tui/band.ts` G5: `─`, `━` or `═` inside a band is a bug, full stop. The only rule in the whole panel is the `PanelDivider` between body and footer (G6). `test/band.test.ts` asserts G5 literally for every band kind and every preset.
 - **Do not hardcode colours or heading glyphs.** Use active omp theme roles via `src/tui/palette.ts` (`PALETTE`/`SERIES_COLORS`, resolved for the current theme). Pure modules receive theme/paint arguments and the feature context is updated per render. Heading glyphs use `statsIcon`; data ink uses the chart glyph policy.
 - **Do not reimplement `pivotSeries`, `densify`, or `buildCostSummary`.** Import them from `@oh-my-pi/omp-stats/client/data/*` and call the host's function on the same input. `test/parity.test.ts` calls the web's own functions and asserts our resolver answers identically, so a second implementation of the arithmetic fails rather than drifting.

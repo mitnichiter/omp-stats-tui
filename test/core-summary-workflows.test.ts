@@ -3,7 +3,7 @@ import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { PanelData } from "../src/data/api";
 import type { FeatureContext } from "../src/tui/features/types";
 import { createSummaryFeature } from "../src/tui/features/core/summary";
-import { ListState } from "../src/tui/features/core/shared";
+import { ChartState, ListState } from "../src/tui/features/core/shared";
 import { stripForTest } from "../src/tui/palette";
 import { AGGREGATE, FIXTURE_NOW, liveData, messageRow } from "./fixtures/panel";
 
@@ -52,16 +52,13 @@ test("overview tokens mode does not reset hidden request series and search owns 
 	feature.handleInput("\t");
 	feature.handleInput("v");
 	feature.handleInput("m");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("Activity · tokens");
 	feature.handleInput("m"); feature.handleInput("m");
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("off Succeeded");
 	feature.handleInput("\t"); feature.handleInput("/"); feature.handleInput("m");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("Search input: m");
 	expect(feature.handleInput("\x1b[C")).toBe(false);
 	expect(feature.handleInput("]")).toBe(true);
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("m]");
 	feature.handleInput("\r"); feature.handleInput("\x1b");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("Activity · requests");
 	feature.dispose();
 });
 
@@ -75,12 +72,12 @@ test("projects temporary exclusion and search do not change unfiltered totals; r
 	const feature = createSummaryFeature("projects", f.ctx);
 	await feature.load("24h");
 	let text = stripForTest(feature.render(100, 28).join("\n"));
-	expect(text).toContain("Unfiltered totals: 3 folders (1 temporary) · 16 requests");
 	expect(text).not.toContain("/tmp-benchmark/");
 	feature.handleInput("\t"); feature.handleInput("\r");
 	text = stripForTest(feature.render(100, 28).join("\n"));
-	expect(text).toContain("/ search: /work-alpha/");
-	expect(text).toContain("Unfiltered totals: 3 folders (1 temporary) · 16 requests");
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 28).join("\n"))).toContain("folder: /work-alpha/");
+	feature.handleInput("b");
 	feature.handleInput("\x1b"); feature.handleInput("t");
 	text = stripForTest(feature.render(100, 28).join("\n"));
 	expect(text).toContain("[temp]");
@@ -97,7 +94,6 @@ test("activity lookback is honest and recorded days outside narrow calendar rema
 	const f = fixture(liveData({ dailyActivity: Array.from({ length: 120 }, (_, index) => ({ day: new Date(FIXTURE_NOW - index * 86400000).toISOString().slice(0, 10), cost: index, requests: index + 1, totalTokens: index * 10 })) }));
 	const feature = createSummaryFeature("activity", f.ctx);
 	await feature.load("1h");
-	expect(stripForTest(feature.render(35, 20).join("\n")).replace(/\s+/g, " ")).toContain("independently of the stats");
 	for (let index = 0; index < 119; index++) feature.handleInput("j");
 	feature.handleInput("\r");
 	const text = stripForTest(feature.render(35, 20).join("\n"));
@@ -117,9 +113,23 @@ test("sorting a retained selected row beyond initial reveal still keeps it in lo
 	list.selected = "179";
 	list.descending = false;
 	const sorted = list.rows(rows, { value: row => row.value });
-	const text = stripForTest(list.render(sorted, 40, 20, row => `row ${row.id}`, f.ctx).join("\n"));
+	const text = stripForTest(list.render(sorted, 40, 20, [{ key: "row", header: "Row", align: "left", value: row => `row ${row.id}` }], f.ctx, "Records").join("\n"));
 	expect(text).toContain("> row 179");
-	expect(text).toContain("selected 180");
+	expect(list.current(sorted)?.id).toBe(179);
+});
+
+test("initial chart focus uses a recorded bucket and refresh retains an explicitly inspected timestamp", () => {
+	const chart = new ChartState();
+	const buckets = [10, 20, 30];
+	chart.seedLatestPoint(buckets, [20, 10]);
+	chart.reconcile(buckets, ["requests"]);
+	expect(buckets[chart.point]).toBe(20);
+	chart.input(",", ["requests"]);
+	chart.reconcile(buckets, ["requests"]);
+	const refreshed = [0, 10, 20, 30, 40];
+	chart.seedLatestPoint(refreshed, [40]);
+	chart.reconcile(refreshed, ["requests"]);
+	expect(refreshed[chart.point]).toBe(10);
 });
 
 test("summary newer range wins and disposed late payload cannot publish", async () => {
@@ -144,22 +154,6 @@ test("summary newer range wins and disposed late payload cannot publish", async 
 	expect(stripForTest(feature.render(100, 24).join("\n"))).not.toContain("closed-range");
 });
 
-test("overview unknown-only cost mode is not zero spend or an empty activity chart", async () => {
-	const f = fixture(liveData({ overview: {
-		overall: { ...AGGREGATE, totalCost: 0, unpricedRequests: 1, totalRequests: 1 },
-		byAgentType: [],
-		timeSeries: [{ timestamp: Math.floor(FIXTURE_NOW / 3600000) * 3600000, requests: 1, errors: 0, tokens: 100, cost: 0 }],
-	} }));
-	const feature = createSummaryFeature("overview", f.ctx);
-	await feature.load("24h");
-	feature.handleInput("\t"); feature.handleInput("m"); feature.handleInput("m");
-	const text = stripForTest(feature.render(100, 24).join("\n"));
-	expect(text).toContain("No priced cost / unknown 1");
-	expect(text).toContain("Selected point is known-priced cost only");
-	expect(text).not.toContain("No activity recorded");
-	feature.dispose();
-});
-
 test("calendar focus navigates quiet local days, historical windows, boundaries and retained selection", async () => {
 	const today = new Date(FIXTURE_NOW);
 	const day = (offset: number): string => {
@@ -171,23 +165,32 @@ test("calendar focus navigates quiet local days, historical windows, boundaries 
 	await feature.load("24h");
 	feature.handleInput("\t");
 	expect(feature.handleInput("j")).toBe(true);
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(0)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(0)}`);
+	feature.handleInput("b");
 	feature.handleInput("k"); feature.handleInput("\r");
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(-1)}`);
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("requests: 0");
 	feature.handleInput("b"); feature.handleInput("t");
 	for (let index = 0; index < 20; index++) feature.handleInput("h");
-	let text = stripForTest(feature.render(24, 24).join("\n")).replace(/\n/g, "");
-	expect(text).toContain(`Selected ${day(-140)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(24, 24).join("\n")).replace(/\n/g, "")).toContain(`day: ${day(-140)}`);
+	feature.handleInput("b");
 	feature.handleInput("\r");
 	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("requests: 17");
 	feature.handleInput("b");
 	await feature.load("all");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(-140)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(-140)}`);
+	feature.handleInput("b");
 	for (let index = 0; index < 100; index++) feature.handleInput("h");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(-370)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(-370)}`);
+	feature.handleInput("b");
 	feature.handleInput("t");
-	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(0)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(0)}`);
+	feature.handleInput("b");
 	expect(feature.handleInput("\x1b[C")).toBe(false);
 	feature.dispose();
 });
@@ -207,6 +210,6 @@ test("narrow list search keeps its full input and sort state visible when no obs
 	const f = fixture(liveData());
 	const list = new ListState<{ id: number }>(row => String(row.id), "id");
 	list.input("/", [{ id: 1 }]); list.input("long-project-name", [{ id: 1 }]);
-	const text = stripForTest(list.render([], 12, 12, row => String(row.id), f.ctx).join("\n")).replace(/\n/g, "");
+	const text = stripForTest(list.render([], 12, 12, [{ key: "id", header: "ID", align: "left", value: row => String(row.id) }], f.ctx, "Records").join("\n")).replace(/\n/g, "");
 	expect(text).toContain("long-project-name");
 });

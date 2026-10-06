@@ -470,9 +470,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 	const fullTray = tray(RANGES);
 	const oneTray = tray([opts.range]);
 
-	// The cluster's own gap is the web's `.topbar-actions { gap: 8px }`
-	// (styles.css:460). The brand↔cluster gap is the spacer, and it is BOUNDED —
-	// see the note on the cap below.
+	// The controls form one right-aligned cluster inside the measured viewport.
 	const cluster = (parts: readonly string[]): string => parts.filter(part => part !== "").join(TOPBAR_CLUSTER_GAP);
 	const layouts: readonly (readonly string[])[] =
 		mode === "full"
@@ -486,22 +484,7 @@ export function topbar(theme: Theme, opts: TopbarOptions): string {
 		const actions = cluster(layout);
 		const actionsWidth = visibleWidth(actions);
 		if (brandWidth + TOPBAR_SPACER_MIN + actionsWidth > innerWidth) continue;
-		// THE CAP. The web's spacer is `flex: 1` — every cell the viewport has
-		// left — because a browser can justify unbounded slack between two fixed
-		// objects. A terminal cannot: there is no viewport, so the slack that
-		// reads as calm breathing room at 1440px reads as a broken row at 150
-		// columns. So the spacer is capped at the width OF THE CLUSTER IT
-		// SEPARATES. The rule is the cap's own justification — a gap wider than
-		// the thing it divides stops reading as "these are apart" and starts
-		// reading as "something failed to draw" — and it is measured from the
-		// cluster rather than picked, so a cluster that gains or loses a segment
-		// moves its own bound instead of drifting out of scale with it.
-		//
-		// The cap never costs the minimum separation, so the chip cannot weld
-		// itself back onto the wordmark at any width; where the row is too
-		// narrow for the cap to bind, the spacer is simply whatever is left,
-		// which is the web's behaviour in miniature.
-		const gap = Math.min(innerWidth - brandWidth - actionsWidth, actionsWidth);
+		const gap = innerWidth - brandWidth - actionsWidth;
 		return `${brand}${" ".repeat(gap)}${actions}`;
 	}
 	// Below even the narrowest layout, the brand and the active range still have

@@ -4,8 +4,9 @@ import { compactTokens, formatBytes, formatInteger, formatPercent } from "../for
 import type { Range } from "../../data/ranges";
 import type { FeatureContext, FeatureController } from "./types";
 import { projectOptions, savingsHistory } from "./provider-gain-data";
-import { boundLines, recordViewport, timeline } from "./provider-gain-chart";
-import { renderSparkline } from "../charts/sparkline";
+import { boundLines, recordViewport } from "./provider-gain-chart";
+import { renderTimeSeries } from "../charts/time-series";
+import { dataTable, focusTabs, metricGrid, sectionHeading } from "./presentation";
 
 const SORTS = ["tokens", "source", "share", "bytes", "hits", "reduction"] as const;
 type SourceRow = GainSourceTotals & { source: string; share: number };
@@ -21,6 +22,7 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 	let focus = 0;
 	let point = -1;
 	let selected = 0;
+	let selectedSource: string | null = null;
 	let sort = 0;
 	let descending = true;
 	let reveal = 12;
@@ -59,40 +61,60 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 	return {
 		load,
 		render(width, height) {
-			const lines = [
-				ctx.theme.bold(`Gain · ${range} · ${project ?? "All projects"}`),
-				...wrapTextWithAnsi(ctx.theme.fg("dim", "Tab/Shift-Tab focus · p/P project · h/l day · j/k source · o sort · d direction · Enter detail · + reveal"), width),
-			];
-			lines.push(`Focus: ${["Project", "Savings history", "Sources"][focus]}${loading ? " · Loading scoped savings…" : ""}`);
+			const lines = [ctx.theme.bold(`Gain · ${range} · ${project ?? "All projects"}`)];
 			if (error) lines.push(ctx.theme.fg("error", `Savings error: ${error}${data ? " · showing previous reading for this scope" : ""}`));
+			if (data) {
+				const t = data.overall;
+				lines.push(...metricGrid(ctx, width, [
+					{ label: "Saved tokens", value: compactTokens(t.savedTokens), emphasis: "primary" },
+					{ label: "Saved bytes", value: formatBytes(t.savedBytes), hint: `${formatInteger(t.hits)} recorded hits` },
+					{ label: "Reduction", value: t.reductionPercent === null ? "—" : formatPercent(t.reductionPercent), hint: t.reductionPercent === null ? "original size not recorded" : "recorded original bytes" },
+				]));
+			}
+			lines.push(...focusTabs(ctx, width, ["Projects", "History", "Sources"], focus));
+			const hint = focus === 0 ? "p/P project · j/k select" : focus === 1 ? "h/l UTC day · p/P project" : "j/k source · o sort · d direction · Enter detail · + reveal";
+			lines.push(...wrapTextWithAnsi(ctx.theme.fg("dim", `Tab focus · ${hint}${loading ? " · loading" : ""}`), width));
+			if (!data) { lines.push(loading ? "Loading scoped savings…" : "No savings payload available"); return boundLines(lines, width); }
+			const t = data.overall;
+			const history = savingsHistory(data.timeSeries, range, ctx.now());
+			const empty = t.hits === 0 && data.timeSeries.length === 0;
+			if (empty) lines.push(...wrapTextWithAnsi(ctx.theme.fg("muted", `No savings recorded for ${project ?? "all projects"} in ${range}. ${range === "all" ? "Savings appear when snapcompact compacts tool output." : "Try a longer range."}`), width));
 			if (focus === 0) {
 				const options = projectOptions(projects, project);
-				const viewport = recordViewport(options, options.indexOf(project), height, reveal);
-				lines.push(...viewport.rows.map(p => `${p === project ? "▶" : " "} ${p ?? "All projects"}`));
-				if (viewport.rows.length < options.length) lines.push(`Projects ${viewport.start + 1}–${viewport.start + viewport.rows.length}/${options.length} · p/P selects`);
+				const viewport = recordViewport(options, options.indexOf(project), Math.max(1, height - lines.length + 10), reveal);
+				lines.push(...dataTable(ctx, width, "Projects", [{ key: "project", header: "Project", align: "left" }], viewport.rows.map(p => ({ project: p ?? "All projects" })), options.indexOf(project) - viewport.start));
 			}
-			if (!data) { lines.push(loading ? "Loading savings…" : "No savings payload available"); return boundLines(lines, width); }
-			const t = data.overall;
-			lines.push(`Saved tokens ${formatInteger(t.savedTokens)} · bytes ${formatBytes(t.savedBytes)} · hits ${formatInteger(t.hits)}`,
-				`Reduction ${t.reductionPercent === null ? "— (original size not recorded)" : formatPercent(t.reductionPercent)} · tokens/hit ${t.hits > 0 ? compactTokens(t.savedTokens / t.hits) : "—"}`);
-			const history = savingsHistory(data.timeSeries, range, ctx.now());
-			if (t.hits === 0 && data.timeSeries.length === 0) lines.push(`No savings recorded for ${project ?? "all projects"} in ${range}. ${range === "all" ? "Savings appear when snapcompact compacts tool output." : "Try a longer range."}`);
-			if (focus === 1) {
-				lines.push(ctx.theme.bold("Saved per UTC day"), ...timeline(ctx, history.axis, [{ key: "daily", label: "Saved per day", values: history.daily }], width, point));
-				lines.push(ctx.theme.bold("Cumulative saved tokens (range-scoped)"), ...timeline(ctx, history.axis, [{ key: "cumulative", label: "Cumulative", values: history.cumulative, colorIndex: 1 }], width, point, { cumulative: true }));
+			if (!empty && focus === 1) {
 				const i = Math.max(0, Math.min(history.axis.length - 1, point));
-				if (history.axis.length) lines.splice(3, 0, `Day ${new Date(history.axis[i]).toISOString().slice(0, 10)} · saved ${formatInteger(history.daily[i])} · cumulative ${formatInteger(history.cumulative[i])}`);
-				lines.push(`Daily spark (newest ${Math.min(history.daily.length, Math.max(1, width - 15))} days)`, renderSparkline(history.daily, {
-					width: Math.max(1, width - 15), preset: ctx.theme.getSymbolPreset(), accent: cell => ctx.theme.fg("success", cell),
-				}));
+				lines.push(sectionHeading(ctx, width, "Saved per UTC day", history.axis.length ? new Date(history.axis[i]).toISOString().slice(0, 10) : "", true));
+				if (history.axis.length) lines.push(`Day ${new Date(history.axis[i]).toISOString().slice(0, 10)} · saved ${formatInteger(history.daily[i])} · cumulative ${formatInteger(history.cumulative[i])}`);
+				const chartHeight = Math.max(2, Math.min(4, Math.floor((height - lines.length - 10) / 2)));
+				lines.push(...renderTimeSeries(ctx, history.axis, [{ key: "daily", label: "Saved per day", values: history.daily }], width, point, { format: compactTokens, unit: "tokens", height: chartHeight, legend: false }));
+				lines.push(sectionHeading(ctx, width, "Cumulative saved tokens", "range-scoped", true));
+				lines.push(...renderTimeSeries(ctx, history.axis, [{ key: "cumulative", label: "Cumulative", values: history.cumulative, colorIndex: 1 }], width, point, { cumulative: true, format: compactTokens, unit: "tokens", height: chartHeight, legend: false }));
 			}
 			const sourceRows = rows();
-			lines.push(ctx.theme.bold(`By source · ${SORTS[sort]} ${descending ? "↓" : "↑"} · ${Math.min(reveal, sourceRows.length)}/${sourceRows.length}`));
+			const retained = sourceRows.findIndex(r => r.source === selectedSource);
+			selected = retained >= 0 ? retained : Math.max(0, Math.min(selected, sourceRows.length - 1));
 			const chosen = sourceRows[selected];
-			if (chosen && expanded) lines.splice(3, 0, `Source ${chosen.source} · saved ${formatInteger(chosen.savedTokens)} tokens · ${formatBytes(chosen.savedBytes)} bytes · ${formatInteger(chosen.hits)} hits`, `Share ${formatPercent(chosen.share)} · reduction ${chosen.reductionPercent === null ? "— (original size unknown)" : formatPercent(chosen.reductionPercent)} · original ${formatBytes(chosen.originalBytes)} · output ${formatBytes(chosen.outputBytes)}`);
-			const view = recordViewport(sourceRows, selected, height, reveal);
-			lines.push("Source | Saved tokens | Share | Bytes | Hits | Reduction");
-			lines.push(...view.rows.map((r, i) => `${i + view.start === selected ? "▶" : " "} ${r.source} | ${compactTokens(r.savedTokens)} | ${formatPercent(r.share)} | ${formatBytes(r.savedBytes)} | ${formatInteger(r.hits)} | ${r.reductionPercent === null ? "—" : formatPercent(r.reductionPercent)}`));
+			if (chosen) selectedSource = chosen.source;
+			if (chosen && expanded && !empty) {
+				lines.push(sectionHeading(ctx, width, chosen.source, "recorded source detail", focus === 2));
+				lines.push(...wrapTextWithAnsi(`Saved ${formatInteger(chosen.savedTokens)} tokens · ${formatBytes(chosen.savedBytes)} · ${formatInteger(chosen.hits)} hits · ${chosen.hits > 0 ? compactTokens(chosen.savedTokens / chosen.hits) : "—"} tokens/hit`, width));
+				lines.push(...wrapTextWithAnsi(`Share ${formatPercent(chosen.share)} · reduction ${chosen.reductionPercent === null ? "— (original size unknown)" : formatPercent(chosen.reductionPercent)} · original ${formatBytes(chosen.originalBytes)} · output ${formatBytes(chosen.outputBytes)}`, width));
+			}
+			if (!empty && focus !== 1) {
+				lines.push(sectionHeading(ctx, width, "By source", `${SORTS[sort]} ${descending ? "↓" : "↑"} · ${sourceRows.length} sources`, focus === 2));
+				const viewport = recordViewport(sourceRows, selected, Math.max(1, height - lines.length + 10), reveal);
+				lines.push(...dataTable(ctx, width, "", [
+					{ key: "source", header: "Source", align: "left" },
+					{ key: "tokens", header: "Saved tokens", align: "right" },
+					{ key: "hits", header: "Hits", align: "right", priority: 1 },
+					{ key: "bytes", header: "Bytes", align: "right", priority: 2 },
+					{ key: "share", header: "Share", align: "right", priority: 3 },
+					{ key: "reduction", header: "Reduction", align: "right", priority: 4 },
+				], viewport.rows.map(r => ({ source: r.source, tokens: compactTokens(r.savedTokens), hits: formatInteger(r.hits), bytes: formatBytes(r.savedBytes), share: formatPercent(r.share), reduction: r.reductionPercent === null ? "—" : formatPercent(r.reductionPercent) })), selected - viewport.start));
+			}
 			return boundLines(lines, width);
 		},
 		handleInput(input) {
@@ -101,14 +123,17 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 			else if (input === "p" || input === "P") {
 				const options = projectOptions(projects, project);
 				project = options[(options.indexOf(project) + (input === "p" ? 1 : options.length - 1)) % options.length];
-				data = null; point = -1; selected = 0; void load(range);
+				data = null; point = -1; selected = 0; selectedSource = null; void load(range);
 			} else if (input === "h" || input === "l") {
 				const count = data ? savingsHistory(data.timeSeries, range, ctx.now()).axis.length : 0;
 				point = Math.max(0, Math.min(count - 1, point + (input === "l" ? 1 : -1)));
 				focus = 1;
 			} else if (input === "j" || input === "k" || input === "\x1b[A" || input === "\x1b[B") {
 				if (focus === 0) return this.handleInput(input === "j" || input === "\x1b[B" ? "p" : "P");
-				selected = Math.max(0, Math.min(rows().length - 1, selected + (input === "j" || input === "\x1b[B" ? 1 : -1))); focus = 2;
+				const sourceRows = rows();
+				const retained = sourceRows.findIndex(r => r.source === selectedSource);
+				selected = Math.max(0, Math.min(sourceRows.length - 1, (retained >= 0 ? retained : selected) + (input === "j" || input === "\x1b[B" ? 1 : -1)));
+				selectedSource = sourceRows[selected]?.source ?? null; focus = 2;
 			} else if (input === "o") sort = (sort + 1) % SORTS.length;
 			else if (input === "d") descending = !descending;
 			else if (input === "+" || input === "=") reveal += 12;

@@ -154,6 +154,13 @@ The production route contract: `load(range)`, `render(width, height)`, `handleIn
 Controllers retain focus, search, sort, selection and chart controls across screen changes. The panel
 owns global navigation, scrolling and mount lifetime, and updates the mutable injected theme per render.
 
+**Production presentation**:
+`src/tui/features/presentation.ts` bridges retained controllers to shared band metric grids and
+measured tables, adding current-theme selection, compact focus tabs and section headings.
+`src/tui/charts/time-series.ts` renders production native-bucket plots for core analytics, Providers
+and Gain with formatted units, real null gaps, stable series identity and selected-point legends.
+It does not fabricate observations or replace domain-specific calendars, version-rate plots or traces.
+
 **Stats read client**:
 One persistent isolated child per mounted panel, with request/reply and unsolicited live NDJSON over pipes
 (`src/data/client.ts`, `scripts/data-worker.ts`). The worker owns DB initialization, queries/transcript reads

@@ -1,6 +1,8 @@
 import { truncateToWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import type { FeatureContext } from "../types";
-import { renderSeriesChart } from "../../charts/compose";
+import { renderTimeSeries, type TimeSeriesOptions } from "../../charts/time-series";
+import type { Column } from "../../band";
+import { dataTable, sectionHeading } from "../presentation";
 
 /** Wrap prose/details; chart and list rows should be clipped instead. */
 export function wrap(lines: readonly string[], width: number): string[] {
@@ -17,6 +19,9 @@ export function fields(value: unknown, prefix = ""): string[] {
 
 export type SortValue = string | number | null | undefined;
 export type Sorters<T> = Record<string, (row: T) => SortValue>;
+export interface ListColumn<T> extends Omit<Column, "cell"> {
+	value: (row: T) => string;
+}
 export class ListState<T> {
 	search = "";
 	editing = false;
@@ -56,6 +61,7 @@ export class ListState<T> {
 		if (this.editing) {
 			if (data === "\x1b" || data === "\r" || data === "\n") this.editing = false;
 			else if (data === "\x7f" || data === "\b") this.search = [...this.search].slice(0, -1).join("");
+			else if (data === "\x15") this.search = "";
 			else if (!/[\x00-\x1f\x7f]/.test(data)) this.search += data;
 			return true;
 		}
@@ -68,29 +74,27 @@ export class ListState<T> {
 		if (data === "a") { this.reveal = Infinity; return true; }
 		return false;
 	}
-	render(rows: readonly T[], width: number, height: number, label: (row: T) => string, ctx: FeatureContext): string[] {
-		const searchLine = `${this.editing ? "Search input" : "/ search"}: ${this.search || "—"}${this.editing ? " ▏ (Enter finish, Esc cancel)" : ""}`;
-		if (!rows.length) return wrap([searchLine, ctx.theme.fg("dim", "No rows match. Clear filters or change the range.")], width);
+	render(rows: readonly T[], width: number, height: number, columns: readonly ListColumn<T>[], ctx: FeatureContext, title: string): string[] {
+		const search = this.editing ? [`Search: ${this.search || "—"}  · Enter/Esc finish · Ctrl-U clear`] : this.search ? [`Search: ${this.search}`] : [];
+		if (!rows.length) return [sectionHeading(ctx, width, title), ...wrap(search, width),
+			...wrap([ctx.theme.fg("dim", this.search ? "No matches. Esc clears search." : "No visible records. Change range or filters.")], width)];
 		const current = this.current(rows)!;
 		const index = rows.indexOf(current);
 		this.reveal = Math.max(this.reveal, index + 1);
-		const count = Math.max(1, Math.min(Math.max(3, height - 8), this.reveal, rows.length));
+		const count = Math.max(1, Math.min(Math.max(1, height - 4 - search.length), this.reveal, rows.length));
 		const start = Math.max(0, Math.min(index - Math.floor(count / 2), Math.min(rows.length, this.reveal) - count));
-		const result = rows.slice(start, start + count).map(row => {
-			const selected = this.key(row) === this.key(current);
-			const line = truncateToWidth(`${selected ? ">" : " "} ${label(row)}`, Math.max(1, width));
-			return selected ? ctx.theme.fg("accent", line) : line;
-		});
-		return [...wrap([searchLine, `Rows ${start + 1}–${start + count} / ${rows.length} · selected ${index + 1} · ${this.sort} ${this.descending ? "↓" : "↑"}`], width), ...result,
-			...wrap(["j/k move (all rows reachable) · + reveal more · a reveal all · Enter details · o/O sort/reverse"], width)];
+		const records = rows.slice(start, start + count).map(row => Object.fromEntries(columns.map(column => [column.key, column.value(row)])));
+		return [sectionHeading(ctx, width, title, `${start + 1}–${start + count}/${rows.length} · ${this.sort} ${this.descending ? "↓" : "↑"}`),
+			...wrap(search, width), ...dataTable(ctx, width, "", columns, records, index - start),
+			...wrap([ctx.theme.fg("dim", "/ search · j/k select · Enter inspect · o/O sort · +/a reveal")], width)];
 	}
 }
 
-export interface CoreSeries { key: string; label: string; values: readonly number[]; }
+export interface CoreSeries { key: string; label: string; values: readonly (number | null)[]; }
 export class ChartState {
 	mode = 0;
 	seriesIndex = 0;
-	point = 0;
+	point = -1;
 	private timestamp: number | null = null;
 	private selectedSeries: string | null = null;
 	readonly hidden = new Set<string>();
@@ -105,26 +109,30 @@ export class ChartState {
 		if (data === ".") { this.point++; this.timestamp = null; return true; }
 		return false;
 	}
+	/** Initial focus follows the newest recorded bucket, not a densified quiet endpoint. */
+	seedLatestPoint(buckets: readonly number[], timestamps: Iterable<number>): void {
+		if (this.point >= 0 || !buckets.length) return;
+		let latest = -Infinity;
+		for (const timestamp of timestamps) latest = Math.max(latest, timestamp);
+		this.point = buckets.length - 1;
+		for (let i = buckets.length - 1; i >= 0; i--) {
+			if (buckets[i] <= latest) { this.point = i; break; }
+		}
+	}
 	reconcile(buckets: readonly number[], keys: readonly string[]): void {
 		const point = this.timestamp === null ? -1 : buckets.indexOf(this.timestamp);
-		this.point = point >= 0 ? point : Math.max(0, Math.min(this.point, buckets.length - 1));
-		if (this.timestamp === null && buckets.length) this.timestamp = buckets[this.point];
+		if (buckets.length) {
+			this.point = point >= 0 ? point : Math.max(0, Math.min(this.point < 0 ? buckets.length - 1 : this.point, buckets.length - 1));
+			if (this.timestamp === null) this.timestamp = buckets[this.point];
+		}
 		const series = this.selectedSeries === null ? -1 : keys.indexOf(this.selectedSeries);
 		this.seriesIndex = series >= 0 ? series : this.seriesIndex % Math.max(1, keys.length);
 		if (this.selectedSeries === null && keys.length) this.selectedSeries = keys[this.seriesIndex];
 	}
-	render(ctx: FeatureContext, width: number, buckets: readonly number[], series: readonly CoreSeries[]): string[] {
-		if (!buckets.length || !series.length) return ["No chart observations in this range."];
+	render(ctx: FeatureContext, width: number, buckets: readonly number[], series: readonly CoreSeries[], options: TimeSeriesOptions = {}): string[] {
 		this.reconcile(buckets, series.map(row => row.key));
-		const active = series.filter(row => !this.hidden.has(row.key));
-		const selected = series[this.seriesIndex];
-		const inspection = [`Point ${this.point + 1}/${buckets.length} · ${new Date(buckets[this.point]).toISOString()}`,
-			...series.map(row => `${row.key === selected?.key ? ">" : " "} ${this.hidden.has(row.key) ? "off" : "on"} ${row.label}: ${row.values[this.point] ?? "—"}`)];
-		return [...wrap([inspection[0]], width), ...wrap(inspection.slice(1), width),
-			...(active.length === 0 ? wrap(["All chart series are hidden; n/v restores a series."], width)
-				: active.every(row => row.values.every(value => value <= 0)) ? wrap(["No positive measured values in the visible series."], width)
-				: renderSeriesChart(active, { width: Math.max(1, width), height: Math.max(8, active.length * 2),
-					preset: ctx.theme.getSymbolPreset(), theme: ctx.theme, paint: (color, text) => ctx.theme.fg(color, text), dim: text => ctx.theme.fg("dim", text) })),
-			...wrap(["m mode · n select series · v toggle selected · ,/. inspect previous/next point"], width)];
+		return [...renderTimeSeries(ctx, buckets, series, width, this.point, {
+			...options, hidden: this.hidden, selectedKey: series[this.seriesIndex]?.key,
+		}), ...wrap([ctx.theme.fg("dim", "m mode · n legend · v visibility · ,/. point")], width)];
 	}
 }

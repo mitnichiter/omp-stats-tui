@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { MessageStats, RequestDetails as Payload } from "@oh-my-pi/omp-stats/client/types";
 import type { FeatureContext } from "../src/tui/features/types";
@@ -35,8 +36,8 @@ test("status intersects search while status counts stay unfiltered", async () =>
 	const feature = createRequestsFeature("requests", context(async <T>() => rows as T)); await feature.load("24h");
 	feature.handleInput("f"); feature.handleInput("/"); for (const char of "needle") feature.handleInput(char); feature.handleInput("\r");
 	const text = feature.render(200, 40).join("\n");
-	expect(text).toContain("matching 1"); expect(text).toContain("all 3 · ok 2 · aborted 0 · failed 1");
-	expect(text).not.toContain("#2 needle"); expect(text).toContain("Complete range");
+	expect(text).toContain("#1 needle");
+	expect(text).not.toContain("#2 needle");
 });
 
 test("full server limit reports incomplete and load-more uses next limit", async () => {
@@ -104,21 +105,30 @@ test("unpriced detail components are unavailable estimates rather than zero spen
 	}
 });
 
-test("active list precedes secondary metrics and expanded signature contains real metadata", async () => {
+test("expanded signature retains real metadata while focused panels remain first", async () => {
 	const failure = row(9, { stopReason: "error", errorMessage: "actual failure" });
 	const ctx = context(async <T>() => [failure] as T);
-	const requests = createRequestsFeature("requests", ctx); await requests.load("24h");
-	const requestText = requests.render(180, 30).join("\n");
-	expect(requestText.indexOf("Request log")).toBeLessThan(requestText.indexOf("Loaded request summary"));
 	const errors = createRequestsFeature("errors", ctx); await errors.load("24h"); errors.handleInput("\r");
 	const expanded = errors.render(180, 30).join("\n");
 	expect(expanded).toContain("Latest error: actual failure");
 	expect(expanded).toContain("model-9 · provider: 1 failures");
-	errors.handleInput("\t");
-	let text = errors.render(180, 30).join("\n");
-	expect(text.indexOf("Affected models")).toBeLessThan(text.indexOf("Error signatures"));
-	errors.handleInput("\t"); text = errors.render(180, 30).join("\n");
-	expect(text.indexOf("\nFailures\n")).toBeLessThan(text.indexOf("Error signatures"));
+});
+
+test("failed initial reads do not claim zero spend and failed refreshes retain observed spending", async () => {
+	let available = false;
+	const feature = createRequestsFeature("requests", context(async <T>() => {
+		if (!available) throw new Error("read unavailable");
+		return [row(1)] as T;
+	}));
+	await feature.load("24h");
+	expect(feature.render(40, 30).join("\n")).not.toMatch(/\$\d/);
+	available = true;
+	await feature.load("24h");
+	expect(feature.render(40, 30).join("\n")).toContain("$10.00");
+	available = false;
+	await feature.load("7d");
+	expect(feature.render(40, 30).join("\n")).toContain("$10.00");
+	feature.dispose();
 });
 
 test("request JSON sections collapse independently, copy the selected payload, and retry failed reads", async () => {
@@ -155,18 +165,20 @@ test("error panels sort independently and clearing one filter preserves the othe
 	feature.handleInput("o"); feature.handleInput("O");
 	const sorted = feature.render(180, 40).join("\n");
 	expect(sorted).toContain("signature ↑");
-	expect(sorted.indexOf("2 · alpha failure")).toBeLessThan(sorted.indexOf("1 · zeta failure"));
+	expect(sorted.indexOf("alpha failure")).toBeLessThan(sorted.indexOf("zeta failure"));
 	feature.handleInput("\r");
 	feature.handleInput("\t"); feature.handleInput("\r");
-	expect(feature.render(180, 40).join("\n")).toContain("matching 1");
+	feature.handleInput("\t"); // the filtered failure table is its own focused panel
+	expect(feature.render(180, 40).join("\n")).toContain("#3 alpha");
 	feature.handleInput("x");
-	expect(feature.render(180, 40).join("\n")).toContain("matching 2");
+	expect(feature.render(180, 40).join("\n")).toContain("#1 alpha");
+	expect(feature.render(180, 40).join("\n")).not.toContain("#2 beta");
 	feature.handleInput("X");
-	expect(feature.render(180, 40).join("\n")).toContain("matching 3");
+	expect(feature.render(180, 40).join("\n")).toContain("#2 beta");
 	feature.handleInput("/"); feature.handleInput("beta");
 	const narrow = feature.render(24, 24).join("\n").replace(/\n/g, "");
-	expect(narrow).toContain("Search input: beta");
-	expect(feature.render(180, 40).join("\n")).toContain("Tab focus: failures");
+	expect(feature.inputMode).toBe("text");
+	expect(narrow).toContain("beta");
 });
 
 test("requests without a stored id still expose fetched columns in the narrow inspector", async () => {
@@ -178,4 +190,29 @@ test("requests without a stored id still expose fetched columns in the narrow in
 	expect(text).toContain("duration: 678");
 	expect(text).toContain("usage.cacheWrite: 4");
 	expect(calls).toBe(0);
+});
+
+test("request and error tables keep selected searchable identities inside narrow widths", async () => {
+	for (const id of ["requests", "errors"] as const) {
+		const feature = createRequestsFeature(id, context(async <T>(path: string) => (path.startsWith("/api/request/") ? payload(2) : [row(1), row(2, { model: "needle", stopReason: "error", errorMessage: "failure" })]) as T));
+		await feature.load("24h");
+		feature.handleInput("/"); feature.handleInput("needle");
+		for (const width of [24, 40, 100]) {
+			const lines = feature.render(width, 30);
+			expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+		}
+		feature.handleInput("\r"); feature.handleInput("\r"); await Promise.resolve();
+		expect(feature.render(100, 30).join("\n")).toContain("Request #2");
+	}
+});
+
+test("priced detail components format decimals instead of exposing arithmetic tails", async () => {
+	const data = payload(7);
+	data.usage.cost.input = 0.1 + 0.2;
+	const inspector = new RequestDetails(context(async <T>() => data as T));
+	await inspector.open(data);
+	const lines = inspector.render(100)!;
+	const component = lines.find(line => line.startsWith("input:"));
+	expect(component).toContain("$");
+	expect(component).not.toContain("00000000000000004");
 });

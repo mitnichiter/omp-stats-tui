@@ -1,10 +1,11 @@
 import type { MessageStats, RequestDetails as Payload } from "@oh-my-pi/omp-stats/client/types";
 import { type ErrorGroupView, errorSignature, groupErrorsBySignature, requestStatus, summarizeRequests } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
-import { formatDurationMs, formatMessageCost, formatTimestamp, formatTokensPerSecond } from "@oh-my-pi/omp-stats/client/data/formatters";
+import { formatCompact, formatCost, formatDurationMs, formatEstimatedCost, formatInteger, formatMessageCost, formatTimestamp, formatTokensPerSecond } from "@oh-my-pi/omp-stats/client/data/formatters";
 import type { Range } from "../../../data/ranges";
 import type { FeatureContext, FeatureController } from "../types";
-import { ListState, fields, wrap } from "./shared";
+import { ListState, fields, wrap, type ListColumn } from "./shared";
+import { dataTable, focusTabs, metricGrid, sectionHeading } from "../presentation";
 interface JsonSection { title: string; data: unknown; }
 interface AffectedModel { key: string; model: string; provider: string; count: number; }
 
@@ -46,22 +47,30 @@ export class RequestDetails {
 	}
 	render(width: number): string[] | null {
 		if (!this.active) return null;
-		const lines = [this.ctx.theme.fg("accent", `Request #${this.row?.id ?? "–"} · b/Esc back · c copy JSON · t trace`)];
+		const lines = [sectionHeading(this.ctx, width, `Request #${this.row?.id ?? "–"}`)];
 		if (this.notice) lines.push(this.notice);
 		if (!this.payload) return wrap([...lines, this.error ? `Error: ${this.error}${this.row?.id === undefined ? "" : " · e retry"}` : "Loading request details…",
+			this.ctx.theme.fg("dim", "b/Esc back"),
 			...(this.row ? ["Loaded request metadata (session payload unavailable)", ...fields(this.row)] : [])], width);
 		const d = this.payload;
 		const sections = this.sections(d);
 		const selected = sections[this.section % sections.length];
-		lines.push(`n JSON section: ${selected.title} · v ${this.collapsed.has(selected.title) ? "expand" : "collapse"} · C copy section`,
-			`${d.model} · ${d.provider} · ${requestStatus(d)}`, ...(d.errorMessage ? [`${requestStatus(d) === "aborted" ? "Aborted" : "Error"}: ${d.errorMessage}`] : []),
-			"Timing", `Started: ${formatTimestamp(d.timestamp)}`, `Duration: ${formatDurationMs(d.duration)}`, `Time to first token: ${formatDurationMs(d.ttft)}`,
-			`Output tokens/s: ${formatTokensPerSecond(d.duration !== null && d.duration > 0 && d.usage.output > 0 ? d.usage.output * 1000 / d.duration : null)}`,
-			"Tokens", ...fields({ uncachedInput: d.usage.input, cacheRead: d.usage.cacheRead, cacheWrite: d.usage.cacheWrite, output: d.usage.output, total: d.usage.totalTokens, premiumRequests: d.usage.premiumRequests ?? 0 }),
-			`API-equivalent cost: ${formatMessageCost(d, 4)} · unpriced requests: ${Number(d.costUnpriced ?? false)}`,
-			...Object.entries(d.usage.cost).map(([component, value]) => `${component}: ${d.costUnpriced ? "unpriced request; component estimate unavailable" : value}`),
-			"Identity", ...fields({ requestId: d.id, entryId: d.entryId, stopReason: d.stopReason, api: d.api, project: d.folder, sessionFile: d.sessionFile }),
-			...sections.flatMap(section => [section.title + (this.collapsed.has(section.title) ? " (collapsed)" : ""), ...(this.collapsed.has(section.title) ? [] : [JSON.stringify(section.data, null, 2) ?? "null"])]));
+		lines.push(sectionHeading(this.ctx, width, `${d.model} · ${d.provider}`, requestStatus(d)),
+			...(d.errorMessage ? [this.ctx.theme.fg("error", `${requestStatus(d) === "aborted" ? "Aborted" : "Error"}: ${d.errorMessage}`)] : []),
+			...metricGrid(this.ctx, width, [
+				{ label: "API estimate", value: formatMessageCost(d, 4), emphasis: "primary", hint: `unpriced requests: ${Number(d.costUnpriced ?? false)}` },
+				{ label: "Duration", value: formatDurationMs(d.duration), hint: formatTimestamp(d.timestamp) },
+				{ label: "TTFT", value: formatDurationMs(d.ttft) },
+				{ label: "Throughput", value: `${formatTokensPerSecond(d.duration !== null && d.duration > 0 && d.usage.output > 0 ? d.usage.output * 1000 / d.duration : null)} tok/s` },
+			]),
+			...dataTable(this.ctx, width, "Tokens", [{ key: "bucket", header: "Bucket", align: "left" }, { key: "tokens", header: "Tokens", align: "right" }],
+				Object.entries({ "Uncached input": d.usage.input, "Cache read": d.usage.cacheRead, "Cache write": d.usage.cacheWrite, Output: d.usage.output, Total: d.usage.totalTokens, "Premium requests": d.usage.premiumRequests ?? 0 }).map(([bucket, value]) => ({ bucket, tokens: Number.isInteger(value) ? formatInteger(value) : String(value) }))),
+			sectionHeading(this.ctx, width, "Billing components"),
+			...Object.entries(d.usage.cost).map(([component, value]) => `${component}: ${d.costUnpriced ? "unpriced request; component estimate unavailable" : formatCost(value)}`),
+			sectionHeading(this.ctx, width, "Identity"), ...fields({ requestId: d.id, entryId: d.entryId, stopReason: d.stopReason, api: d.api, project: d.folder, sessionFile: d.sessionFile }),
+			...focusTabs(this.ctx, width, sections.map(section => section.title), this.section % sections.length),
+			this.ctx.theme.fg("dim", `n section · v ${this.collapsed.has(selected.title) ? "expand" : "collapse"} · c/C copy · t trace · b/Esc back`),
+			...sections.flatMap(section => [sectionHeading(this.ctx, width, section.title, this.collapsed.has(section.title) ? "collapsed" : ""), ...(this.collapsed.has(section.title) ? [] : [JSON.stringify(section.data, null, 2) ?? "null"])]));
 		return wrap(lines, width);
 	}
 	private sections(d: Payload): JsonSection[] {
@@ -116,6 +125,18 @@ const sorters: Record<string, (row: MessageStats) => string | number> = {
 };
 const signatureSorters = { count: (group: ErrorGroupView) => group.count, signature: (group: ErrorGroupView) => group.signature, models: (group: ErrorGroupView) => group.models.length, last: (group: ErrorGroupView) => group.lastSeen };
 
+const requestColumns: readonly ListColumn<MessageStats>[] = [
+	{ key: "identity", header: "Request / model", align: "left", value: r => `#${r.id ?? "–"} ${r.model} · ${r.provider}` },
+	{ key: "cost", header: "Estimate", align: "right", priority: 1, value: r => formatMessageCost(r) },
+	{ key: "tokens", header: "Tokens", align: "right", priority: 2, value: r => formatCompact(r.usage.totalTokens) },
+	{ key: "status", header: "Status", align: "left", priority: 3, value: requestStatus },
+	{ key: "duration", header: "Duration", align: "right", priority: 4, value: r => formatDurationMs(r.duration) },
+	{ key: "ttft", header: "TTFT", align: "right", priority: 5, value: r => formatDurationMs(r.ttft) },
+	{ key: "time", header: "Started", align: "left", priority: 6, value: r => formatTimestamp(r.timestamp) },
+	{ key: "project", header: "Project", align: "left", priority: 7, value: r => r.folder },
+];
+const errorColumns: readonly ListColumn<MessageStats>[] = [...requestColumns, { key: "error", header: "Error", align: "left", priority: 3, value: r => r.errorMessage ?? "—" }];
+
 export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureContext): FeatureController {
 	const details = new RequestDetails(ctx);
 	const list = new ListState<MessageStats>(rowKey, "time");
@@ -126,6 +147,7 @@ export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureCon
 	models.descending = true;
 	const steps = id === "requests" ? [500, 2000, 10000] : [50, 200, 1000];
 	let rows: MessageStats[] = [], range: Range = "24h", step = 0, generation = 0, closed = false, loading = false, error: string | null = null;
+	let hasData = false;
 	let status = 0, focus = 0, signature: string | null = null, model: string | null = null;
 	const groups = () => groupErrorsBySignature(rows);
 	const modelRows = () => {
@@ -144,7 +166,7 @@ export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureCon
 	const load = async (nextRange: Range) => {
 		if (closed) return;
 		range = nextRange; const request = ++generation; loading = true; error = null; ctx.changed();
-		try { const result = await ctx.reader.api<MessageStats[]>(id === "requests" ? "/api/stats/recent" : "/api/stats/errors", { range, limit: String(steps[step]) }); if (closed || request !== generation) return; rows = result; }
+		try { const result = await ctx.reader.api<MessageStats[]>(id === "requests" ? "/api/stats/recent" : "/api/stats/errors", { range, limit: String(steps[step]) }); if (closed || request !== generation) return; rows = result; hasData = true; }
 		catch (caught) { if (closed || request !== generation) return; error = String(caught); }
 		loading = false; ctx.changed();
 	};
@@ -153,37 +175,60 @@ export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureCon
 		get inputMode() { return list.editing ? "text" as const : "navigation" as const; },
 		render(width, height) {
 			const detail = details.render(width); if (detail) return detail;
+			if (!hasData) return wrap([sectionHeading(ctx, width, id === "requests" ? "Requests" : "Errors", range),
+				ctx.theme.fg(error ? "error" : "dim", error ? `${error} · l retry` : loading ? "Loading observations…" : "No observations loaded yet."),
+				...(list.editing || list.search ? [`Search: ${list.search || "—"} · Enter/Esc finish · Ctrl-U clear`] : [])], width);
 			const filtered = visible();
-			const counts = { all: rows.length, ok: 0, aborted: 0, failed: 0 }; for (const row of rows) counts[requestStatus(row)]++;
+			let hasTiming = false;
+			const counts = { all: rows.length, ok: 0, aborted: 0, failed: 0 };
+			for (const row of rows) {
+				counts[requestStatus(row)]++;
+				hasTiming ||= row.duration !== null && row.duration !== undefined;
+			}
 			const complete = !loading && !error && rows.length < steps[step];
-			const lines = [ctx.theme.fg("accent", `${id === "requests" ? "Requests" : "Errors"} · ${range}`),
-				`Loaded ${rows.length} · matching ${filtered.length} · ${complete ? `Complete range: all ${id === "errors" ? "failures" : "requests"} loaded` : `Latest ${rows.length} only; older ${id === "errors" ? "failures" : "requests"} are not loaded`}`,
-				`l load ${steps[Math.min(step + 1, steps.length - 1)]} · / search · Esc clear · o sort · O reverse · + reveal · a all · Enter details`,
-				`Search: ${list.search}${list.editing ? " ▏" : ""} · sort ${list.sort} ${list.descending ? "descending" : "ascending"}`];
-			if (loading) lines.push("Loading… (previous rows retained)"); if (error) lines.push(ctx.theme.fg("error", error));
-			const panelHeight = Math.max(3, height - lines.length - 3);
-			const failurePanel = [id === "errors" ? "Failures" : "Request log", ...list.render(filtered, width, panelHeight, r => `${formatTimestamp(r.timestamp)} · #${r.id ?? "–"} ${r.model} · ${r.provider} · ${r.folder} · ${requestStatus(r)} · tokens ${r.usage.totalTokens} · ${formatMessageCost(r)} · duration ${formatDurationMs(r.duration)} · TTFT ${formatDurationMs(r.ttft)}${id === "errors" ? ` · ${r.errorMessage ?? ""}` : ""}`, ctx)];
+			const summary = summarizeRequests(rows);
+			const gs = signatures.rows(groups(), signatureSorters);
+			const ms = modelRows();
+			const scope = complete ? "Complete range" : `Latest ${rows.length}; older ${id === "errors" ? "failures" : "requests"} are not loaded`;
+			const lines = [sectionHeading(ctx, width, id === "requests" ? "Requests" : "Errors", range),
+				...metricGrid(ctx, width, [
+					{ label: id === "errors" ? "Loaded failures" : "Loaded requests", value: formatInteger(rows.length), emphasis: "primary", hint: `${counts.ok} ok` },
+					{ label: "Matching", value: formatInteger(filtered.length), hint: id === "errors" ? `${gs.length} signatures` : `${counts.failed} failed` },
+					{ label: "API estimate", value: formatEstimatedCost(summary.cost, summary.unpriced), hint: `${formatInteger(summary.unpriced)} unpriced` },
+					{ label: "Tokens", value: formatCompact(summary.tokens), hint: `${counts.aborted} aborted` },
+					{ label: "Median latency", value: hasTiming ? formatDurationMs(summary.medianDuration) : "—" },
+					{ label: "p95 latency", value: hasTiming ? formatDurationMs(summary.p95Duration) : "—" },
+				])];
+			if (loading) lines.push(ctx.theme.fg("dim", "Loading… previous rows retained")); if (error) lines.push(ctx.theme.fg("error", `${error} · showing retained rows · l retry`));
+			lines.push(ctx.theme.fg("dim", `${scope} · ${formatInteger(summary.unpriced)} unpriced`));
+			lines.push(...focusTabs(ctx, width, id === "errors" ? ["Signatures", "Models", "Failures"] : ["Request log"], focus));
+			lines.push(ctx.theme.fg("dim", id === "requests" ? `f status: ${statuses[status]} · / search · o/O sort · Enter details · l load more` : "Tab pane · / search · o/O sort · Enter select/open · u latest · f/x/X clear"));
+			const panelHeight = Math.max(5, Math.min(14, height - lines.length - 3));
+			const failurePanel = id === "requests" || focus === 2 ? list.render(filtered, width, panelHeight, id === "errors" ? errorColumns : requestColumns, ctx, id === "errors" ? "Failures" : "Request log") : [];
 			if (id === "requests") {
-				lines.push(`f status: ${statuses[status]} · all ${counts.all} · ok ${counts.ok} · aborted ${counts.aborted} · failed ${counts.failed}`, ...failurePanel, "Loaded request summary", ...fields(summarizeRequests(rows)));
+				lines.push(...failurePanel);
 			} else {
-				lines.push(`Tab focus: ${["signatures", "models", "failures"][focus]} · Enter select/open · u latest request · f clear filters · x signature only · X model only`, `Signature: ${groups().some(group => group.signature === signature) ? signature : "all"} · model: ${modelRows().some(row => row.key === model) ? model : "all"}`);
-				const gs = signatures.rows(groups(), signatureSorters);
-				const panels = [
-					["Error signatures", ...signatures.render(gs, width, panelHeight, g => `${g.count} · ${g.signature} · first ${formatTimestamp(g.firstSeen)} · latest ${formatTimestamp(g.lastSeen)}`, ctx)],
-					["Affected models", ...models.render(modelRows(), width, panelHeight, m => `${m.count} · ${m.model} · ${m.provider}`, ctx)],
-					failurePanel,
-				];
-				lines.push(...panels[focus]);
-				const newest = rows.reduce<MessageStats | null>((best, row) => !best || row.timestamp > best.timestamp ? row : best, null);
-				lines.push(`Loaded failures: ${rows.length} · Signatures: ${gs.length} · Affected models: ${modelRows().length} · Last failure: ${newest ? formatTimestamp(newest.timestamp) : "—"}`);
+				lines.push(`Signature: ${gs.some(group => group.signature === signature) ? signature : "all"} · model: ${ms.some(row => row.key === model) ? model : "all"}`);
+				const panel = focus === 0
+					? signatures.render(gs, width, panelHeight, [
+						{ key: "signature", header: "Error signature", align: "left", value: g => g.signature },
+						{ key: "count", header: "Failures", align: "right", value: g => formatInteger(g.count) },
+						{ key: "models", header: "Models", align: "right", priority: 2, value: g => formatInteger(g.models.length) },
+						{ key: "last", header: "Latest", align: "left", priority: 3, value: g => formatTimestamp(g.lastSeen) },
+					], ctx, "Error signatures")
+					: focus === 1 ? models.render(ms, width, panelHeight, [
+						{ key: "identity", header: "Model / provider", align: "left", value: m => `${m.model} · ${m.provider}` },
+						{ key: "count", header: "Failures", align: "right", value: m => formatInteger(m.count) },
+					], ctx, "Affected models")
+					: failurePanel;
+				lines.push(...panel);
 				const expanded = gs.find(group => group.signature === signature);
 				if (expanded) {
-					lines.push(`Expanded signature: ${expanded.signature}`, `Members: ${expanded.count} · first ${formatTimestamp(expanded.firstSeen)} · last ${formatTimestamp(expanded.lastSeen)}`,
+					lines.push(sectionHeading(ctx, width, "Expanded signature", `${expanded.count} members`), expanded.signature,
+						`First ${formatTimestamp(expanded.firstSeen)} · latest ${formatTimestamp(expanded.lastSeen)}`,
 						`Latest error: ${expanded.latest.errorMessage ?? "—"}`,
 						...expanded.models.map(member => `${member.model} · ${member.provider}: ${member.count} failures`));
-					if (focus !== 2) lines.push(...failurePanel);
 				}
-				for (let index = 0; index < panels.length; index++) if (index !== focus && !(expanded && index === 2)) lines.push(...panels[index]);
 			}
 			return wrap(lines, width);
 		},
@@ -192,8 +237,9 @@ export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureCon
 				data === "\x1b[D" || data === "\x1b[C") return false;
 			if (details.active) return details.handleInput(data);
 			const filtered = visible();
+			if (list.editing && (data === "\t" || data === "\x1b[Z") && id === "errors") { list.editing = false; focus = (focus + (data === "\t" ? 1 : 2)) % 3; ctx.changed(); return true; }
 			if (list.editing) { const consumed = list.input(data, filtered); if (consumed) ctx.changed(); return consumed; }
-			if (data === "l") { if (step + 1 < steps.length) { step++; void load(range); } return true; }
+			if (data === "l") { if (step + 1 < steps.length) step++; void load(range); return true; }
 			if (data === "f") { if (id === "requests") status = (status + 1) % statuses.length; else { signature = null; model = null; list.search = ""; } ctx.changed(); return true; }
 			if (id === "errors" && (data === "x" || data === "X")) { if (data === "x") signature = null; else model = null; ctx.changed(); return true; }
 			if (data === "\x1b" && id === "errors" && (signature || model)) { signature = null; model = null; list.search = ""; ctx.changed(); return true; }
@@ -204,7 +250,7 @@ export function createRequestsFeature(id: "requests" | "errors", ctx: FeatureCon
 				else active.sort = keys[(keys.indexOf(active.sort) + 1) % keys.length];
 				ctx.changed(); return true;
 			}
-			if (id === "errors" && data === "\t") { focus = (focus + 1) % 3; ctx.changed(); return true; }
+			if (id === "errors" && (data === "\t" || data === "\x1b[Z")) { focus = (focus + (data === "\t" ? 1 : 2)) % 3; ctx.changed(); return true; }
 			if (id === "errors" && data === "u") { const selected = groups().find(group => group.signature === signature); const latest = selected?.latest ?? rows.reduce<MessageStats | undefined>((best, r) => !best || r.timestamp > best.timestamp ? r : best, undefined); if (latest) void details.open(latest); return true; }
 			if (data === "\r" || data === "\n") {
 				if (id === "errors" && focus === 0) { const selected = signatures.current(signatures.rows(groups(), signatureSorters)); if (selected) signature = signature === selected.signature ? null : selected.signature; }

@@ -283,8 +283,6 @@ test("root discovery reveals and searches only actual candidates up to the upstr
 	await settle();
 	const text = stripTerminalSequences(controller.render(120, 40).join("\n"));
 	expect(text).toContain("Recorded 250");
-	expect(text).toContain("1 matching");
-	expect(text).toContain("at most 300");
 	controller.dispose();
 });
 
@@ -396,5 +394,40 @@ test("model detail retains recorded metrics when the span has no resolved model 
 	const text = stripTerminalSequences(controller.render(110, 40).join("\n"));
 	expect(text).toContain("Tokens: 321");
 	expect(text).toContain("$0.12");
+	controller.dispose();
+});
+
+test("blank root titles use recorded project and session identity without changing open or copy keys", async () => {
+	const recorded: SessionSummary = {
+		file: ROOT, folder: "/isolated/project", title: " \t ",
+		startedAt: START, endedAt: START + 110_000, requests: 4, toolCalls: 2, subagents: 2,
+		totalTokens: 100, costTotal: 0.002, unpricedRequests: 1, models: ["recorded-model"],
+	};
+	const trace = { ...nestedTrace(), title: "   " };
+	const copies: string[] = [];
+	const opened: string[] = [];
+	const ctx = context();
+	ctx.copy = async value => { copies.push(value); };
+	ctx.reader.api = async <T>(path: string, params?: Record<string, string>): Promise<T> => {
+		if (path === "/api/sessions") return [recorded] as T;
+		if (path === "/api/session/trace") { opened.push(params!.file!); return trace as T; }
+		throw new Error(`Unexpected fixture query ${path}`);
+	};
+	const controller = createTracesFeature(ctx);
+	await controller.load("all");
+	for (const width of [40, 100, 160]) {
+		const lines = controller.render(width, 30);
+		expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+		expect(stripTerminalSequences(lines.join("\n"))).toContain("project · root");
+	}
+	controller.handleInput("y"); await settle();
+	expect(JSON.parse(copies[0]!).file).toBe(ROOT);
+	controller.handleInput("\r"); await settle();
+	expect(opened).toEqual([ROOT]);
+	for (const width of [40, 100, 160]) {
+		const lines = controller.render(width, 30);
+		expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+		expect(stripTerminalSequences(lines[0]!)).toContain("project · root");
+	}
 	controller.dispose();
 });

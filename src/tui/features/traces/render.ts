@@ -13,6 +13,14 @@ export function clean(value: unknown): string {
 export function bounded(lines: readonly string[], width: number): string[] {
 	return lines.map(line => truncateToWidth(line, Math.max(1, width)));
 }
+/** Empty transcript titles retain their recorded project and file identity. */
+export function sessionIdentity(title: string | null | undefined, file: string, project?: string | null): string {
+	const recorded = clean(title).trim();
+	if (recorded) return recorded;
+	const name = clean(file).split("/").filter(Boolean).pop()?.replace(/\.jsonl$/i, "") || clean(file);
+	const folder = clean(project).split("/").filter(Boolean).pop();
+	return folder ? `${folder} · ${name}` : name;
+}
 export function rowLabel(row: TraceRow, startedAt: number): string {
 	const span = row.span;
 	return `${row.track.id} · ${span?.kind ?? row.marker?.kind} · ${span?.label ?? row.marker?.label} · +${formatDurationMs(row.time - startedAt)}${span ? ` · ${formatDurationMs(span.end - span.start)}${span.isError ? " · ERROR" : ""}${span.unterminated ? " · pending" : ""}` : ""}`;
@@ -82,9 +90,12 @@ export function renderTimeline(options: {
 				const u = scale.toU(marker.time);
 				if (u < viewport.u0 || u > viewport.u1) return;
 				const x = Math.min(plotWidth - 1, Math.floor((u - viewport.u0) / (viewport.u1 - viewport.u0) * plotWidth));
-				cells[x] = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", "◆");
+				const ink = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", "◆");
+				cells[x] = selected === `${row.track.id}:marker:${index}` ? theme.bg("selectedBg", theme.bold(ink)) : ink;
 			});
-			lines.push(`${"Markers".padEnd(labelWidth)} ${cells.join("")}`);
+			const active = row.track.markers.some((_marker, index) => selected === `${row.track.id}:marker:${index}`);
+			const label = truncateToWidth(`${active ? "▶" : " "} Markers`, labelWidth, "");
+			lines.push(`${active ? theme.bg("selectedBg", theme.fg("accent", label.padEnd(labelWidth))) : label.padEnd(labelWidth)} ${cells.join("")}`);
 			continue;
 		}
 		const lane = row.lane!;
@@ -103,14 +114,16 @@ export function renderTimeline(options: {
 				if (x === start && span.id === selected) glyph = "▶";
 				else if (x === start && match) glyph = "*";
 				const ink = theme.fg(span.isError ? "error" : COLORS[span.kind], glyph);
-				cells[x] = span.id === selected ? theme.bold(ink) : ink;
+				cells[x] = span.id === selected ? theme.bg("selectedBg", theme.bold(ink)) : ink;
 			}
 		}
-		const label = truncateToWidth(`${MARKS[lane.kind]} ${lane.track.id} ${lane.kind}${lane.ordinal ? ` #${lane.ordinal + 1}` : ""}`, labelWidth, "");
-		lines.push(`${label}${" ".repeat(Math.max(0, labelWidth - visibleWidth(label)))} ${cells.join("")}`);
+		const active = lane.spans.some(span => span.id === selected);
+		const label = truncateToWidth(`${active ? "▶" : MARKS[lane.kind]} ${lane.track.id} ${lane.kind}${lane.ordinal ? ` #${lane.ordinal + 1}` : ""}`, labelWidth, "");
+		const padded = `${label}${" ".repeat(Math.max(0, labelWidth - visibleWidth(label)))}`;
+		lines.push(`${active ? theme.bg("selectedBg", theme.bold(theme.fg("accent", padded))) : padded} ${cells.join("")}`);
 	}
 	if (!trace.tracks.some(track => track.spans.length || track.markers.length)) lines.push("No recorded spans or markers in this trace.");
-	if (visible.rows.length < timelineRows.length) lines.push(theme.fg("dim", `Rows ${visible.offset + 1}–${visible.offset + visible.rows.length}/${timelineRows.length}; ↑/↓ selection reveals its row, Tab opens the track tree.`));
+	if (visible.rows.length < timelineRows.length) lines.push(theme.fg("dim", `Rows ${visible.offset + 1}–${visible.offset + visible.rows.length}/${timelineRows.length} · ↑/↓ reveal · Tab panes`));
 	lines.push(...wrapTextWithAnsi("I input · M model · T tool · A agent · B background · ◆ marker · ~ compressed idle", width));
 	return bounded(lines, width);
 }

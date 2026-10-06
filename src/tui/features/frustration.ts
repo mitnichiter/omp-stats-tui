@@ -5,6 +5,8 @@ import { formatCost, formatElapsed, formatInteger, formatPercent } from "../form
 import { resolveSeries } from "../palette";
 import { activeModelClass, classTotals, familyKey, filterFrustrationRows, fraction, FRUSTRATION_SORTS, layerFraction, MIN_MESSAGES, mostlyRegex, sortFrustrationRows, type FrustrationLayer, type FrustrationSort } from "./frustration-data";
 import type { FeatureContext, FeatureController } from "./types";
+import { dataTable, focusTabs, metricGrid, sectionHeading } from "./presentation";
+import { glyph } from "../glyphs";
 
 // Upstream's server.ts and client/api.ts require this exact explicit-action header.
 const ACTION_OPTIONS = { method: "POST" as const, headers: { "X-Omp-Stats-Action": "1" } };
@@ -196,7 +198,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			const rate = (part: number, whole: number) => whole > 0 ? formatPercent(fraction(part, whole)) : "–";
 			// Confirmation is rendered first and captures input before every filter/control.
 			if (quote.state !== "closed") {
-				add(fg("warning", `CLASSIFY WITH JUDGE · quoted range ${quote.range}`));
+				lines.push(sectionHeading(ctx, w, "CLASSIFY WITH JUDGE", `quoted ${quote.range}`, true));
 				if (quote.state === "loading") add("Loading prerequisites and cost quote… Nothing has been spent.");
 				else if (quote.state === "error") add(fg("error", quote.error));
 				else if (!quote.estimate.available) add(fg("warning", quote.estimate.reason));
@@ -205,104 +207,134 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 					add(`Judge ${estimate.judge}`);
 					add(`${formatInteger(estimate.messages)} unique unjudged messages · ${formatInteger(estimate.chars)} prose characters`);
 					add(`Estimated input ${formatInteger(estimate.inputTokens)} tokens · cost ≈ ${formatCost(estimate.cost)}`);
-					add("Concurrency: upstream adaptive scheduler (not configurable in the quote); actual in-flight count appears during the run.");
-					add("Identical messages share cached verdicts. Estimate is not a spending cap; retries can cost more.");
+					add("Adaptive concurrency · identical messages share cached verdicts.");
+					add(fg("warning", "Estimate ≠ spending cap; retries can cost more."));
 					add(estimate.messages === 0 ? "Everything in this range is already judged; nothing to classify." : fg("warning", starting ? "Starting the confirmed run…" : "Press y to confirm paid judging. Enter does NOT spend. Esc/n backs out; q closes."));
 				}
 				if (actionError) add(fg("error", actionError));
 				add("Esc/n dismiss · q close");
 				return lines;
 			}
-			add(fg("text", "FRUSTRATION · cached judge verdicts + regex fallback"));
-			if (loading) add(fg("dim", data ? "Refreshing cached metrics…" : "Loading cached metrics…"));
-			if (error) add(fg("error", `${data ? "Cached data retained; refresh failed: " : "Unable to read metrics: "}${error}`));
-			if (dataRange && dataRange !== range) add(fg("warning", `Showing stale ${dataRange} metrics ${loading ? `while ${range} loads` : `for requested ${range} range`}.`));
+			lines.push(sectionHeading(ctx, w, "Frustration", `${range} · passive cache`, true));
 			if (data) {
 				const overall = data.overall;
-				add(`${formatInteger(overall.messages)} user messages · judged ${rate(overall.judged, overall.messages)} (${formatInteger(overall.judged)}) · regex ${formatInteger(overall.messages - overall.judged)}`);
-				add(`Annoyed ${rate(overall.annoyed, overall.messages)} (${formatInteger(overall.annoyed)}) · at assistant ${rate(overall.atAssistant, overall.messages)} (${formatInteger(overall.atAssistant)}) · angry ${rate(overall.angry, overall.messages)} (${formatInteger(overall.angry)})`);
+				lines.push(...metricGrid(ctx, w, [
+					{ label: "User messages", value: formatInteger(overall.messages), hint: `annoyed ${rate(overall.annoyed, overall.messages)}`, emphasis: "primary" },
+					{ label: "At assistant", value: rate(overall.atAssistant, overall.messages), hint: `angry ${rate(overall.angry, overall.messages)}` },
+					{ label: "Judge coverage", value: rate(overall.judged, overall.messages), hint: `regex ${formatInteger(overall.messages - overall.judged)}` },
+				]));
 			}
+			if (loading) add(fg("dim", data ? "Refreshing cached metrics…" : "Loading cached metrics…"));
+			if (error) add(fg("error", `${data ? "Cached data retained; refresh failed: " : "Unable to read metrics: "}${error}`));
+			if (dataRange && dataRange !== range) add(fg("warning", `Stale ${dataRange} metrics · requested ${range}${loading ? " loading" : ""}`));
 			if (job) {
 				const elapsed = job.startedAt === null ? "" : ` · ${formatElapsed((job.finishedAt ?? ctx.now()) - job.startedAt)}`;
-				add(fg(job.state === "failed" ? "error" : job.state === "running" ? "success" : "muted", `Judge ${job.state} · ${job.done}/${job.total} judged · ${job.failed} failed · cost ${formatCost(job.cost)}${elapsed}`));
-				if (job.judge) add(`Judge model ${job.judge}`);
+				add(fg(job.state === "failed" ? "error" : job.state === "running" ? "success" : "muted", `Judge ${job.state} · ${job.done}/${job.total} judged · ${job.failed} failed · ${formatCost(job.cost)}${elapsed}`));
 				if (job.state === "running") {
 					const completed = Math.min(1, fraction(job.done + job.failed, job.total));
-					const cells = Math.max(1, Math.min(30, w - 10));
-					add(Array.from({ length: cells }, (_, i) => fg(i < completed * cells ? "success" : "dim", i < completed * cells ? "#" : ".")).join("") + ` ${formatPercent(completed)}`);
-					add(`${job.concurrency} in flight${job.startedAt !== null && job.done > 0 ? ` · ${(job.done / Math.max(1, (ctx.now() - job.startedAt) / 1000)).toFixed(1)}/s` : ""} · x ${cancelling ? "cancelling…" : "cancel run"}`);
-				} else add("j quote/confirm classification (never starts on load)");
+					const cells = Math.max(1, Math.min(20, w - 10));
+					add(Array.from({ length: cells }, (_, i) => fg(i < completed * cells ? "success" : "dim", glyph(ctx.theme.getSymbolPreset(), i < completed * cells ? "barFill" : "barEmpty"))).join("") + ` ${formatPercent(completed)}`);
+					add(`${job.concurrency} in flight${job.startedAt !== null && job.done > 0 ? ` · ${(job.done / Math.max(1, (ctx.now() - job.startedAt) / 1000)).toFixed(1)}/s` : ""} · x ${cancelling ? "cancelling…" : "cancel run"}${job.judge ? ` · ${job.judge}` : ""}`);
+				} else add(fg("dim", `j quote/confirm paid classification${job.judge ? ` · ${job.judge}` : ""}`));
 				if (job.error) add(fg("error", job.error));
-			} else add("j quote prerequisites · no paid calls occur on load");
-			if (data && !data.judgeAvailable) add(fg("warning", "Regex + cached results only: judge is not registered. j shows the actual prerequisite."));
+			} else add(fg("dim", "j quote prerequisites · no paid calls on load"));
+			if (data && !data.judgeAvailable) add(fg("warning", "Regex + cached verdicts · judge not registered · j prerequisites"));
 			if (actionError) add(fg("error", actionError));
 			if (copyNotice) add(fg("success", copyNotice));
 			if (!data) return lines;
 			const { active, families, familyMessages, smallCount, regexCount, chartRows, rows } = population();
 			const selected = rows[selectedIndex];
-			// Selected point is before the plot/table so moving selection is visible without parent scroll bookkeeping.
+			lines.push(...focusTabs(ctx, w, ["Versions", "Families"], focus === "versions" ? 0 : 1));
+			add(fg("dim", w < 60
+				? `Class ${active} [c] · ${showSmall ? "all samples" : "≥50 msgs"} [m] · regex ${hideRegex ? "off" : "on"} [h]`
+				: `Class ${active} [c] · ${showSmall ? "including" : "excluding"} <50 messages (${smallCount} versions) [m] · regex ${hideRegex ? "hidden" : "shown"} (${regexCount}) [h]`));
+			add(fg("dim", focus === "families" ? "Tab versions · ↑/↓ family · Space toggle" : w < 60 ? "↑/↓ select · Enter details · Tab families" : `↑/↓ version · Enter details · Tab families · o/O ${sort} ${descending ? "↓" : "↑"} · v reveal`));
 			if (selected) {
-				add(fg("accent", `Point ${selectedIndex + 1}/${rows.length}: ${selected.label} · ${selected.messages} messages${mostlyRegex(selected) ? " · mostly regex" : ""}`));
-				add(`Judged ${rate(selected.judged, selected.messages)} · annoyed ${rate(selected.annoyed, selected.messages)} · assistant ${rate(selected.atAssistant, selected.messages)} · angry ${rate(selected.angry, selected.messages)}`);
-				add(`Layers: angry ${rate(selected.angry, selected.messages)} · assistant-not-angry ${rate(selected.atAssistant - selected.angry, selected.messages)} · other ${rate(selected.annoyed - selected.atAssistant, selected.messages)}`);
+				add(ctx.theme.bold(fg("accent", `Point ${selectedIndex + 1}/${rows.length}: ${selected.label} · ${formatInteger(selected.messages)} messages${mostlyRegex(selected) ? " · mostly regex" : ""}`)));
+				add(w < 60
+					? `assistant ${rate(selected.atAssistant, selected.messages)} · judged ${rate(selected.judged, selected.messages)}`
+					: `Judged ${rate(selected.judged, selected.messages)} · annoyed ${rate(selected.annoyed, selected.messages)} · assistant ${rate(selected.atAssistant, selected.messages)} · angry ${rate(selected.angry, selected.messages)}`);
 				if (details) {
+					lines.push(sectionHeading(ctx, w, "Model detail", "Enter/Esc back · p copy JSON", true));
 					add(`Identity ${selected.key} · class ${selected.modelClass} · family ${selected.family ?? "unclassified"} · revision ${selected.revision ?? "unclassified"}`);
 					add(`Counts: judged ${selected.judged}; annoyed ${selected.annoyed}; assistant ${selected.atAssistant}; angry ${selected.angry}`);
+					add(`Layers: angry ${rate(selected.angry, selected.messages)} · assistant-not-angry ${rate(selected.atAssistant - selected.angry, selected.messages)} · other ${rate(selected.annoyed - selected.atAssistant, selected.messages)}`);
 					for (const id of selected.models) add(`Raw model ID: ${id}`);
-					add(`First seen ${new Date(selected.firstSeen).toISOString()} · p copy this row JSON`);
+					add(`First seen ${new Date(selected.firstSeen).toISOString()}`);
+					return lines;
 				}
 			}
-			add(`Class ${active} [c] · ${showSmall ? "including" : "excluding"} <50 messages (${smallCount} versions) [m] · mostly regex ${hideRegex ? "hidden" : "shown"} (${regexCount} versions) [h]`);
-			add(`Class messages: ${[...classTotals(data.byModel)].map(([key, messages]) => `${key} ${formatInteger(messages)}`).join(" · ")}`);
-			add(`Focus ${focus} [Tab] · versions ↑/↓ · family ↑/↓ + Space · sort ${sort} ${descending ? "↓" : "↑"} [o/O] · reveal [v] · raw IDs [Enter]`);
-			add("Layers 1 angry · 2 assistant-not-angry · 3 other · 4 assistant trend (toggle)");
 			const colors = resolveSeries(Math.max(1, families.length), ctx.theme);
-			const familyStart = Math.max(0, familyCursor - 2);
-			add(`Families ${families.length ? familyStart + 1 : 0}–${Math.min(families.length, familyStart + 5)}/${families.length} · Tab + ↑/↓ reaches every family`);
-			for (let i = familyStart; i < Math.min(families.length, familyStart + 5); i++) add(`${focus === "families" && i === familyCursor ? ">" : " "} ${hiddenFamilies.has(families[i]) ? "[ ]" : "[x]"} ${fg(colors[i % colors.length], families[i])} · ${formatInteger(familyMessages.get(families[i]) ?? 0)} messages`);
+			if (focus === "families") {
+				const slots = Math.max(3, Math.min(10, height - lines.length - 3));
+				const start = Math.max(0, Math.min(Math.max(0, families.length - slots), familyCursor - Math.floor(slots / 2)));
+				lines.push(...dataTable(ctx, w, "Families", [
+					{ key: "family", header: "Family", align: "left" }, { key: "messages", header: "Msgs", align: "right" },
+					{ key: "visible", header: "Shown", align: "right", priority: 1 },
+				], families.slice(start, start + slots).map((family, index) => ({
+					family: fg(colors[(start + index) % colors.length], family), messages: formatInteger(familyMessages.get(family) ?? 0),
+					visible: hiddenFamilies.has(family) ? "off" : "on",
+				})), familyCursor - start));
+				add(fg("dim", `Class messages: ${[...classTotals(data.byModel)].map(([key, messages]) => `${key} ${formatInteger(messages)}`).join(" · ")}`));
+				if (!families.length) add("No model families in this range.");
+				return lines;
+			}
 			if (!rows.length) { add(data.byModel.length ? "No model versions match the filters. c/m/h and family Space change filters." : "No user messages with prose in this range. Try a longer range."); return lines; }
-			if (chartRows.every(row => row.annoyed === 0)) add("No frustrated messages for these models; all annoyance rates are zero.");
-			add(fg("dim", "Rates by version (upstream catalog order), NOT time. # angry; + assistant; . other; / mostly regex; * assistant trend."));
+			if (chartRows.every(row => row.messages > 0 && row.annoyed === 0)) add(fg("dim", "No frustrated messages for these models; all annoyance rates are zero."));
+			lines.push(sectionHeading(ctx, w, "Rates by version", "catalog order · not time", true));
 			const chartIndex = Math.max(0, chartRows.findIndex(row => row.key === selectedKey));
-			const slots = Math.max(1, Math.min(chartRows.length, Math.floor(Math.max(2, w - 7) / 2)));
+			const slots = Math.max(1, Math.min(chartRows.length, Math.floor(Math.max(2, w - 9) / 2)));
 			const chartStart = Math.max(0, Math.min(chartRows.length - slots, chartIndex - Math.floor(slots / 2)));
 			const plot = chartRows.slice(chartStart, chartStart + slots);
-			const plotHeight = Math.max(3, Math.min(8, Math.floor(height / 5)));
-			const peak = Math.max(0.01, ...plot.map(row => LAYERS.reduce((sum, layer) => sum + (hiddenLayers.has(layer) ? 0 : layerFraction(row, layer)), 0)), ...(trend ? plot.map(row => fraction(row.atAssistant, row.messages)) : []));
+			const barWidth = Math.max(1, Math.min(8, Math.floor((w - 9) / slots) - 1));
+			const preset = ctx.theme.getSymbolPreset();
+			const plotHeight = Math.max(3, Math.min(6, Math.floor(height / 6), height - lines.length - 8));
+			const peak = Math.max(0.05, ...plot.map(row => LAYERS.reduce((sum, layer) => sum + (hiddenLayers.has(layer) ? 0 : layerFraction(row, layer)), 0)), ...(trend ? plot.map(row => fraction(row.atAssistant, row.messages)) : []));
 			for (let y = plotHeight - 1; y >= 0; y--) {
 				const threshold = ((y + 0.5) / plotHeight) * peak;
 				let marks = "";
 				for (const [index, row] of plot.entries()) {
+					if (row.messages === 0) {
+						marks += fg("dim", y === 0 ? "–" + " ".repeat(barWidth) : " ".repeat(barWidth + 1));
+						continue;
+					}
 					let top = 0;
 					let mark = " ";
 					let layerToken: "error" | "warning" | "muted" = "muted";
 					for (const layer of LAYERS) {
 						if (hiddenLayers.has(layer)) continue;
 						top += layerFraction(row, layer);
-						if (mark === " " && threshold <= top) { mark = layer === "angry" ? "#" : layer === "assistant" ? "+" : "."; layerToken = layer === "angry" ? "error" : layer === "assistant" ? "warning" : "muted"; }
+						if (mark === " " && threshold <= top) { mark = glyph(preset, "barFill"); layerToken = layer === "angry" ? "error" : layer === "assistant" ? "warning" : "muted"; }
 					}
 					const familyIndex = families.indexOf(familyKey(row));
 					if (mostlyRegex(row) && mark !== " " && y % 2 === 0) mark = "/";
 					const trendY = Math.min(plotHeight - 1, Math.floor(fraction(row.atAssistant, row.messages) / peak * plotHeight));
-					marks += trend && y === trendY ? fg("text", "*") : fg(layerToken, mark);
+					const middle = Math.floor(barWidth / 2);
+					let cell = trend && y === trendY
+						? fg(layerToken, mark.repeat(middle)) + ctx.theme.bold(fg("text", "*")) + fg(layerToken, mark.repeat(barWidth - middle - 1))
+						: fg(layerToken, mark.repeat(barWidth));
 					const next = plot[index + 1];
-					const connectorY = next ? Math.min(plotHeight - 1, Math.floor((fraction(row.atAssistant, row.messages) + fraction(next.atAssistant, next.messages)) / (2 * peak) * plotHeight)) : -1;
-					marks += trend && y === connectorY ? fg("text", "-") : fg(colors[Math.max(0, familyIndex) % colors.length], row.key === selectedKey ? "|" : y === 0 ? "." : " ");
+					const connectorY = next && next.messages > 0 ? Math.min(plotHeight - 1, Math.floor((fraction(row.atAssistant, row.messages) + fraction(next.atAssistant, next.messages)) / (2 * peak) * plotHeight)) : -1;
+					cell += trend && y === connectorY ? fg("text", glyph(preset, "trendFlat")) : fg(colors[Math.max(0, familyIndex) % colors.length], row.key === selectedKey ? glyph(preset, "columnGap") : y === 0 ? glyph(preset, "heatEmpty") : " ");
+					marks += row.key === selectedKey ? ctx.theme.bg("selectedBg", cell) : cell;
 				}
-				lines.push(truncateToWidth(`${Math.round(((y + 1) / plotHeight) * peak * 100).toString().padStart(3)}% | ${marks}`, w));
+				lines.push(truncateToWidth(`${formatPercent(((y + 1) / plotHeight) * peak, 1).padStart(6)} ${glyph(preset, "columnGap")} ${marks}`, w));
 			}
-			lines.push(truncateToWidth(`  0% + ${"-".repeat(plot.length * 2)}`, w));
-			add(`Version slots ${chartStart + 1}–${chartStart + plot.length}/${chartRows.length}: ${plot[0].label} → ${plot[plot.length - 1].label}`);
-			add(LAYERS.map(layer => `${hiddenLayers.has(layer) ? "off" : "on"} ${LAYER_LABELS[layer]}`).join(" · ") + ` · trend ${trend ? "on" : "off"}`);
+			lines.push(truncateToWidth("  0.0%   " + plot.map(row => " ".repeat(Math.floor(barWidth / 2)) + fg(row.key === selectedKey ? "accent" : "dim", glyph(preset, row.key === selectedKey ? "trendUp" : "heatEmpty")) + " ".repeat(barWidth - Math.floor(barWidth / 2))).join(""), w));
+			add(fg("dim", `Versions ${chartStart + 1}–${chartStart + plot.length}/${chartRows.length}: ${plot[0].label} → ${plot[plot.length - 1].label}`));
+			add(LAYERS.map((layer, index) => fg(hiddenLayers.has(layer) ? "dim" : layer === "angry" ? "error" : layer === "assistant" ? "warning" : "muted", `${index + 1} ${hiddenLayers.has(layer) ? "off" : "on"} ${LAYER_LABELS[layer]}`)).join(" · ") + ` · 4 trend ${trend ? "on" : "off"}`);
 			const reachable = Math.min(rows.length, revealed);
-			const pageSize = Math.max(3, Math.min(15, Math.floor(height / 3)));
+			const pageSize = Math.max(3, Math.min(12, height - lines.length - 3));
 			const tableStart = Math.max(0, Math.min(Math.max(0, reachable - pageSize), selectedIndex - Math.floor(pageSize / 2)));
-			add(`VERSIONS · ${reachable}/${rows.length} revealed · viewport ${tableStart + 1}–${Math.min(reachable, tableStart + pageSize)} · v reveal more`);
-			for (let i = tableStart; i < Math.min(reachable, tableStart + pageSize); i++) {
-				const row = rows[i];
-				add(`${i === selectedIndex ? ">" : " "} ${row.label} · ${row.messages} msgs · judged ${rate(row.judged, row.messages)}${mostlyRegex(row) ? " regex" : ""}`);
-				add(`  annoyed ${rate(row.annoyed, row.messages)} · assistant ${rate(row.atAssistant, row.messages)} · angry ${rate(row.angry, row.messages)}`);
-			}
+			lines.push(...dataTable(ctx, w, "Versions", [
+				{ key: "identity", header: "Model version", align: "left" }, { key: "assistant", header: "Assist", align: "right" },
+				{ key: "messages", header: "Msgs", align: "right", priority: 1 }, { key: "angry", header: "Angry", align: "right", priority: 2 },
+				{ key: "judged", header: "Judged", align: "right", priority: 3 }, { key: "annoyed", header: "Annoy", align: "right", priority: 4 },
+			], rows.slice(tableStart, Math.min(reachable, tableStart + pageSize)).map(row => ({
+				identity: `${row.label}${mostlyRegex(row) ? " /" : ""}`, assistant: rate(row.atAssistant, row.messages),
+				messages: formatInteger(row.messages), angry: rate(row.angry, row.messages), judged: rate(row.judged, row.messages), annoyed: rate(row.annoyed, row.messages),
+			})), selectedIndex - tableStart));
+			add(fg("dim", `${reachable}/${rows.length} revealed · ${families.length} families · / mostly regex · v more`));
 			return lines;
 		},
 		handleInput(input) {
