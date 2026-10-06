@@ -2,6 +2,7 @@ import { hexToRgb, rgbToHex } from "@oh-my-pi/pi-utils";
 import { colorToAnsi } from "@oh-my-pi/pi-tui/theme/color";
 import type { SymbolPreset } from "@oh-my-pi/pi-tui";
 import type { ThemeColor } from "@oh-my-pi/pi-tui";
+import type { ThemeBg } from "@oh-my-pi/pi-tui/theme";
 
 /**
  * The colour layer.
@@ -373,6 +374,63 @@ export const TAB_TOKENS = {
 	muted: "--ink-4 · `styles.css:30`",
 	hint: "--ink-4 · `styles.css:30`",
 } as const satisfies Record<TabInkRole, string>;
+
+// ---------------------------------------------------------------------------
+// THE BACKGROUND AXIS
+
+/**
+ * The ONE background the panel fills, as a named role.
+ *
+ * WHY A SEPARATE TABLE, AND NOT A `PALETTE` ENTRY. The host declares TWO
+ * unions, not one: `ThemeColor` for ink and `ThemeBg` for the seven
+ * backgrounds (`@oh-my-pi/pi-tui/src/theme/schema.ts:174-179`). `selectedBg`
+ * is in the second, and the two are not interchangeable — `theme.fg()` accepts
+ * only `ThemeColor` and `theme.bg()` only `ThemeBg`. Folding this into
+ * {@link PALETTE} would widen that table to `ThemeColor | ThemeBg` and every
+ * `fg(PALETTE.x)` call site would stop compiling. Keeping the axes apart makes
+ * "painted the wrong kind of token" a TYPE ERROR rather than a cell that
+ * silently renders uncoloured.
+ *
+ * `test/palette.test.ts` asserts `isValidThemeColor` over every `PALETTE`
+ * role, and `isValidThemeColor("selectedBg")` is FALSE — the token is real,
+ * it is simply not ink. A role that could not pass its own table's membership
+ * test does not belong in that table.
+ *
+ * WHY IT NEEDED NAMING AT ALL. `.nav-row[data-active="true"]` is
+ * `background: var(--selected)` (styles.css:547-550), so the web FILLS the
+ * selected row rather than merely tinting it. Five call sites each wrote the
+ * bare literal `bg("selectedBg", …)`, which `test/theme-fidelity.test.ts`
+ * correctly reports as a colour with no named role: the fill was real, but
+ * nothing in the tree had given it a name, a citation, or a reason anybody
+ * could later reconstruct.
+ */
+export type SelectionBgRole = "band";
+
+export const SELECTION_BG = {
+	/**
+	 * `selectedBg` — the band behind whatever is selected: the nav's active row,
+	 * the nav's hovered row, the tab strip's active thumb, and the topbar's live
+	 * chip. `--selected` (styles.css:547, and the token table at
+	 * css-tokens.md:43, which records it as `rgba(255,255,255,0.075)`).
+	 *
+	 * ONE role for all four sites is the point, not a simplification. The web
+	 * spends `--hover` at 0.035 alpha against `--selected` at 0.075 to tell
+	 * `hover` from `active`, and a terminal has one background token and no
+	 * alpha — so the two states share the band here and are separated by the
+	 * ink, the cursor and the weight instead (see `SIDEBAR_INK.rowHover`).
+	 * That is a deliberate, already-documented divergence; a second
+	 * "hoverBg" role would imply a distinction the host cannot render.
+	 */
+	band: "selectedBg",
+} as const satisfies Record<SelectionBgRole, ThemeBg>;
+
+/**
+ * What the selection band matches in the web dashboard. Same machine-checked
+ * contract as {@link PALETTE_TOKENS} — see `test/palette.test.ts`.
+ */
+export const SELECTION_BG_TOKENS = {
+	band: "--selected · `styles.css:547`",
+} as const satisfies Record<SelectionBgRole, string>;
 
 /**
  * Categorical series colours, in preference order.

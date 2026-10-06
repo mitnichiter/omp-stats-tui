@@ -388,9 +388,16 @@ test("the source lexer keeps its place through comments, braces and nested templ
 test("the lexer reads a colour token from a live module, by line", () => {
 	// Named, not aggregate: a lexer regression should name the site it lost,
 	// not print a shorter offender list and let the reader guess.
-	const chrome = colourArgumentLiterals("src/tui/chrome.ts").filter(site => site.token === "selectedBg");
-	expect(chrome.length, "chrome.ts lost the selectedBg background sites").toBe(3);
-	expect(chrome.map(site => lineOf("src/tui/chrome.ts", site.offset))).toEqual([366, 383, 461]);
+	//
+	// The fixture is `fg("accent")` and NOT the former `bg("selectedBg")`. That
+	// token was the only `bg()` literal left in the tree, so routing the
+	// selection band through `SELECTION_BG.band` (see `src/tui/palette.ts`)
+	// deleted the fixture and took this self-test down with it. An `fg()` site is
+	// the better fixture anyway: it exercises the same lexer path, and it is
+	// stable rather than being the one literal a colour-role refactor removes.
+	const chrome = colourArgumentLiterals("src/tui/chrome.ts").filter(site => site.token === "accent");
+	expect(chrome.length, "chrome.ts lost the accent foreground sites").toBe(4);
+	expect(chrome.map(site => lineOf("src/tui/chrome.ts", site.offset))).toEqual([230, 238, 459, 459]);
 });
 
 /** Tokens a NAMED role stands behind. The whole point of `palette.ts`. */

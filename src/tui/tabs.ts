@@ -58,7 +58,7 @@
 import type { SymbolPreset, Tab, TabBarTheme, Theme } from "@oh-my-pi/pi-tui";
 import { SCREEN_SPECS, type ScreenSpec } from "../layout/spec";
 import { STATS_ICONS, statsIcon, type IconRole } from "./icons";
-import { TAB_INK } from "./palette";
+import { SELECTION_BG, TAB_INK } from "./palette";
 
 export type ScreenId = ScreenSpec["id"];
 
@@ -151,7 +151,7 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 export function tabBarTheme(theme: Theme): TabBarTheme {
 	return {
 		label: (text: string) => theme.bold(theme.fg(TAB_INK.active, text)),
-		activeTab: (text: string) => theme.bold(theme.bg("selectedBg", theme.fg(TAB_INK.active, text))),
+		activeTab: (text: string) => theme.bold(theme.bg(SELECTION_BG.band, theme.fg(TAB_INK.active, text))),
 		inactiveTab: (text: string) => theme.fg(TAB_INK.inactive, text),
 		mutedTab: (text: string) => theme.fg(TAB_INK.muted, text),
 		// No fill: see the header note on why hover must not share the thumb.
