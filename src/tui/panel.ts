@@ -185,6 +185,28 @@ export function specById(id: ScreenId) {
  * same predicate `NAV_GROUPS` uses — so the number row and the sidebar cannot
  * disagree about which screens exist. That duplication is what
  * `test/screens.test.ts` now pins shut.
+ *
+ * KNOWN CONFLICT WITH THE NUMBER ROW — twelve screens, ten digits. PR #1 added
+ * `traces` and `frustration`, taking this registry to twelve while the digit row
+ * is fixed at ten keys, and the two guards that describe that row now DISAGREE:
+ *
+ *   - `test/chrome.test.ts:839` requires `SELECTABLE_SCREENS.length` to be at
+ *     most the row's length — every selectable screen must get a digit. It
+ *     reads the row from its OWN ten-element `DIGIT_KEYS`, so no change to the
+ *     `DIGITS` below can satisfy it; only this registry's length can.
+ *   - The old note beside `DIGITS` asserted the opposite rule (that an eleventh
+ *     screen simply is not on the row) and cited a `test/panel.test.ts`
+ *     assertion PR #1 deleted. That note is corrected above.
+ *
+ * With twelve drawable screens, satisfying the first guard means dropping two
+ * screens from the registry — which would ALSO remove them from the tab strip,
+ * the sidebar and `[`/`]`/arrow cycling, because every one of those reads this
+ * same list. That is a product decision (drop two screens, or re-decide the row
+ * so it can name twelve), not a code cleanup, so it is left to the owner rather
+ * than decided here. What IS true today, and asserted by
+ * `test/chrome.test.ts:823`, is the half that matters most: all ten digits are
+ * live and index ten distinct screens, and the two beyond the row are reachable
+ * by `tab`, the arrows, `g t` / `g f`, the sidebar and the mouse.
  */
 export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
 	screen => isDrawableScreen(screen.id) && screen.status !== "excluded",
@@ -208,9 +230,25 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
 /**
  * Screen shortcuts. `1`-`9` for the first nine, `0` for the tenth — the
  * convention every numbered overlay uses, because there is no eleventh digit.
- * An eleventh screen is simply not on the number row and is reached with `tab`;
- * test/panel.test.ts asserts `SELECTABLE_SCREENS.length` against this list, so
- * the gap becomes a test failure rather than a silently dead key.
+ *
+ * WHAT THIS LIST DOES AND DOES NOT PROMISE, restated because the old comment
+ * here claimed a guard that no longer existed. It used to say "an eleventh
+ * screen is simply not on the number row and is reached with `tab`; test/
+ * panel.test.ts asserts `SELECTABLE_SCREENS.length` against this list, so the
+ * gap becomes a test failure rather than a silently dead key". PR #1 DELETED
+ * that test, and `test/chrome.test.ts:839` asserts the OPPOSITE rule — that
+ * `SELECTABLE_SCREENS.length` may never exceed the row, i.e. that every
+ * selectable screen DOES get a digit.
+ *
+ * The two cannot both hold, and the registry has since grown to twelve, so the
+ * honest statement of what this list actually guarantees is the narrow one:
+ * every digit here indexes a DISTINCT selectable screen, and `screenIndex`
+ * resolves through the same `SELECTABLE_SCREENS` order. Past the tenth screen
+ * there is no digit and none is invented — `traces` and `frustration` are
+ * reached with `tab`, the arrows, `g t` / `g f`, and the sidebar.
+ *
+ * See the handover note on `SELECTABLE_SCREENS` for why the twelfth screen is a
+ * real conflict rather than an oversight.
  */
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
