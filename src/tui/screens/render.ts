@@ -10,7 +10,7 @@
  */
 
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 import type { ScreenSpec } from "../../layout/spec";
 import { glyphsFor } from "../glyphs";

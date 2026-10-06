@@ -21,7 +21,7 @@
 
 import { __testing, SHOWCASE_SECTIONS } from "../src/tui/showcase/panel";
 import { SHOWCASE_NOW } from "../src/tui/showcase/spec";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 const RULE_RUN = /[─━═]{3,}/;

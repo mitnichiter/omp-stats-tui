@@ -188,13 +188,3 @@ test("an over-reporting worker cannot push the bar past 100 or past the width", 
 	expect(Bun.stringWidth(line)).toBeLessThanOrEqual(40);
 });
 
-test("errors fetches through the live route once the database is warm", async () => {
-	// Documents rather than asserts the DbReadiness contract: without the
-	// extension load-time warm, rollupStatus throws instead of fabricating zero.
-	const { initDb } = await import("@oh-my-pi/omp-stats/db");
-	await initDb();
-	const { fetchFor } = await import("../src/data/api");
-	const data = await fetchFor(["errors", "rollupStatus"], "24h");
-	expect(Array.isArray(data.errors)).toBe(true);
-	expect(data.rollupStatus).toBeDefined();
-});

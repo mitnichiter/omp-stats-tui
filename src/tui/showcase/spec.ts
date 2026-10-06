@@ -472,8 +472,7 @@ const awkward: ScreenSpec = {
 			],
 		},
 		{
-			// A hundred records, past every `tableLimit`, so the grammar drops rows and
-			// prints its `N of M` count note rather than implying it showed everything.
+			// Every fetched failure remains reachable through scrolling.
 			kind: "table",
 			title: "Every failure",
 			rows: { source: "errorMessages", limit: 120 },

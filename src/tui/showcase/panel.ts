@@ -36,8 +36,8 @@
  *
  * NO DATABASE, EVER. The data is `showcaseData(sectionId)`, a fixture, resolved
  * synchronously. `test/showcase-panel.test.ts` asserts at the source level that no
- * module under `showcase/` names `bun:sqlite`, `initDb`, `fetchFor` or
- * `startIngest`, because a future edit reaching for the DB would pass every other
+ * module under `showcase/` names `bun:sqlite`, `initDb` or `fetchFor`,
+ * because a future edit reaching for the DB would pass every other
  * test here and only fail in someone's real session, ~850 ms later, on the
  * keystroke they just typed.
  */
@@ -271,8 +271,6 @@ export interface ShowcasePanelOptions {
  * `fullscreen: true` borrowing the alternate screen buffer.
  */
 export class ShowcasePanel implements Component {
-	readonly nativeOverlay = { role: "omp.overlay.stats", size: "lg", anchor: "center", head: "Showcase" } as const;
-
 	readonly #options: ShowcasePanelOptions;
 	readonly #tui: TUI;
 	readonly #theme: Theme;

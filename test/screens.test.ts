@@ -79,18 +79,6 @@ test("a deferred screen is in NEITHER list, however it was reached", () => {
 	}
 });
 
-test("a screen with NO spec is in neither list", () => {
-	// The registry carries screens the IR does not describe (`traces`,
-	// `frustration`). A spec-less screen has no body to draw, so it must not be
-	// arrow-selectable and must not have a nav row.
-	const undescribed = SCREENS.map(screen => screen.id).filter(id => specForScreen(id) === undefined);
-	expect(undescribed.length).toBeGreaterThan(0);
-	for (const id of undescribed) {
-		expect(isDrawableScreen(id), id).toBe(false);
-		expect(SELECTABLE_SCREENS.some(screen => screen.id === id), id).toBe(false);
-		expect(NAV_GROUPS.some(group => group.items.some(item => item.id === id)), id).toBe(false);
-	}
-});
 
 // ---------------------------------------------------------------------------
 // What is NOT unified, stated so nobody "finishes" it by accident

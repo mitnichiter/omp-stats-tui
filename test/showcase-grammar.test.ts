@@ -38,7 +38,7 @@
 
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme as activeTheme } from "@oh-my-pi/pi-tui/theme";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { renderScreen } from "../src/tui/render/screen";
 import { planLayout } from "../src/tui/layout";

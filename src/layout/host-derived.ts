@@ -38,12 +38,14 @@
  */
 
 import {
+	buildAgentTokenShare,
 	buildCostSummary,
 	buildFolderRows,
 	errorSignature as errorSignatureOf,
 	groupErrorsBySignature,
 	requestStatus,
 	summarizeRequests,
+	type ErrorGroupView,
 } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
 import type { CostTimeSeriesPoint, FolderStats } from "@oh-my-pi/omp-stats/shared-types";
@@ -68,6 +70,11 @@ function rowsAs<T>(rows: readonly DataRow[]): readonly T[] {
 	return rows as readonly T[];
 }
 
+function agentTokens(rows: readonly DataRow[], type: string): number {
+	const view = buildAgentTokenShare(rows as Parameters<typeof buildAgentTokenShare>[0]);
+	return view.segments.find(segment => segment.agentType === type)?.tokens ?? 0;
+}
+
 /**
  * The cost summary, computed by the host, once per call.
  *
@@ -79,6 +86,17 @@ function rowsAs<T>(rows: readonly DataRow[]): readonly T[] {
  */
 function costSummary(rows: readonly DataRow[]) {
 	return buildCostSummary(rowsAs<CostTimeSeriesPoint>(rows));
+}
+
+/** Immutable fetched arrays share the web's normalization across tiles and rows. */
+const errorViews = new WeakMap<readonly DataRow[], ErrorGroupView[]>();
+export function normalizedErrorGroups(rows: readonly DataRow[]) {
+	let groups = errorViews.get(rows);
+	if (!groups) {
+		groups = groupErrorsBySignature(rowsAs<Parameters<typeof groupErrorsBySignature>[0][number]>(rows));
+		errorViews.set(rows, groups);
+	}
+	return groups;
 }
 
 /**
@@ -109,6 +127,9 @@ export const HOST_DERIVED: Readonly<
 		}
 	>
 > = {
+	"agentTokens:main": { source: "byAgentType", compute: rows => agentTokens(rows, "main") },
+	"agentTokens:subagent": { source: "byAgentType", compute: rows => agentTokens(rows, "subagent") },
+	"agentTokens:advisor": { source: "byAgentType", compute: rows => agentTokens(rows, "advisor") },
 	/**
 	 * `CostsRoute.tsx:258` — "Estimate ÷ days with any usage", where the days are
 	 * the DISTINCT day buckets in the series (`buildCostSummary` counts them with
@@ -185,8 +206,7 @@ export const HOST_DERIVED: Readonly<
 	 */
 	errorSignatureCount: {
 		source: "errorMessages",
-		compute: rows => groupErrorsBySignature(rowsAs<Parameters<typeof groupErrorsBySignature>[0][number]>(rows))
-			.length,
+		compute: rows => normalizedErrorGroups(rows).length,
 	},
 
 	/**
@@ -197,12 +217,11 @@ export const HOST_DERIVED: Readonly<
 	 */
 	signatureFailures: {
 		source: "errorMessages",
-		compute: rows => {
+		compute: (rows, ctx) => {
 			const [row] = rows as readonly { errorMessage?: unknown }[];
 			if (!row || typeof row.errorMessage !== "string") return null;
-			const groups = groupErrorsBySignature(rowsAs<Parameters<typeof groupErrorsBySignature>[0][number]>(rows));
 			const signature = errorSignatureOf(row.errorMessage);
-			return groups.find(group => group.signature === signature)?.count ?? null;
+			return normalizedErrorGroups(rowsFor("errorMessages", ctx.data)).find(group => group.signature === signature)?.count ?? null;
 		},
 	},
 

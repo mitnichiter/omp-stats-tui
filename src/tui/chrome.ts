@@ -37,7 +37,7 @@
 
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import type { Theme } from "@oh-my-pi/pi-tui/theme";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { RANGES, type Range } from "../data/ranges";
 import { isDrawableScreen, specForScreen, type ScreenSpec } from "../layout/spec";
 import { describeSyncProgress, type SyncEvent } from "../sync/client";
@@ -129,6 +129,8 @@ const HOTKEYS: Record<string, string> = {
 	projects: "j",
 	providers: "v",
 	gain: "n",
+	traces: "t",
+	frustration: "f",
 };
 
 /**
@@ -141,8 +143,8 @@ const HOTKEYS: Record<string, string> = {
  */
 const GROUPS: Record<string, readonly string[]> = {
 	Usage: ["overview", "models", "costs", "providers"],
-	Activity: ["activity", "requests", "errors"],
-	Insights: ["tools", "projects", "gain"],
+	Activity: ["activity", "requests", "errors", "traces"],
+	Insights: ["tools", "projects", "gain", "frustration"],
 };
 
 /**
@@ -200,6 +202,7 @@ export function ago(now: number, lastSyncedAt: number | null): string {
 /** Everything the live chip reads. The panel derives this from its sync state; see panel.ts render. */
 export interface ChromeSync {
 	syncing: boolean;
+	live?: boolean;
 	current: number;
 	total: number;
 	/** True only for ingest progress with a known total — scan/rollup are indeterminate by phase. */
@@ -230,6 +233,7 @@ export function chipFor(theme: Theme, sync: ChromeSync): string {
 		}
 		return `${mark} Syncing`;
 	}
+	if (sync.live === false) return theme.fg("dim", "Cached");
 	if (sync.dirtyHours > INDEXING_VISIBLE_HOURS) {
 		const mark = theme.fg("accent", theme.symbol("status.running"));
 		return `${mark} Indexing ${theme.fg("dim", `${formatInteger(sync.dirtyHours)}h left`)}`;

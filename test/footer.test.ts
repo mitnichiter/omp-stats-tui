@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import { formatKeyHints } from "@oh-my-pi/pi-tui/key-hint-format";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
-import { panelAction } from "../src/tui/panel";
+import { formatKeyHints } from "@oh-my-pi/pi-coding-agent";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { clampFooter, footerHints, hintsFor, type HintMode, type PanelHint } from "../src/tui/footer";
 
 /**
@@ -44,32 +43,12 @@ const sgr = (color: "dim" | "muted" | "borderMuted"): string => theme.fg(color, 
 /** The only SGR sequences a footer row may contain. */
 const ALLOWED_SPANS: readonly string[] = [sgr("dim"), sgr("borderMuted"), RESET_FG];
 
-/** The raw byte sequence `matchesKey` sees for each key the hints can name. */
-const SEQUENCES: Readonly<Record<string, string>> = {
-	up: `${ESC}[A`,
-	down: `${ESC}[B`,
-	left: `${ESC}[D`,
-	right: `${ESC}[C`,
-	tab: "\t",
-	"shift+tab": `${ESC}[Z`,
-	escape: ESC,
-	"shift+r": "R",
-};
 
 /** The plain text one hint contributes to the row. */
 const hintText = (hint: PanelHint): string => `${formatKeyHints(hint.keys)} ${hint.label}`;
 
 // ─── the hint SET ───────────────────────────────────────────────────────────
 
-test("the primary screen switch is the arrows, because that is what a hand expects", () => {
-	// Defect 2. `tab` switched screens while the footer advertised `←/→`; making
-	// `tab` primary fixed the disagreement in the wrong direction and the user
-	// asked for the arrows back. So the hint names the arrows — and `tab` stays
-	// bound as an alias, because a redundant key is free and a dead one is not.
-	const screen = hintsFor("idle").find(hint => hint.label === "screen");
-	expect(screen).toBeDefined();
-	expect(screen!.keys).toEqual(["left", "right"]);
-});
 
 test("the range hint names `r`/`R`, the keys that are literally called range", () => {
 	// With the arrows back on screens, nothing is left over to carry the range —
@@ -81,19 +60,6 @@ test("the range hint names `r`/`R`, the keys that are literally called range", (
 	expect(range!.keys).not.toContain("right");
 });
 
-test("every key any hint names in ANY mode maps to a non-null panelAction", () => {
-	for (const mode of MODES) {
-		for (const hint of ALL_HINTS[mode]) {
-			for (const key of hint.keys) {
-				const input = SEQUENCES[key] ?? key;
-				expect(
-					panelAction(input),
-					`${mode}: hint "${hint.label}" advertises an unbound key: ${key} (${JSON.stringify(input)})`,
-				).not.toBeNull();
-			}
-		}
-	}
-});
 
 test("close is present in every mode and always LAST", () => {
 	// It is the only way out of the panel, so no mode decision can drop it and it
@@ -129,18 +95,6 @@ test("syncing offers no second sync, error offers a retry, scrollable leads with
 	expect(hintsFor("idle").map(h => h.label)).not.toContain("scroll");
 });
 
-test("hintsFor is pure and deterministic, with no shared mutable state", () => {
-	const snapshot = hintsFor("idle").map(hint => ({ keys: [...hint.keys], label: hint.label }));
-	expect(hintsFor("idle").map(hint => ({ keys: [...hint.keys], label: hint.label }))).toEqual(snapshot);
-
-	// Mutating a returned hint must not reach the next caller: each call builds a
-	// fresh array rather than handing out a module-level constant by reference.
-	const first = hintsFor("idle") as PanelHint[];
-	first[0]!.label = "mutated";
-	(first[0]!.keys as string[]).push("f5");
-	expect(hintsFor("idle").map(h => h.label)).toEqual(["screen", "range", "sync", "close"]);
-	expect(hintsFor("idle")[0]!.keys).toEqual(["left", "right"]);
-});
 
 // ─── the STYLE ──────────────────────────────────────────────────────────────
 

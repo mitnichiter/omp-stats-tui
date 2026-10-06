@@ -79,6 +79,8 @@ export const TAB_ICON: Record<ScreenId, IconRole> = {
 	tools: "tools",
 	providers: "providers",
 	gain: "gains",
+	traces: "time",
+	frustration: "warning",
 };
 
 /**
@@ -100,6 +102,8 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		tools: "⚒",
 		providers: "◈",
 		gain: "+",
+		traces: "⌁",
+		frustration: "?",
 	},
 	nerd: {
 		overview: STATS_ICONS.nerd.trendUp,
@@ -112,6 +116,8 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		tools: STATS_ICONS.nerd.tools,
 		providers: STATS_ICONS.nerd.providers,
 		gain: STATS_ICONS.nerd.gains,
+		traces: STATS_ICONS.nerd.time,
+		frustration: STATS_ICONS.nerd.warning,
 	},
 	ascii: {
 		overview: "*",
@@ -124,6 +130,8 @@ export const TAB_SHORT: Record<SymbolPreset, Record<ScreenId, string>> = {
 		tools: "T",
 		providers: "H",
 		gain: "+",
+		traces: "~",
+		frustration: "?",
 	},
 };
 

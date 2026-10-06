@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-`omp-stats-tui` is a distributable **extension** (shipped inside a **plugin**) that adds a `/stats-tui` slash command to omp 18.4.10. The command renders local usage statistics read from `~/.omp/stats.db` as a **fullscreen overlay** drawn inside the terminal, replacing the browser-launch behaviour of the built-in `/stats` (which becomes the **stats dashboard** — a separate multi-screen browser application over the same records).
+`omp-stats-tui` is a plugin extension for compiled omp **18.6.1**. `/stats-tui` mounts a fullscreen terminal overlay over the upstream stats records; built-in `/stats` remains the separate browser command.
 
-This repository is a working extension: source under `src/`, tests under `test/`, the implementation plan under `docs/plans/`. Screens render through the IR now — a `ScreenSpec` declares `Band[]` (`src/layout/spec.ts`) and `renderScreen` (`src/tui/render/screen.ts`) renders them via the band grammar (`src/tui/band.ts`). `LOCAL_BODIES` and `LOCAL_NEEDS` are DELETED (verified absent from `src/`, `test/` and `scripts/`); `overview`, `models`, `costs`, `errors`, `tools`, `requests`, `providers` and `gain` are thin registry entries whose `render` defers to the pipeline. `activity` still carries a hand-written body (the heatmap, its summary line and its loading/empty/error branches); `traces`/`frustration` are excluded.
+The active [execution roadmap](docs/plans/2026-10-05-dashboard-parity.md) supersedes the older plan's subset, read-only and version constraints. Twelve interactive screen controllers are integrated in production, including Traces and Frustration. The local mounted workflow/theme/package matrix and integrated suite are verified; paid execution and credentialed broker verification remain external. Source lives under `src/`; compiled-host installation loads `dist/index.js` after `bun install` and `bun run build`.
 
 Vocabulary is load-bearing. `CONTEXT.md` is the glossary; use its terms (request, turn, fact table, rollup table, dirty hour, range, bucket, cache rate, unpriced request, data ink, seam, symbol preset — and, for layout work, band, ScreenSpec, MetricRef, resolve, parity). Where a looser word is already in use and wrong — "message" for a request, "granularity" for bucket, "stale" for dirty hour — do not reintroduce it.
 
@@ -12,46 +12,38 @@ Vocabulary is load-bearing. `CONTEXT.md` is the glossary; use its terms (request
 
 Settled design, in order:
 
-1. The extension registers the command `/stats-tui`.
-2. The command calls `ctx.ui.custom(factory, { overlay: true, overlayOptions })`.
-3. With `overlay: true` the host mounts a fullscreen overlay (`fullscreen: true` borrows the terminal's alternate screen buffer; the transcript stays untouched).
-4. `fetchFor` in `src/data/api.ts` fetches exactly what the screen declared (`ScreenSpec.needs`), through an injected `Reader` in tests. No socket is bound; all 23 routes execute in-process.
+1. The source entry registers `/stats-tui`, without database initialization on the host thread.
+2. The command calls `ctx.ui.custom(factory, { overlay: true, overlayOptions })`; `fullscreen: true` borrows the alternate screen buffer and preserves the transcript.
+3. `StatsPanel` mounts one retained `FeatureController` per screen from `src/tui/features/`. Controllers own focus/search/sort/selection/details and chart controls; the panel owns global navigation, scrolling and mount lifetime.
+4. One persistent `StatsReadClient` (`src/data/client.ts`) talks by NDJSON pipes to `scripts/data-worker.ts`. That child owns initialization, synchronous DB/file reads, upstream `handleApi(Request)` routing and patched `StatsLive({ workers: 1 })`. Initial ingest and transcript watching publish unsolicited live status; committed-data invalidation refreshes the active route without resetting controller controls. Manual `s` requests sync on this same owner.
+5. Local provider usage and subscription-window/account reads have independent states. Request details/transcripts and quota reads load on demand. Cached Frustration remains passive; the real standalone judge opens lazily only for requested judging, with estimate, explicit `y` confirmation and cancellation.
+6. The original `ScreenSpec → renderScreen → renderBands` IR remains a pure chart/probe renderer. It is not the production interaction model and static `expandable` metadata is not an implemented action.
 
-The adapter shape (from `docs/research/omp-stats-tui/REPORT.md` §1):
+**There is NO webserver or plugin-owned SQL workaround.** Synthetic localhost `Request`s call upstream handlers inside the isolated worker without binding a socket. Reuse upstream aggregators, shared types and pure client/data helpers, not React components or a second data backend.
 
-```ts
-import { handleApi } from "@oh-my-pi/omp-stats/server";
+**Dependency corrections are shipped, not patched at runtime.** Standard Bun `patchedDependencies` plus `bun.lock` apply the committed stats 18.6.1 patch: pricing-v2 historic replay, rollup-v3 invalidation, selected-range recent requests before limit, provider `outputTokens`, and standalone live ingestion. Absent provider/model cards are unknown spend; explicit free cards and recorded zero charges remain zero. The production bundle includes the corrected stats dependency.
 
-async function api<T>(path: string, params: Record<string, string> = {}): Promise<T> {
-  const url = new URL("http://localhost" + path);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await handleApi(new Request(url));
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
-  return (await res.json()) as T;
-}
-```
+**Theme is current per render.** The panel reads the initialized host theme at render time and updates mutable `FeatureContext.theme`; primitives receive theme/paint arguments. Sparkline, bar, calendar and timeline ink is coloured per character/series using active omp roles and shared series/legend identity. Avoid an eager module-scope singleton read or permanently captured theme. Each terminal cell has one foreground/background, not separately coloured braille dots.
 
-**There is NO webserver.** `handleApi` is a plain exported function with zero references to the server object; the only `server.*` call in the file lives in `createDashboardServer`'s SSE branch, outside `handleApi`.
+**Workflow guidance:** `Ctrl+P`/`Ctrl+N` navigate screens unless overridden by host selector bindings; `[`/`]` navigate outside text entry. `Tab` cycles route focus/view; focused analytics tables precede charts. `r`/`R` range and `s` sync apply outside text entry; `q` closes outside text entry and `Ctrl+C` always closes. Printable `q` and brackets remain searchable. `Esc` backs out before closing. `g` jumps cover all twelve routes (`o m c v a r e t l j n f`, mapped in `chrome.ts`). Arrows/digits are contextual. See README's controller-derived key table.
 
-**There is NO SQL of our own.** Queries go through the package's aggregator and rollup functions, which read pre-aggregated rollup tables.
+**Known external boundaries:** Traces root discovery considers at most 300 upstream candidates. Missing broker credentials affect quota independently of local provider data. A paid smoke needs the configured `judge` model role, provider credentials and explicit user authorization; no paid run is claimed verified.
 
-**There is ALMOST NO React port.** The dashboard's `src/client/**` is 9,244 lines of `.tsx` across 41 files; the eleven route components are 5,348 lines. We do not translate components. We reuse the host's pure data layer (`@oh-my-pi/omp-stats/client/data/*` — `pivotSeries`, `densify`, `buildCostSummary` and friends, asserted identical by `test/parity.test.ts`) and render terminal-native views over the same data. The traces view (2,126 lines, wheel-zoomed flamegraph) is excluded. One deliberate exception: `src/data/api.ts` runs one narrow SQL query for the marked no-catalog-card workaround; see the WORKAROUND block in that file and the upstream issue it names.
+### Historical measured latencies (18.4.10, previous machine)
 
-### Measured latencies
-
-`bun:sqlite` is synchronous, so every number below lands on the thread that paints the panel. All are warm page-cache, one machine (M-series darwin-arm64).
+These historical measurements describe the former in-process adapter. `bun:sqlite` remains synchronous, but production now runs that work in a persistent isolated process. All measurements below are warm page-cache, one machine (M-series darwin-arm64).
 
 | Operation | Measured | Note |
 |---|---|---|
 | `handleApi(GET /api/stats/overview?range=7d)` | HTTP 200 | keys: `byAgentType`, `overall`, `timeSeries` |
-| `getDashboardStats` per range (warm, steady state) | `1h` 4.8 ms · `24h` 1.2 ms · `7d` 5.8–6.4 ms · `30d` 9.5 ms · `90d` 13.8–14.1 ms · `all` 12.9–13.4 ms | every range under 20 ms; no range needs a subprocess |
+| `getDashboardStats` per range (warm, steady state) | `1h` 4.8 ms · `24h` 1.2 ms · `7d` 5.8–6.4 ms · `30d` 9.5 ms · `90d` 13.8–14.1 ms · `all` 12.9–13.4 ms | historical warm-query sample, not a reason to query on the host thread |
 | first query in a fresh process (`1h` run0) | 434.2 ms | page-cache warmup, **not** rollup cost |
-| `initDb()` | 866.9 ms (also measured 864.1 ms) | one-time per process; **no file mutation** — mtime and size byte-identical before/after. Load behind the loading state. |
+| `initDb()` | 866.9 ms (also measured 864.1 ms) | That already-initialized sample had unchanged mtime/size. This is not a read-only guarantee: initialization can create/migrate/backfill records. |
 | `syncAllSessions()` | **7141 ms**, 3401 files / 151,107 rows | genuinely writes (DB grew 305.6 MB → 307.1 MB). Blocks the TUI event loop. Never call it inline. |
 | `getDailyActivity(371)` | 195.6 ms | the query that forced `/usage` to use a subprocess. A rollup-backed panel does not call it. |
 | `bun install` for `@oh-my-pi/omp-stats` | **84 ms**, 12 packages | also measured at 146 ms in a second run |
 
-**Three numbers constrain the design:** the 866.9 ms `initDb()` must sit behind the loading state; the 7141 ms sync must be out-of-band or absent; and `initDb()` returns `null` until first run, after which every rollup getter degrades **silently** to `[]` or a zeroed aggregate — a panel that queries before init shows an empty dashboard with no error.
+These are historical measurements, not current latency guarantees. SQLite work blocks its owning thread even when scheduled through a promise. Production isolates initialization, reads and live ingest; never query before worker initialization succeeds or turn failures into an empty dashboard. One blocked-worker mounted navigation/resize observation was 86 ms, not a responsiveness guarantee.
 
 ## Key Directories
 
@@ -62,24 +54,25 @@ async function api<T>(path: string, params: Record<string, string> = {}): Promis
 | `docs/research/omp-stats-tui/REPORT.md` | **exists** | The synthesis. Read this first after `CONTEXT.md`. |
 | `docs/research/omp-stats-tui/findings/` | **exists** | F1–F11, one file per investigation. F9 (import strategies), F10 (glyph system, numeric formatting) and F11 (zero-install paths) are the load-bearing ones for implementation. |
 | `docs/adr/0001…0006` | **exists** | Six settled decisions. See §Settled Decisions. |
-| `docs/plans/` | **exists** | `2026-10-03-stats-tui-panel.md` — the implementation plan. |
-| `src/` | **exists** | Real modules. `src/index.ts` (extension entry), `src/data/api.ts` (the data seam: injected reader, typed fetchers, `fetchFor`), `src/data/ranges.ts` (the closed range set), `src/layout/spec.ts` (the IR — `ScreenSpec`, bands, `MetricRef`, `SCREEN_SPECS`), `src/layout/resolve.ts` (`resolveCell` / `resolveNumber` / `resolveLabel` — where a ref meets data), `src/tui/panel.ts` (`SELECTABLE_SCREENS`, the frame), `src/tui/band.ts` (`renderBands`, the G1–G6 grammar), `src/tui/charts/` (`bars.ts`, `heatmap.ts`, `sparkline.ts`, `compose.ts`), `src/tui/screens/` (one module per screen; spec'd screens carry identity and defer `render` to the pipeline), `src/tui/palette.ts` (`PALETTE`, `SERIES_COLORS`), `src/tui/tabs.ts` (`TAB_SHORT`, `tabBarTheme`), `src/tui/footer.ts` (`hintsFor`), `src/tui/layout.ts` (`planLayout`), `src/tui/format.ts`, `src/tui/glyphs.ts`, `src/tui/icons.ts`, `src/sync/` (the ingest subprocess). |
+| `docs/plans/` | **exists** | `2026-10-05-dashboard-parity.md` — active roadmap; the 2026-10-03 plan is historical. |
+| `src/` | **exists** | Source entry, isolated data client/protocol/adapter, layout spec/resolver, panel, twelve feature controllers, pure screen registry, band renderer and chart/palette helpers. `dist/index.js` is the production entry. |
 | `src/tui/chrome.ts` | **exists** | The one nav grammar: `NAV_GROUPS`, `screenForHotkey`, `ago`, `chipFor`, `progressLineFor`, `sidebar`, `topbar`. The sidebar column appears when the frame band allows it; the tab strip stands in as the drawer below that. |
 | `src/tui/responsive.ts` | **exists** | `framePolicy(width)` — the frame band (`wide`/`medium`/`narrow`/`tiny`) and the chrome each band gets, derived from `BREAKPOINTS` in `src/tui/layout.ts`. Pure: no theme, no terminal, no data. |
-| `test/` | **exists** | `bun test` — 619 tests across 42 files. Pure-function tests plus `test/parity.test.ts` (resolver vs the web's own functions on one fixture), `test/band.test.ts` (the G5 invariant, asserted literally), `test/chrome.test.ts`, `test/responsive-frame.test.ts` (frame policy vs `planLayout` at widths 1–200), and one `*-screen.test.ts` per spec'd screen. |
-| `scripts/` | **exists** | `probe-render.ts` (render any screen to stdout at any width), `probe-data.ts`, `probe-glyphs.ts`, `sync-worker.ts`. |
+| `test/` | **exists** | `bun test`: fixture arithmetic, layout boundaries, keyboard behaviour, sync error/settlement/cancellation and real subprocess reaping. Keep tests deterministic and isolated from the user's database. |
+| `scripts/` | **exists** | `build.ts`, render/data/glyph probes and persistent `data-worker.ts`. |
 
 There is a `package.json`, a `bun.lock`, `node_modules`, and a `.gitignore`. All four exist.
 
 ## Development Commands
 
-### Usable today (verified on this machine)
+### Compiled-host commands (18.6.1)
 
 ```sh
 # Fast feedback loop: loads extensions, prints load errors to stderr,
 # no interactive TUI, no LLM call. Exit code is 0 either way —
 # read stderr, do not check $?.
-omp models -e /abs/path/to/src/index.ts
+bun run build
+omp models -e /abs/path/to/omp-stats-tui/dist/index.js
 ```
 
 **`-e` must come AFTER the subcommand.** `omp -e /abs/path.ts models` silently ignores the extension — verified: a probe extension that prints to stderr under `omp models -e` prints nothing under `omp -e ... models`. Same for `omp --no-extensions -e /abs/path.ts`, which is the form to use when debugging a single module in isolation (explicit `-e` paths still work with `--no-extensions`).
@@ -94,21 +87,21 @@ omp plugin
 omp plugin link <dir>      # `omp install <dir>` is an alias for plugin install|link
 
 # Isolate auth, sessions, settings and caches while debugging
-omp --profile <name> -e /abs/path/to/src/index.ts
+omp --profile <name> -e /abs/path/to/omp-stats-tui/dist/index.js
 
 # Read the extension error log
 ls -t ~/.omp/logs/ | head          # files are named omp.<DATE>.<PID>.log, e.g. omp.2026-09-29.3585.log
 ```
 
-**Nothing is ever printed to stdout from extension code.** stdout is the TUI's; writing to it corrupts the display. Extension diagnostics go to stderr and to `~/.omp/logs/omp.<DATE>.<PID>.log`. There is no hot reload and no watcher — modules are never unloaded or re-evaluated, so a newly added or changed extension file requires a restart.
+**Nothing is ever printed to stdout from extension code.** stdout is the TUI's; writing to it corrupts the display. The child worker's stdout is a separate NDJSON protocol pipe, not the terminal. Extension diagnostics go to stderr and to `~/.omp/logs/omp.<DATE>.<PID>.log`. There is no extension hot reload: changed modules require rebuild/restart. This is distinct from the live worker's transcript watcher.
 
 ### Installed (verified on this machine)
 
 ```sh
 bun install
 
-# The test runner. omp ships no extension test harness; tests are pure
-# functions exported from non-entry modules.
+bun run build
+# Tests cover observable behaviour and lifecycle boundaries.
 bun test
 
 # Render any screen to stdout at any width, without launching a terminal.
@@ -116,7 +109,7 @@ bun test
 bun scripts/probe-render.ts [screenId] [--width N] [--range 24h] [--preset P]
 ```
 
-`bun test` is verified to work as a runner today — it reports **619 pass / 0 fail across 42 files**. Screens render through the IR, so a screen test asserts its bands and resolved refs, not hand-written rows.
+`bun test` is the runner; no current final suite count is claimed here. Pure IR tests assert bands/resolved refs; feature-controller tests assert consumer-visible workflows. Mounted host verification remains separate from fixture coverage.
 
 ## Code Conventions & Common Patterns
 
@@ -126,21 +119,21 @@ These are the non-obvious ones. Each has already cost a future agent time once.
 
 **The theme API is `theme.fg(color, text)` and `theme.bg(color, text)`.** There is no `theme.colors` property. `ThemeColor` is a string union: `"accent" | "border" | "borderAccent" | "borderMuted" | "success" | "error" | "warning" | "muted" | "dim" | "text"`. Also on the class: `theme.symbol(key)`, `theme.getSymbolPreset()`, `theme.getColorHex(color)`.
 
-**Never import the `theme` binding at module scope.** It is declared as `export var theme: Theme;` — undefined until theme init runs, so reading it before init is a crash at extension load time. Use the `theme` passed to the `custom()` factory.
+**Do not read the host `theme` eagerly at module scope.** It is undefined before theme initialization. Start with the theme passed to `custom()`, then refresh it from the initialized active host binding in the panel's render path and update `FeatureContext.theme`. Pass it to pure renderers; do not capture an obsolete theme in a controller closure.
 
-**The `keybindings` argument passed to a `custom()` factory is useless for resolution.** It is `KeybindingsManager.inMemory()` — defaults, not the user's `keybindings.yml`. Use `matchesKey()`, which is in the root barrel, and `matchesSelectCancel()`, which is **not** in the root barrel and must come from `@oh-my-pi/pi-tui/keybinding-matchers`.
+**Resolve configured keys through `getKeybindings()`.** The custom factory's keybindings argument contains defaults rather than the user's manager. Production uses the supported public `getKeybindings()` and `matchesKey()` exports, not an unbundled private keybinding matcher.
 
-**Component names.** `ScrollView`, not `ScrollViewport`. `MetricRow`, not `Metric`. `OverlayPanel`, `PanelRows` and `PanelDivider` are not in the root barrel either — they come from `@oh-my-pi/pi-tui/chrome`.
+**Component names.** Use the existing supported host root/chrome/theme imports (`OverlayPanel`, `PanelRows`, `PanelDivider` from the chrome surface); do not introduce private overlay or catch-all TUI imports.
 
 **`Table` cells must be `{ text, style? }` objects.** Passing raw strings throws `undefined is not an object (evaluating 'e.replaceAll')`. For a numbers table prefer `renderTableRow(cells, columns, maxWidth?, options?)`, a free function.
 
-**`bun:sqlite` is synchronous.** Any DB work longer than a few ms stalls the TUI render loop. This is why the panel must load behind a loading state (the 866.9 ms `initDb()`) and why `syncAllSessions` (7141 ms) must run out-of-band if it runs at all.
+**`bun:sqlite` is synchronous.** A promise/loading state is not CPU isolation. Initialization, queries, transcript reads and live ingestion belong to the persistent standalone data worker, never the panel thread.
 
 **Emoji cannot be data ink.** `Bun.stringWidth("🪙") === 2` and `Bun.stringWidth("⬛") === 2` — verified. Any repeated emoji cell destroys the column grid. Emoji are fine as a single label where the label column is measured with the same function; they are categorically forbidden as a ramp step or heat cell. `Bun.stringWidth` is exactly what pi-tui measures with, so it is the function to check candidates against.
 
 **Free functions over classes, where the evidence says so.** `renderProgressBar(...)` has 4 first-party call sites; the `ProgressBar` class has 0.
 
-**Screens render through the IR; add `Band[]` to the spec, not rows to a screen.** A spec'd screen's registry entry (`src/tui/screens/<id>.ts`) carries identity and contract and defers `render` to `renderScreen` (`src/tui/render/screen.ts`) via `renderSpecScreen` (`src/tui/screens/render.ts`). A hand-written `render` body in a screen module is a second grammar for that screen; see `src/tui/screens/costs.ts` for the one-paragraph shape. The three legacy bodies (`overview`, `activity`, `models`) and the `custom` band are under migration, not examples to copy.
+**Keep interaction and pure rendering separate.** Production routes are retained `FeatureController`s. Extend their existing focus/list/chart state for workflow changes. The `src/tui/screens/` registry and `ScreenSpec → renderScreen → renderBands` path remain pure chart/probe composition: add `Band[]` there for IR layout changes, not another hand-written screen grammar or a replacement interaction model.
 
 **Scroll clamping happens in `render()`, never in the key handler.** The handler adds and calls `requestRender`; the clamp to `maxScroll` happens during render, which makes shrink-on-resize automatic.
 
@@ -154,23 +147,18 @@ These are the non-obvious ones. Each has already cost a future agent time once.
 
 **One nav grammar, two shapes.** `src/tui/chrome.ts` owns the sidebar, the topbar, the live/sync chip and the hotkey map (`NAV_GROUPS`, `screenForHotkey`, `chipFor`, `progressLineFor`). The panel shows the sidebar column when `framePolicy(width)` says the band affords one and falls back to the tab strip as the drawer below that — so the width decision belongs to `src/tui/responsive.ts` and nowhere else. Never re-derive a width threshold in a chrome module.
 
-**Loading, empty and error are three states, never merged.** On the activity calendar: a payload that
-has not arrived prints "Usage history unavailable." plus why, a fetched-but-empty range prints "No
-activity recorded.", and a failed fetch reaches the panel's own error phase (`fetchFor` throws rather
-than degrading). **We deliberately deviate from `/usage` here**: it renders a fetched-but-empty range as
-a zero-filled grid, and a field of empty cells is a claim about someone's usage that happens to be
-wrong. Do not "restore parity" on this one without that argument.
+**Loading, empty and error are distinct states.** Missing/unread data is not measured zero; failed reads remain errors, and dirty rollups/un-ingested changes remain visible. Activity reads the latest 371 local days independently of the global stats range. Its recorded-day list supports focus/search/sort/selection/reveal/details, so narrowing the visible calendar does not discard fetched days. Empty lookbacks are stated explicitly; do not freeze incidental status wording in tests.
 
 ## Important Files
 
-Absolute paths, all verified present on disk. **These are read-only host files. Do not modify them.**
+Historical research paths on the previous machine, not runtime import targets. Installed host files remain read-only.
 
 | Path | Why it matters |
 |---|---|
 | `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/omp-stats/src/server.ts:165` | `export async function handleApi(req: Request): Promise<Response>` — the data seam. Not re-exported from the package root, but the `exports` map declares `"./*": {"import": "./src/*.ts"}`, so the deep subpath `@oh-my-pi/omp-stats/server` is legal. |
 | `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/omp-stats/src/shared-types.ts` | The aggregate types: `AggregatedStats`, `ModelStats`, `TimeSeriesPoint`, `DailyActivityPoint`, `DashboardStats` and 14 others. A pure type module — zero runtime exports, `import type` only. |
 | `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/pi-tui/src/overlays/usage-dashboard.ts:533` | `export class UsageDashboardComponent implements Component` — the structural template. Data-heavy, read-only, async-loaded with distinct loading and error states, self-scrolling, frame-composed via `OverlayPanel` regions. **Read it, do not import it** — it couples us to an uncovered constructor and option shape. |
-| `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/pi-tui/src/overlays/usage-dashboard.ts:313` | `export function buildHeatmapLayout(points, weeks, today)` — genuinely reusable. Its input type `DailyActivityPoint` already comes from omp-stats. Importable today via `@oh-my-pi/pi-tui/overlays/usage-dashboard`, but outside the public barrel and with no stability guarantee. |
+| `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/pi-tui/src/overlays/usage-dashboard.ts:313` | Historical calendar reference. Production uses terminal-owned `src/tui/charts/calendar.ts`; never import this private overlay. |
 | `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/pi-coding-agent/src/stats/activity-worker.ts` | The subprocess pattern for background ingest — the shape to copy if a sync is ever needed. Spawn a worker, stream over a pipe, parent `SIGKILL`s the child on `done`, so synchronous SQLite never runs on the TUI thread. |
 | `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/pi-tui/src/theme/symbols.ts` | The three symbol presets (`unicode`, `nerd`, `ascii`) and the 269 registered symbol keys. `theme.symbol()` is a plain map read and **none** of the keys is a data-ink ramp — which is why data ink is hardcoded (ADR 0005). |
 
@@ -185,28 +173,18 @@ Supporting source worth knowing:
 
 ## Runtime & Tooling Constraints
 
-- **Bun, never Node.** Verified Bun 1.4.2, omp 18.4.10 (`omp/18.4.10`), darwin-arm64.
-- **Host root:** `/Users/yuzu/.bun/install/global/node_modules/@oh-my-pi/`. All three packages are pinned at `18.4.10`; the extension's `@oh-my-pi/omp-stats` must be pinned to match the host.
-- **`@oh-my-pi/pi-tui` and `@oh-my-pi/pi-coding-agent` resolve bare from an extension with no install step.** Verified: a probe extension importing both by bare specifier loads and enumerates them inside the real loader.
-- **`@oh-my-pi/omp-stats` does NOT resolve bare.** It is absent from the host's `PI_PACKAGE_NAMES` allowlist, so the host shim declines it, the generic bare-dependency resolver walks `node_modules` upward from the extension's own directory, finds nothing, and falls through to Bun's flat install cache — a flattened per-package copy with no sibling `pi-natives-darwin-arm64` beside it. The failure is **not** "cannot resolve the package"; Bun resolves it fine and the transitive `pi-natives` load is what dies.
-
-  Two ways out, both verified working in the real loader:
-  1. **Primary** — declare `"@oh-my-pi/omp-stats": "18.4.10"` as a dependency and run `bun install` in the plugin directory (84 ms, 12 packages). This installs the platform sibling that causes the failure, so the plain bare specifier works and the source stays idiomatic.
-  2. **Fallback** — discover the host root by realpath-ing the `omp` shim on `PATH` and import by absolute path. Portable, no install step, but machine-specific and version-coupled.
-
-- **`Bun.plugin`'s `onResolve` CANNOT fix bare-specifier resolution on Bun 1.4.2.** Proven structurally impossible: Bun's `onResolve` sees only post-resolution absolute paths, never the bare specifier, so no filter can intercept `@oh-my-pi/omp-stats/server` before Bun's resolver runs. An isolated repro with a synthetic package confirmed it. Do not retry this.
-
-- **`Bun.resolveSync` is unusable for host discovery.** It returns the same broken flat-cache path.
-
-- **No hot reload, no watcher.** `ctx.reload()` re-runs discovery but does not re-evaluate modules.
-
-- **Concurrency is not a concern.** The DB is in WAL mode with `busy_timeout = 5000`; a read-only reader completes `SELECT COUNT(*) FROM message_rollup` in 0.1–0.9 ms while another connection holds an open `BEGIN IMMEDIATE` write transaction. Read-only is a hard guarantee (`SQLITE_READONLY`, not `SQLITE_BUSY`), not a convention.
-
-- **`HOME` is the DB redirect knob; `PI_CONFIG_DIR` is not.** `PI_CONFIG_DIR` is a *name* joined onto homedir, so passing an absolute path doubles it.
+- **Supported runtime:** compiled omp 18.6.1, standalone Bun 1.4.2; stats/TUI/coding-agent packages are pinned to 18.6.1.
+- **Production entry:** `bun run build` emits `dist/index.js` and `dist/data-worker.js`; the manifest loads the bundle. Direct source loading is not the supported compiled-host entry.
+- **Module ownership:** bundle local stats/private dependencies; externalize only supported host API specifiers through the exact-match build resolver. Preserve host theme/keybinding/native singletons. Never discover a host source root or mutate installed packages to repair runtime resolution. The committed Bun dependency patch is the reproducible upstream correction.
+- **Imports:** static public TUI/coding-agent roots plus supported named theme/chrome subpaths. Private overlays are not runtime APIs. The real standalone judge subpath resolves from the installed runtime coding-agent dependency in standalone Bun, not the compiled host registry; its resources open lazily when requested.
+- **Workers:** resolve standalone `bun` from PATH, not compiled `process.execPath`. Source mode resolves `../../scripts/data-worker.ts` relative to `src/data/client.ts`; the build substitutes `__STATS_READ_WORKER__` with `./data-worker.js` relative to the bundled entry. Pass an absolute worker path; inherit host cwd for project/judge configuration, explicitly pass `PI_CODING_AGENT_DIR`, `OMP_PROFILE` and `PI_PROFILE`, and clear `PI_BUNDLED`.
+- **Lifetime:** one persistent child per panel. Drain stdout/stderr and await exit; reject outstanding requests on spawn/pipe/exit failure with diagnostics while retaining cached display data. Close disposes controllers/watchers/jobs and SIGKILLs/reaps the child, ignoring late payloads/errors. A sync request is not a child-process completion.
+- **No hot reload:** rebuild and restart after implementation changes.
+- **Database boundary:** initialization can create/migrate/backfill records in the isolated worker; WAL/busy timeouts do not make writes read-only or eliminate contention. Use isolated HOME/profile data for verification.
 
 ## Testing & QA
 
-**Runner: `bun test`.** omp ships no extension test harness, so keep tests to pure functions exported from non-entry modules.
+**Runner: `bun test`.** Test consumer-visible behaviour, boundaries and transitions; avoid source-text, forwarding and incidental implementation snapshots. Real subprocess tests must reap their children.
 
 **Unit-testable:**
 
@@ -220,7 +198,7 @@ Supporting source worth knowing:
 - Colour and tabs by measurement: every `PALETTE` role resolves to a real token and every `TAB_SHORT` entry is one cell on all three presets (`test/palette.test.ts`, `test/tabs.test.ts`).
 - Layout functions, given a fixed width and a `process.stdout.rows`.
 
-**Not unit-testable: the fullscreen overlay itself.** It needs a human running `/stats-tui` in a real omp session. Budget for this — the overlay has never yet been painted in a real terminal. Mount, scroll, resize and dismiss are all manual checks.
+**Mounted verification is separate from unit tests.** Phase 1 exercised actual compiled-host mount/navigation/resize/sync/errors/dismissal. Later observations include no host DB startup, blocked-worker navigation/resize (86 ms, not a guarantee), actual unknown-price `N/A`, persistent-worker automatic ingestion of one root plus two child JSONL sessions (eight requests), and request details/associated trace opened. They do not establish the whole route/broker/paid/custom-theme matrix; the parent integration owner runs the affected suite and mounted matrix after edits settle.
 
 **Correctness traps that tests should cover:**
 
@@ -235,35 +213,34 @@ Each is an ADR. Do not relitigate without new measurement.
 
 | ADR | Decision | Why |
 |---|---|---|
-| 0001 | Reuse the `@oh-my-pi/omp-stats` package — **superseded in outcome by later research**: the package resolves via a declared dependency, so we do not write our own SQL. | Owning SQL means owning the rollup union, the dirty-hour staleness rule above 96 hours, the ~20-column aggregate list that mixes `SUM()` for counts with `TOTAL()` for money, and a mandatory schema-version assertion. ~150–250 lines plus a version-skew check to maintain forever, to save ~12 ms per query. Reuse also keeps `handleApi`, the aggregator projections, the shared types and `syncAllSessions` reachable. One deliberate exception: `src/data/api.ts` runs one narrow query for the marked no-catalog-card workaround. |
+| 0001 | Reuse the declared, patched upstream stats dependency; original own-SQL decision superseded. | Preserve the upstream rollup union, dirty-hour rules, shared types and aggregators. Pricing-v2/rollup-v3 corrections ship via Bun's locked patch; there is no plugin-owned narrow SQL exception. |
 | 0002 | The command is `/stats-tui`, not `/stats`. | Built-in slash commands dispatch before extension commands. An extension registering `/stats` appears in the palette and never executes — the worst kind of bug, because it looks like it works. |
-| 0003 | The panel is read-only, except the background ingest ADR 0006 adds. | Ingest takes an OS file lock that polls every 25 ms for up to one hour before giving up. Freshness the panel does not need to be useful is not worth a possible one-hour hang. The panel can be stale, and the user must never mistake stale for zero — so the dirty-hour count is part of what the panel says about itself. See ADR 0006 for the one clause this no longer covers. |
-| 0004 | Render terminal-native views through the IR; do not port the React dashboard. | 9,244 lines of `.tsx`, 5,348 of them in the eleven route components. The rendering path is `ScreenSpec` → `renderScreen` (`src/tui/render/screen.ts`) → `renderBands` over the G1–G6 grammar (`src/tui/band.ts`). F21 reduced the web to four band shapes and the IR carries them as `Band` (`src/layout/spec.ts`); porting a component means expressing it in that union. The traces view (2,126 lines, wheel-zoomed flamegraph) is excluded. |
-| 0005 | Hardcode plain Unicode for data ink; route only chrome through the symbol preset. | `theme.symbol()` only resolves keys the host registers, and neither the eighth-block ramp nor the shade ramp is among them — so "route everything through the preset" is not implementable without patching a package we do not own. Presets are opt-in settings, never detections. |
-| 0006 | Ingest runs in the background, in a subprocess the panel SIGKILLs. | Supersedes ADR 0003 on the sync clause only. The panel paints from what the database holds, then syncs out-of-band (`src/sync/`, `scripts/sync-worker.ts`) so it agrees with `/stats` about what it shows. The panel itself never writes; the dirty-hour count stays visible. |
+| 0003 | Historical no-write/no-sync policy is superseded. | Ingest is cancellable; initialization itself can create/migrate/backfill records. Do not claim a read-only DB handle. |
+| 0004 | Terminal-native rendering remains; reduced feature scope is superseded. | The active roadmap requires all web workflows, including keyboard-operable Traces and Frustration, without porting React components. |
+| 0005 | Terminal-owned width-one chart glyphs with explicit preset fallbacks and active-theme colours. | The original Unicode-only ASCII mismatch is superseded. Presets are settings, not font detection; theme colours arrive injected/current per render, and each cell has one foreground/background. |
+| 0006 | One persistent isolated data/live subprocess, killed on close. | Standalone Bun runs the shipped JS worker; upstream `StatsLive` owns initial ingest, transcript watching and manual sync. Live status/invalidation travels over NDJSON, and failures remain visible beside cached data. |
 
 ## Do Not
 
 Dead ends already disproven by experiment. Re-testing any of these wastes hours.
 
 - **Do not write our own SQL** over `~/.omp/stats.db`. Reuse the package. Owning SQL requires re-implementing the rollup union, the staleness rule, the aggregate column list and the schema-version check, and it discards `syncAllSessions` entirely. ADR 0001 is the only argument for it and research superseded it.
-- **Do not use `Bun.plugin` `onResolve`** to intercept `@oh-my-pi/omp-stats/server`. Bun 1.4.2 never offers the hook a bare specifier — only post-resolution absolute paths. Structurally impossible, proven with a synthetic package.
-- **Do not use `Bun.resolveSync` for host discovery.** It returns the same broken flat-cache path that causes the original failure. Realpath the `omp` shim on `PATH` instead.
+- **Do not use runtime `Bun.plugin` hooks or host-root discovery to repair dependency ownership.** Use the existing production build and supported host externals; `Bun.build` resolution is distinct from runtime-loader resolution.
 - **Do not use dynamic `import()` of `@oh-my-pi/*`.** It fails in the extension loader even for packages that work fine as static imports. The loader's resolve hook rewrites static specifiers only.
 - **Do not use braille for data ink.** One foreground colour per character cell, so per-day and per-level heatmap colour is impossible — it destroys exactly the channel a heatmap depends on. It also has the wrong aspect without a 2:1 fudge that breaks on resize, and renders as tofu rather than degrading gracefully. omp uses braille only for the decorative title spinner.
 - **Do not use emoji for data ink.** `Bun.stringWidth` reports them as 2 cells (verified for `🪙` and `⬛`). Any repeated emoji cell destroys the column grid.
 - **Do not use Nerd Font codepoints for chart marks.** There is no Nerd glyph whose semantics is magnitude; the candidates are powerline separators and icon glyphs meaning something unrelated. Under the `nerd` preset, emit byte-identical characters to `unicode`.
-- **Do not scale bars by token count — scale by cost.** This project's own database proves it: `deepseek-v4-flash` reads 4.04 B cache tokens for $22.85 while `gpt-5.6-terra` reads 2.39 B for $935.72 — a 41× price spread at comparable volume. A token-scaled bar chart across models is actively misleading. Cost is what the user pays.
+- **Do not silently substitute token count for a cost metric.** Request/token/output/cost modes are explicit controller choices; retain the matching units and scale for each. Comparable token volume need not imply comparable spend.
 - **Do not print a bare token total.** The user is 95.13% cache-read by token, so a single "24.4B tokens" figure is true and useless. Show cache-read and fresh as separate columns, dim the cached portion, and print the cache share as a number.
-- **Do not render `$0.00` for unknown spend.** A request whose `cost_total` is 0 *and* whose model has no catalog price card is unpriced, not free — `db.ts:49-51` notwithstanding. `src/data/api.ts` adds those counts to `unpricedRequests` in the marked WORKAROUND block (delete it when upstream fixes the marker); `costWithUnpriced` prints `N/A`. A `$0` row must mean an explicit all-zero price card.
-- **Do not call `syncAllSessions` on the TUI thread.** 7141 ms of synchronous SQLite holds the event loop for the whole duration. Ingest runs in the background subprocess (`src/sync/`, `scripts/sync-worker.ts`), SIGKILLed on close — see ADR 0006.
+- **Do not render `$0.00` for unknown spend.** Missing provider/model price cards are marked unpriced by the patched upstream pricing boundary, with historic replay and rollup invalidation. `costWithUnpriced` prints `N/A`; explicit free prices or recorded zero charges may legitimately be zero. Do not restore the removed plugin SQL workaround.
+- **Do not call `syncAllSessions` on the TUI thread or create a second sync owner.** Persistent `StatsLive` in `scripts/data-worker.ts` owns automatic/manual sync and its standalone ingest worker. `StatsReadClient.requestSync()` targets it.
 - **Do not offer `365d` in a range picker.** It is not a valid key and silently falls back to `24h`.
-- **Do not query before `initDb()` has run.** Every rollup getter then degrades silently to `[]` or a zeroed aggregate — an empty dashboard with no error.
-- **Do not call `/api/sync` or `getProviderWindowStats`** from the panel's load path. The first starts real background ingest; the second does network I/O to a broker fetch. `getRequestDetails` reads transcript files off disk.
+- **Do not query before worker `initDb()` succeeds.** Upstream rollup getters may silently answer empty/zero; initialization failures must remain errors rather than empty usage.
+- **Do not make local provider aggregates wait for broker quota, or eagerly load request transcripts/judge resources.** Independent window/account reads and lazy request details use the isolated worker; provider-network errors are not an empty local dashboard. Paid judging requires estimate, explicit confirmation and cancellation.
 - **Do not port the React dashboard**, and do not reuse `UsageDashboardComponent` directly — read it, do not import it.
 - **Do not take the native/TSP rendering backend.** `usage-dashboard` implements a second rendering backend behind a capability probe; the ANSI path is the one we can rely on.
 - **Do not print to stdout from extension code.** It corrupts the TUI.
 - **Do not hand-write a multi-series chart.** `src/tui/charts/compose.ts` has no geometry of its own: every mark comes out of `renderDailyBars` called once per series, with band heights sized by each series' peak relative to the shared maximum. `test/chart-primitives.test.ts` asserts this by byte equality, so a second rendering path fails the suite rather than shipping beside the first.
 - **Do not emit a full-width rule in any body.** `src/tui/band.ts` G5: `─`, `━` or `═` inside a band is a bug, full stop. The only rule in the whole panel is the `PanelDivider` between body and footer (G6). `test/band.test.ts` asserts G5 literally for every band kind and every preset.
-- **Do not hardcode a colour or a glyph.** Every colour is a named omp theme token from `src/tui/palette.ts` (`PALETTE`, plus `SERIES_COLORS` for chart series); the theme arrives injected, never from the module-scope singleton. Every heading glyph comes from `statsIcon` in `src/tui/icons.ts` — no screen module may hand-write one, which `test/overview-screen.test.ts` asserts by scanning the source for emoji literals.
+- **Do not hardcode colours or heading glyphs.** Use active omp theme roles via `src/tui/palette.ts` (`PALETTE`/`SERIES_COLORS`, resolved for the current theme). Pure modules receive theme/paint arguments and the feature context is updated per render. Heading glyphs use `statsIcon`; data ink uses the chart glyph policy.
 - **Do not reimplement `pivotSeries`, `densify`, or `buildCostSummary`.** Import them from `@oh-my-pi/omp-stats/client/data/*` and call the host's function on the same input. `test/parity.test.ts` calls the web's own functions and asserts our resolver answers identically, so a second implementation of the arithmetic fails rather than drifting.

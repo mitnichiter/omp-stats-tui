@@ -30,7 +30,7 @@
  */
 
 import type { SymbolPreset, Tab, TabBarTheme, Theme } from "@oh-my-pi/pi-tui";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { JUMP_KEY_PREFIX, PREFIX_WIDTH, SIDEBAR_GAP } from "../chrome";
 import { statsIcon, type IconRole } from "../icons";

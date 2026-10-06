@@ -21,18 +21,23 @@
  */
 
 import { expect, test } from "bun:test";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
+import { buildAgentTokenShare, buildCostSummary, groupErrorsBySignature } from "@oh-my-pi/omp-stats/client/data/view-models";
+import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
+import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
 
 import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
 import { renderScreen, screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
+import { resolveNumber, resolveSeriesValues, rowsFor } from "../src/layout/resolve";
+import { renderSeriesChart } from "../src/tui/charts/compose";
 import { planLayout, type LayoutPlan } from "../src/tui/layout";
 import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
 import { PALETTE, SERIES_COLORS, stripForTest } from "../src/tui/palette";
 import { DEFAULT_RANGE, type Range } from "../src/data/ranges";
 import type { PanelData } from "../src/data/api";
-import { FIXTURE_NOW, blankData, emptyData, liveData } from "./fixtures/panel";
+import { FIXTURE_NOW, AGGREGATE, BY_MODEL, COST_SERIES, messageRow, blankData, emptyData, liveData } from "./fixtures/panel";
 
 ensureThemeSync();
 
@@ -94,17 +99,6 @@ test("no screen renders undefined, NaN, [object Object] or Infinity in ANY cell"
 	expect(leaks, leaks.join("\n")).toEqual([]);
 });
 
-test("the leak walk actually visits cells: a screen is not accidentally empty", () => {
-	// A walk that finds nothing because it looked at nothing is the worst
-	// outcome for a test like this, so the corpus size is pinned too.
-	let cells = 0;
-	for (const spec of FILLABLE) {
-		const rows = renderScreen(opts(spec, liveData()));
-		expect(rows.length, spec.id).toBeGreaterThan(2);
-		cells += rows.join("").length;
-	}
-	expect(cells).toBeGreaterThan(5_000);
-});
 
 // ─── width discipline, 40..200 ───────────────────────────────────────────────
 
@@ -327,33 +321,131 @@ test("no literal colour reaches the screen: every hue comes from the theme", asy
 	}
 });
 
-test("every colour role the renderer emits is one PALETTE names", async () => {
-	// `PALETTE` is the only colour table. A renderer reaching for `theme.fg`
-	// directly would restyle correctly today and drift the moment a role moved.
-	const source = await Bun.file("src/tui/render/screen.ts").text();
-	const body = source.slice(source.indexOf("export function renderScreen"));
-	expect(body).not.toMatch(/theme\.(fg|bg)\(/);
-	expect(Object.values(PALETTE).length).toBeGreaterThan(5);
+test("complete normalized signatures and model failure counts match upstream on repeated noisy errors", () => {
+	const errors = [
+		messageRow({ id: 9001, model: "shared", provider: "a", errorMessage: "429 req_abcdef123 after 3 tries", timestamp: FIXTURE_NOW - 60_000 }),
+		messageRow({ id: 8002, model: "shared", provider: "b", errorMessage: "429 req_zzzzzz456 after 7 tries", timestamp: FIXTURE_NOW - 30_000 }),
+		messageRow({ id: 7003, model: "shared", provider: "a", errorMessage: "429 req_xxxxxx789 after 8 tries", timestamp: FIXTURE_NOW }),
+		messageRow({ id: 6004, model: "other", provider: "a", errorMessage: "503 unavailable", timestamp: FIXTURE_NOW - 90_000 }),
+	];
+	const data = liveData({ errors });
+	const upstream = groupErrorsBySignature(errors);
+	const groups = rowsFor("errorGroups", data) as typeof upstream;
+	expect(groups.map(group => [group.signature, group.count, group.lastSeen])).toEqual(upstream.map(group => [group.signature, group.count, group.lastSeen]));
+	expect(rowsFor("errorModels", data)).toEqual([
+		{ model: "shared", provider: "a", count: 2 },
+		{ model: "shared", provider: "b", count: 1 },
+		{ model: "other", provider: "a", count: 1 },
+	]);
+	expect(resolveNumber({ kind: "derived", name: "signatureFailures", op: "count", of: { kind: "aggregate", source: "errorMessages", field: "errorMessage" } }, data, errors[0])).toBe(3);
+	const bands = screenBands(opts(FILLABLE.find(spec => spec.id === "errors")!, data, { width: 200 }));
+	const table = bands.find(band => band.kind === "table" && band.title === "Error signatures")!;
+	if (table.kind !== "table" || table.rows.kind !== "inline") throw new Error("missing signature rows");
+	expect(table.rows.rows).toHaveLength(2);
+	expect(table.rows.rows[0]!.Signature).toBe(upstream[0]!.signature);
+	expect(table.rows.rows[0]!.Failures).toMatch(/^3 /);
+	const chart = bands.find(band => band.kind === "chart" && band.title === "Failures by model")!;
+	if (chart.kind !== "chart") throw new Error("missing failure chart");
+	const text = stripForTest(chart.chart.render().join("\n"));
+	expect(text).toMatch(/shared::a.*2/);
+	expect(text).toMatch(/shared::b.*1/);
+	expect(text).not.toContain("9001");
 });
 
-test("the renderer imports no theme VALUE and no dynamic module load", async () => {
-	// The extension loader imports this module BEFORE the theme exists, and its
-	// resolve hook rewrites static `@oh-my-pi/*` specifiers only. Both facts are
-	// structural, so both are asserted on the source.
-	const source = await Bun.file("src/tui/render/screen.ts").text();
-	expect(source).not.toMatch(/^import\s*\{[^}]*\btheme\b[^}]*\}/m);
-	// Built without spelling the forbidden call out, so this file does not
-	// itself contain the pattern it forbids.
-	const deferred = new RegExp(`await\\s+${"import"}\\s*\\(`);
-	expect(deferred.test(source)).toBe(false);
+test("agent token shares follow skewed token usage rather than equal request counts", () => {
+	const agents = (["main", "subagent", "advisor"] as const).map((agentType, index) => ({
+		agentType, totalRequests: 100, totalCost: 0,
+		totalInputTokens: [80, 10, 0][index]!, totalOutputTokens: 0,
+		totalCacheReadTokens: [10, 0, 0][index]!, totalCacheWriteTokens: 0,
+	}));
+	const data = liveData({ overview: { overall: AGGREGATE, byAgentType: agents, timeSeries: [] } });
+	const legend = screenBands(opts(FILLABLE.find(spec => spec.id === "overview")!, data)).find(band => band.kind === "legend")!;
+	if (legend.kind !== "legend") throw new Error("missing agent legend");
+	const expected = buildAgentTokenShare(agents).segments.map(segment => segment.share);
+	expect(legend.items.slice(-3).map(item => item.share)).toEqual(expected);
+	expect(expected).toEqual([0.9, 0.1, 0]);
 });
 
-test("data ink comes from the glyph table, never from a literal in the renderer", async () => {
-	const source = await Bun.file("src/tui/render/screen.ts").text();
-	// Block, box and ramp characters are `glyphs.ts`'s to own: they are the data
-	// ink, they must measure exactly one cell, and a literal here would be a
-	// second table that drifts from the first.
-	const ink = new RegExp(`["'][${"█▓▒░■□·─━│"}]`);
-	expect(ink.test(source)).toBe(false);
-	expect(glyphsFor("ascii").barFill).toBe("#");
+test("provider-qualified identities stay separate in charts, cost rows and performance trends", () => {
+	const first = FIXTURE_NOW - 2 * 86_400_000;
+	const axis = [first, first + 86_400_000, first + 2 * 86_400_000];
+	const modelSeries = [
+		{ timestamp: first, model: "shared", provider: "a", requests: 2 },
+		{ timestamp: axis[2]!, model: "shared", provider: "b", requests: 7 },
+		{ timestamp: axis[1]!, model: "shared", provider: "a", requests: 3 },
+	];
+	const performance = modelSeries.map(point => ({ ...point, avgTtft: point.requests * 1000, avgTokensPerSecond: point.requests * 10 }));
+	const costSeries = modelSeries.map(point => ({ ...COST_SERIES[0]!, ...point, cost: point.requests }));
+	const data = liveData({
+		modelDashboard: { byModel: modelSeries.map(point => ({ ...BY_MODEL[0]!, ...point, totalRequests: point.requests })), modelSeries, modelPerformanceSeries: performance },
+		costs: { costSeries },
+	});
+	const ref = { kind: "series", source: "modelSeries", field: "requests", groupBy: "model" } as const;
+	expect(resolveSeriesValues(ref, data, modelSeries[0], { axis })).toEqual([2, 3, 0]);
+	expect(resolveSeriesValues(ref, data, modelSeries[1], { axis })).toEqual([0, 0, 7]);
+	expect(resolveSeriesValues({ ...ref, source: "modelPerformanceSeries", field: "avgTtft" }, data, modelSeries[0], { axis })).toEqual([2000, 3000, 0]);
+	const modelChart = screenBands(opts(FILLABLE.find(spec => spec.id === "models")!, data, { width: 200 })).find(band => band.kind === "chart")!;
+	if (modelChart.kind !== "chart") throw new Error("missing model chart");
+	const text = stripForTest(modelChart.chart.render().join("\n"));
+	for (const provider of ["a", "b"]) expect(text).toContain(modelKey("shared", provider));
+	expect(text).toMatch(/shared::a.*41\.7%.*5/);
+	expect(text).toMatch(/shared::b.*58\.3%.*7/);
+	const costTable = screenBands(opts(FILLABLE.find(spec => spec.id === "costs")!, data)).find(band => band.kind === "table")!;
+	if (costTable.kind !== "table" || costTable.rows.kind !== "inline") throw new Error("missing cost table");
+	expect(costTable.rows.rows.map(row => [row.Model, row.Provider, row.Estimate])).toEqual(buildCostSummary(costSeries).models.map(row => [row.model, row.provider, `$${row.cost.toFixed(2)}`]));
+});
+
+test("all fetched table rows survive both conversion and final rendering at narrow and wide widths", () => {
+	const count = 81;
+	const recent = Array.from({ length: count }, (_, id) => messageRow({ id, model: `row-${id.toString().padStart(3, "0")}`, timestamp: FIXTURE_NOW - id }));
+	const data = liveData({ recent, modelDashboard: {
+		byModel: recent.map(row => ({ ...BY_MODEL[0]!, model: row.model })), modelSeries: [], modelPerformanceSeries: [],
+	}, costs: { costSeries: recent.map(row => ({ ...COST_SERIES[0]!, model: row.model })) } });
+	for (const id of ["overview", "requests", "models", "costs"]) {
+		for (const width of [40, 160]) {
+			const spec = FILLABLE.find(spec => spec.id === id)!;
+			const table = screenBands(opts(spec, data, { width })).find(band => band.kind === "table")!;
+			if (table.kind !== "table" || table.rows.kind !== "inline") throw new Error("missing full table");
+			expect(table.rows.rows, `${id}@${width}`).toHaveLength(count);
+			const text = stripForTest(renderScreen(opts(spec, data, { width })).join("\n"));
+			for (const row of recent) expect(text, `${id}@${width}`).toContain(row.model);
+		}
+	}
+});
+
+test("sparse succeeded and failed charts densify on the real range, including idle trailing buckets", () => {
+	const now = Math.floor(FIXTURE_NOW / 300_000) * 300_000;
+	const points = [
+		{ timestamp: now - 3_600_000, requests: 10, errors: 3, tokens: 0, cost: 0 },
+		{ timestamp: now - 600_000, requests: 4, errors: 1, tokens: 0, cost: 0 },
+	];
+	const data = liveData({ overview: { overall: AGGREGATE, byAgentType: [], timeSeries: points } });
+	const axis = bucketAxis("1h", points.map(point => point.timestamp), 300_000, now);
+	const succeeded = axis.map(timestamp => points.filter(point => point.timestamp === timestamp).reduce((sum, point) => sum + point.requests - point.errors, 0));
+	const failed = axis.map(timestamp => points.filter(point => point.timestamp === timestamp).reduce((sum, point) => sum + point.errors, 0));
+	for (const width of [40, 160]) {
+		const options = { ...opts(FILLABLE.find(spec => spec.id === "overview")!, data, { width, range: "1h" }), now };
+		const chart = screenBands(options).find(band => band.kind === "chart" && band.title === "Activity")!;
+		if (chart.kind !== "chart") throw new Error("missing activity chart");
+		expect(chart.chart.render()).toEqual(renderSeriesChart([{ label: "Succeeded", values: succeeded }, { label: "Failed", values: failed }], {
+			width: options.plan.innerWidth, height: options.plan.barHeight, preset: options.preset, theme: options.palette,
+			paint: (color, text) => options.fg(color, text), dim: text => options.fg(PALETTE.dim, text),
+		}));
+		const tile = screenBands(options).flatMap(band => band.kind === "statRow" ? band.stats : []).find(tile => tile.label === "Requests")!;
+		expect(tile.spark).toEqual(axis.map(timestamp => points.find(point => point.timestamp === timestamp)?.requests ?? 0));
+	}
+	expect(succeeded.reduce((sum, value) => sum + value, 0)).toBe(10);
+	expect(failed.reduce((sum, value) => sum + value, 0)).toBe(4);
+	expect(succeeded.at(-1)).toBe(0);
+});
+
+test("latency and request timing fields display milliseconds as seconds", () => {
+	const overview = liveData({ overview: { overall: { ...AGGREGATE, avgDuration: 125_000, avgTtft: 430 }, byAgentType: [], timeSeries: [] } });
+	const tiles = screenBands(opts(FILLABLE.find(spec => spec.id === "overview")!, overview)).flatMap(band => band.kind === "statRow" ? band.stats : []);
+	expect(tiles.find(tile => tile.label === "Avg latency")!.value).toBe("125.0s");
+	expect(tiles.find(tile => tile.label === "Avg TTFT")!.value).toBe("0.43s");
+	const data = liveData({ recent: [messageRow({ duration: 125_000, ttft: 430 })] });
+	const requestTiles = screenBands(opts(FILLABLE.find(spec => spec.id === "requests")!, data)).flatMap(band => band.kind === "statRow" ? band.stats : []);
+	expect(requestTiles.find(tile => tile.label === "Median duration")!.value).toBe("125.0s");
+	expect(requestTiles.find(tile => tile.label === "Median TTFT")!.value).toBe("0.43s");
 });

@@ -1,5 +1,7 @@
 # Render terminal-native views; do not port the React dashboard
 
+Status: terminal-native rendering **retained**; reduced scope **superseded** by the [dashboard-parity roadmap](../plans/2026-10-05-dashboard-parity.md). Twelve retained production `FeatureController`s implement all eleven web routes plus Activity, with focus/search/sort/selection/details, request-to-trace navigation, independent provider quota, project Gain history, nested traces and passive/explicit-confirmation Frustration judging. The original IR remains a pure chart/probe renderer, not the interaction layer. The complete mounted acceptance matrix remains pending. The text below records the historical subset decision, not exclusions from current scope.
+
 The web dashboard is a React 19 application: eleven screens, 4,637 lines of route components and 9,244
 lines of TSX in total. The TUI is the opposite shape — a hand-written component whose whole interface is
 `render(width) => readonly string[]`. Porting the dashboard means rewriting every screen into a rendering

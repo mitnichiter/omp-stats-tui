@@ -35,11 +35,10 @@
  * testable without a terminal and without a 321 MB database.
  */
 
-import { groupErrorsBySignature } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { modelKey } from "@oh-my-pi/omp-stats/client/data/colors";
 
 import type { DataNeed, PanelData } from "../data/api";
-import { hostDerived } from "./host-derived";
+import { hostDerived, normalizedErrorGroups } from "./host-derived";
 import {
 	NEED_BY_SOURCE,
 	sourceOf,
@@ -102,6 +101,23 @@ export function rowsFor(source: MetricSource, data: PanelData): readonly DataRow
 			return asRows(data.recent);
 		case "errorMessages":
 			return asRows(data.errors);
+		case "errorGroups":
+			return normalizedErrorGroups(asRows(data.errors)).map(group => ({
+				...group,
+				modelLabels: group.models.map(model => modelKey(model.model, model.provider)).join(", "),
+			}));
+		case "errorModels": {
+			const models = new Map<string, { model: string; provider: string; count: number }>();
+			for (const group of normalizedErrorGroups(asRows(data.errors))) {
+				for (const model of group.models) {
+					const key = modelKey(model.model, model.provider);
+					const current = models.get(key);
+					if (current) current.count += model.count;
+					else models.set(key, { ...model });
+				}
+			}
+			return [...models.values()];
+		}
 		case "toolsByTool":
 			return asRows(data.tools?.byTool);
 		case "toolsByToolModel":
@@ -289,11 +305,18 @@ function resolveBase(ref: BaseRef, data: PanelData, row?: DataRow): Resolved {
 function seriesRows(ref: SeriesRef, data: PanelData, row?: DataRow): readonly DataRow[] {
 	const rows = rowsFor(ref.source, data);
 	if (!ref.groupBy || row === undefined) return rows;
-	const group = readPath(row, ref.groupBy);
-	if (typeof group !== "string") return [];
-	// A row-scoped SeriesRef is the TREND FOR THAT ROW: the models table's
-	// `Trend` column must draw each model's own sparkline, not the payload's.
-	return rows.filter(candidate => readPath(candidate, ref.groupBy ?? "") === group);
+	const group = seriesGroup(row, ref.groupBy);
+	if (group === null) return [];
+	return rows.filter(candidate => seriesGroup(candidate, ref.groupBy!) === group);
+}
+
+/** The upstream model identity includes its provider, including in row trends. */
+function seriesGroup(row: DataRow, field: NonNullable<SeriesRef["groupBy"]>): string | null {
+	const value = readPath(row, field);
+	if (typeof value !== "string") return null;
+	if (field !== "model") return value;
+	const provider = readPath(row, "provider");
+	return modelKey(value, typeof provider === "string" ? provider : "");
 }
 
 /**
@@ -516,7 +539,7 @@ function distinctCount(base: BaseRef, rows: readonly DataRow[]): number {
 	}
 
 	if (base.source === "errorMessages" && field === "errorMessage") {
-		return groupErrorsBySignature(rows as never).length;
+		return normalizedErrorGroups(rows).length;
 	}
 	const seen = new Set<string>();
 	for (const row of rows) {
@@ -633,33 +656,3 @@ export function resolveSeriesValues(
 	return value === null ? [] : [value];
 }
 
-/**
- * The number every share on one legend is drawn against.
- *
- * A legend is a set of PARTS, and the parts only mean something relative to a
- * stated whole. The IR does not carry the denominator, so it is derived from
- * the items themselves: the sum of the values a screen's legend names. On
- * Overview that is the four token kinds, so "Uncached input 8.2%" is true of
- * the token mix, and the three agent rows — which the IR points at
- * `overall.totalRequests`, the same field three times — read as a fraction of
- * that mix rather than as a fabricated third of a pie nothing drew.
- *
- * Returns 0 for an empty item list so the caller's division is guarded.
- */
-export function sharedDenominator(
-	source: MetricSource,
-	items: readonly MetricRef[],
-	data: PanelData,
-): number {
-	let total = 0;
-	for (const item of items) {
-		const base = baseOf(item);
-		// Only refs that actually read `source` contribute. A legend that mixes
-		// sources (Overview's agent rows) then contributes nothing rather than
-		// dragging an unrelated total into the denominator.
-		if (base.source !== source) continue;
-		const value = resolveNumber(item, data);
-		if (value !== null) total += value;
-	}
-	return total;
-}

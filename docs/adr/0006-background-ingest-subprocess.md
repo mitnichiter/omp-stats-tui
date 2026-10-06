@@ -1,6 +1,20 @@
-# Ingest runs in the background, in a subprocess the panel SIGKILLs
+# Stats reads and live ingest share a persistent isolated subprocess
 
-Status: accepted. Supersedes ADR 0003 on the sync clause only; the rest of ADR 0003 stands.
+Status: persistent isolated read/live worker **accepted**; the original one-shot subprocess details and historical freshness uncertainty below are superseded by the [dashboard-parity roadmap](../plans/2026-10-05-dashboard-parity.md).
+
+## Current execution contract
+
+One `StatsReadClient` per mounted panel owns `scripts/data-worker.ts`. The worker initializes the upstream DB, runs synchronous queries/transcript reads and owns patched upstream `StatsLive({ workers: 1 })`, which performs initial ingest and watches transcript changes. Request/reply and unsolicited live status/invalidation use NDJSON pipes. Manual `s` invokes the same live owner's `requestSync()`, not a second one-shot ingest worker. The host source entry performs no DB initialization.
+
+Compiled omp is not standalone Bun. Resolve `bun` on PATH, pass an absolute worker path, inherit host cwd for project/judge configuration, and explicitly pass active agent directory plus `OMP_PROFILE`/`PI_PROFILE` with `PI_BUNDLED` cleared. Source mode resolves `scripts/data-worker.ts` relative to the client; the build substitutes `__STATS_READ_WORKER__` with `./data-worker.js` relative to `dist/index.js`. The bundle owns corrected local stats/private dependencies while supported host UI/theme/native APIs remain external. The committed Bun patch/lockfile ships upstream pricing-v2, rollup-v3, recent-range and provider-output corrections.
+
+The runtime coding-agent dependency provides real standalone judging. Registering its lazy judge provider does not open judge/auth resources or spend; those open only when requested. Cached/regex Frustration is passive. Paid start requires an estimate, explicit `y` confirmation, configured `judge` model role and provider credentials; cancellation is available. No paid smoke is claimed.
+
+The client drains stdout/bounded stderr and awaits process exit, rejects pending requests on failure and keeps useful recovery diagnostics beside cached data. A sync request returns live status, not process completion: the persistent child remains alive to watch and serve reads. Close disposes controllers/watchers/jobs, kills/reaps the child and ignores late responses/errors. Per-query generations protect newer selections.
+
+Initialization can create/migrate/backfill shared records; there is no read-only DB guarantee. Early isolated mounted evidence included automatic ingestion of a root plus two child sessions (eight recorded requests), live refresh, request/associated-trace details and restored terminal/reaped child on close. The parity roadmap records subsequent 612-request, nested-trace, provider/Gain, worker-recovery, theme and installed-package evidence separately from unverified paid/broker scenarios.
+
+## Original rationale
 
 ADR 0003 made the stats panel read-only and refused to trigger ingest. We reverse that refusal: on
 open, the panel paints from whatever the database already holds, then starts a background ingest in a
@@ -57,12 +71,6 @@ throwing, but the wait is `await`-based and a 4-second holder was acquired after
 It blocks; it does not hang. What it lacks is cancellation, which is exactly why the worker is a
 process we can `SIGKILL` rather than a promise we abandon.
 
-**Still binding from ADR 0003**, restated here so the supersession is not read as a repeal: the panel
-itself never writes to the database — its own handle stays read-only; ingest never runs on the TUI
-thread; and the dirty-hour count from `getRollupStatus()` is always visible, so a stale panel says so
-rather than presenting not-yet-built hours as `$0.00`.
+The original no-write assertion does not describe current upstream initialization. Ingest must stay off the TUI thread; dirty/unknown data must not be presented as measured zero.
 
-**Open.** Whether the host already calls `syncAllSessions` before an extension runs was never
-determined (F9, Gaps §6). If it does, this subprocess is redundant and the panel could drop it. One
-run of `scripts/probe-data.ts` immediately after a heavy session, comparing
-`getRollupStatus().dirtyHours` against the mtime of the newest session file, settles it.
+**Historical uncertainty, now resolved for this panel:** whether the host syncs before extensions was not determined by F9. Production does not rely on that ordering: its isolated upstream live owner performs initial ingest, watches transcripts and serves manual sync. The historical rationale is retained above as decision history, not a pending one-shot design.

@@ -1,5 +1,6 @@
 import { test, expect } from "bun:test";
 import { renderHeatmap, weeksForWidth } from "../src/tui/charts/heatmap";
+import { calendarLayout } from "../src/tui/charts/calendar";
 import { glyphsFor, glyph } from "../src/tui/glyphs";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 
@@ -29,6 +30,105 @@ const point = (day: string, cost: number, requests = 1): DailyActivityPoint => (
 
 /** A fixed "today" keeps every test independent of the wall clock. */
 const TODAY = new Date(2026, 9, 5, 12, 0, 0);
+
+test("calendar retains local Monday boundaries, month labels and zero/future states", () => {
+	const layout = calendarLayout([], 8, TODAY);
+	expect(layout.start.getFullYear()).toBe(2026);
+	expect(layout.start.getMonth()).toBe(7);
+	expect(layout.start.getDate()).toBe(17);
+	expect(layout.start.getHours()).toBe(0);
+	expect(layout.monthLabels).toEqual(["Aug", undefined, undefined, "Sep", undefined, undefined, undefined, "Oct"]);
+	expect(layout.cells).toHaveLength(7);
+	for (let day = 0; day < 7; day++) {
+		expect(layout.cells[day].slice(0, 7)).toEqual(Array(7).fill(0));
+		expect(layout.cells[day][7]).toBe(day === 0 ? 0 : null);
+	}
+});
+
+test("calendar sqrt levels and totals exclude older and future activity", () => {
+	const layout = calendarLayout([
+		point("2026-09-13", 10000, 10000),
+		point("2026-10-01", 25, 4),
+		point("2026-10-02", 100, 1),
+		point("2026-10-06", 10000, 10000),
+	], 4, TODAY);
+	expect(layout.cells[3][2]).toBe(2);
+	expect(layout.cells[4][2]).toBe(4);
+	expect(layout.cells[1][3]).toBeNull();
+	expect(layout.totalCost).toBe(125);
+	expect(layout.totalRequests).toBe(5);
+});
+
+test("all-unpriced activity scales requests, while any supplied cost selects cost", () => {
+	const points = [point("2026-10-01", 0, 25), point("2026-10-02", 0, 100)];
+	const requests = calendarLayout(points, 4, TODAY);
+	expect(requests.cells[3][2]).toBe(2);
+	expect(requests.cells[4][2]).toBe(4);
+	expect(requests.totalCost).toBe(0);
+	expect(requests.totalRequests).toBe(125);
+	// Preserve upstream's choice over all supplied points, even outside the window.
+	const costs = calendarLayout([...points, point("2026-09-01", 1)], 4, TODAY);
+	expect(costs.cells[3][2]).toBe(0);
+	expect(costs.cells[4][2]).toBe(0);
+	expect(costs.totalCost).toBe(0);
+});
+
+test("calendar advances local dates across a daylight-saving transition", () => {
+	const previous = process.env.TZ;
+	process.env.TZ = "America/New_York";
+	try {
+		const layout = calendarLayout([
+			point("2026-03-08", 25),
+			point("2026-03-09", 100),
+		], 2, new Date(2026, 2, 9, 0, 30));
+		expect(layout.start.getMonth()).toBe(2);
+		expect(layout.start.getDate()).toBe(2);
+		expect(layout.cells[6][0]).toBe(2);
+		expect(layout.cells[0][1]).toBe(4);
+		expect(layout.cells[1][1]).toBeNull();
+		expect(layout.totalCost).toBe(125);
+	} finally {
+		if (previous === undefined) delete process.env.TZ;
+		else process.env.TZ = previous;
+	}
+});
+
+test("calendar selection identifies active and quiet local days without selecting future or hidden dates", () => {
+	const selection = (cell: string) => `\x1b[7m${cell}\x1b[27m`;
+	for (const [day, row, column] of [
+		["2026-10-02", 5, 6],
+		["2026-10-03", 6, 6],
+	] as const) {
+		const rows = renderHeatmap([point("2026-10-02", 100)], {
+			...opts(4), today: TODAY, selectedDay: day, selected: selection,
+		});
+		const selected = rows[row].indexOf("\x1b[7m");
+		expect(Bun.stringWidth(rows[row].slice(0, selected))).toBe(column);
+		expect(rows.filter(line => line.includes("\x1b[7m"))).toHaveLength(1);
+		expect(Bun.stringWidth(rows[row])).toBeLessThanOrEqual(10);
+	}
+	for (const day of ["2026-10-06", "2026-09-01"]) {
+		expect(renderHeatmap([], {
+			...opts(4), today: TODAY, selectedDay: day, selected: selection,
+		}).join("\n")).not.toContain("\x1b[7m");
+	}
+});
+
+test("calendar selection uses local dates across daylight saving changes", () => {
+	const previous = process.env.TZ;
+	process.env.TZ = "America/New_York";
+	try {
+		const rows = renderHeatmap([], {
+			...opts(2), today: new Date(2026, 2, 9, 0, 30),
+			selectedDay: "2026-03-09", selected: cell => `\x1b[7m${cell}\x1b[27m`,
+		});
+		expect(Bun.stringWidth(rows[1].slice(0, rows[1].indexOf("\x1b[7m")))).toBe(4);
+		expect(rows.slice(2).join("\n")).not.toContain("\x1b[7m");
+	} finally {
+		if (previous === undefined) delete process.env.TZ;
+		else process.env.TZ = previous;
+	}
+});
 
 test("day rows label all seven days, Monday first", () => {
 	// usage-dashboard.ts:293 + :862 — HEATMAP_DAY_LABELS is all seven days;

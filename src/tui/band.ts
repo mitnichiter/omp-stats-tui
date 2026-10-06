@@ -54,7 +54,7 @@
  */
 
 import type { ThemeColor } from "@oh-my-pi/pi-tui";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import { formatPercent } from "./format";
 import { glyph, type GlyphSet, type SymbolPreset } from "./glyphs";
 import { statsIcon, type IconRole } from "./icons";
@@ -174,8 +174,6 @@ export interface BandRenderOptions {
 	 */
 	seriesColorFor?: (index: number) => ThemeColor;
 	barHeight: number;
-	/** Max data rows in a table before rows are dropped and counted. */
-	tableLimit: number;
 	labelWidth: number;
 	valueWidth: number;
 	/**
@@ -476,16 +474,15 @@ function fitColumns(
 	);
 }
 
-/** `table` — heading, header row, data rows, count note when rows were dropped. */
+/** `table` — heading, header row, and every fetched data row for panel scrolling. */
 function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOptions): readonly string[] {
 	const all = band.rows.kind === "inline" ? band.rows.rows : band.rows.series;
 	if (band.columns.length === 0 || all.length === 0) return [];
 
-	const shown = all.slice(0, ctx.tableLimit);
 	// Steps 1 and 2 of the policy above. `width` is a hard ceiling the caller may
 	// set below `innerWidth` (a two-column panel), so the table honours both.
 	const available = Math.max(1, Math.min(ctx.width, ctx.innerWidth));
-	const widths = fitColumns(band.columns, columnWidths(band.columns, shown), available);
+	const widths = fitColumns(band.columns, columnWidths(band.columns, all), available);
 	const kept = widths.map((_, index) => band.columns[index]!);
 
 	// `style` is applied to the TEXT only, never to the padding — padding inside
@@ -520,23 +517,17 @@ function renderTable(band: Extract<Band, { kind: "table" }>, ctx: BandRenderOpti
 	// the rule is "not dimmed", and naming the token keeps the table inside the
 	// user's theme instead of inheriting whatever the terminal happens to
 	// default to.
-	const body = shown.map((r) =>
+	const body = all.map((r) =>
 		line(
 			kept.map((c) => String(r[c.key] ?? "")),
 			(t) => ctx.fg(PALETTE.label, t),
 		).trimEnd(),
 	);
 
-	const note =
-		shown.length < all.length
-			? [clamp(ctx.fg(PALETTE.dim, `${shown.length} of ${all.length}`), ctx.width)]
-			: [];
-
 	return [
 		heading(BAND_ICONS.table, band.title, band.source ?? "", ctx.preset, ctx),
 		header,
 		...body,
-		...note,
 	];
 }
 

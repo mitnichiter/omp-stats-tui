@@ -16,9 +16,8 @@
  * dropping things.
  */
 
-import { initDb } from "@oh-my-pi/omp-stats/db";
-
-import { fetchFor, type PanelData } from "../src/data/api";
+import type { PanelData } from "../src/data/api";
+import { StatsReadClient } from "../src/data/client";
 import { RANGES, DEFAULT_RANGE, isRange, type Range } from "../src/data/ranges";
 import { SCREEN_SPECS, type ScreenSpec } from "../src/layout/spec";
 import { renderScreen } from "../src/tui/render/screen";
@@ -86,24 +85,16 @@ if (wanted.length === 0) {
 
 const ROWS = 40;
 
-// The extension inits the database at LOAD (src/index.ts, F16), before any
-// screen is selectable. A standalone script has to do that itself: `rollupStatus`
-// reads `currentDb()` directly rather than through a route, so without a warm it
-// throws "database is not initialised" while the route-backed fetches would have
-// succeeded — the throw is correct behaviour, and standing in for the load-time
-// warm here is what makes this probe match what the panel actually sees.
-await initDb();
-
-// The SAME seam the panel uses: fetch exactly what each screen declared, and draw
-// it through the same renderer. A probe that took a different path would show a
-// panel nobody runs.
+// Use the mounted panel's worker boundary rather than initializing on this thread.
+const reads = new StatsReadClient();
 const data: PanelData = {};
 const timings: string[] = [];
 for (const spec of wanted) {
 	const started = performance.now();
-	Object.assign(data, await fetchFor(spec.needs, range));
+	Object.assign(data, await reads.fetch(spec.needs, range));
 	timings.push(`${spec.id}: ${spec.needs.length} route(s) in ${Math.round(performance.now() - started)}ms`);
 }
+reads.close();
 
 const now = Date.now();
 for (const width of widths) {

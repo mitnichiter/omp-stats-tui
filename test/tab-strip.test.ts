@@ -24,7 +24,7 @@
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import { TabBar } from "@oh-my-pi/pi-tui";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { TAB_SHORT, buildTabs, tabBarTheme } from "../src/tui/tabs";

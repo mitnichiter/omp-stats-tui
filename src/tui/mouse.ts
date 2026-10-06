@@ -21,7 +21,7 @@
  */
 
 import type { SgrMouseEvent } from "@oh-my-pi/pi-tui";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import { NAV_GROUPS } from "./chrome";
 import { RANGES, type Range } from "../data/ranges";

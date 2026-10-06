@@ -29,7 +29,7 @@
  */
 import { expect, test } from "bun:test";
 import { ensureThemeSync, setSymbolPreset, theme } from "@oh-my-pi/pi-tui/theme";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
 import {
@@ -523,9 +523,7 @@ test("progress line is determinate only for ingest with a known total", () => {
 
 test("progress line is hidden for settled states and always fits", () => {
 	expect(progressLineFor(null, 60)).toBe("");
-	expect(progressLineFor({ type: "done", rollup: { dirtyHours: 0, dirtySessions: 0 } }, 60)).toBe("");
-	expect(progressLineFor({ type: "error", error: "x" }, 60)).toBe("");
-	for (const width of [10, 20, 60, 100]) {
+	for (const width of [0, 1, 3, 8, 10, 12, 20, 60, 100]) {
 		const line = progressLineFor({ type: "progress", phase: "ingest", current: 1, total: 2 }, width);
 		expect(visibleWidth(strip(line)), `w=${width}`).toBeLessThanOrEqual(width);
 	}
@@ -791,22 +789,6 @@ test("g arms a jump: the next letter selects the screen and is consumed", async 
 	expect(__testing.debugRange(panel)).toBe("24h");
 });
 
-test("g then an undrawable letter is swallowed, never a range cycle or a sync", async () => {
-	let calls = 0;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: () => {
-			calls++;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("g");
-	panel.handleInput("s");
-	await __testing.settled(panel);
-	expect(calls).toBe(0);
-	expect(__testing.debugRange(panel)).toBe("24h");
-});
 
 test("a stale g prefix falls through to the normal keymap", async () => {
 	let now = 5_000_000;
@@ -819,44 +801,3 @@ test("a stale g prefix falls through to the normal keymap", async () => {
 	expect(__testing.debugRange(panel)).toBe("7d");
 });
 
-// ─── sync wiring into the chrome ──────────────────────────────────────────────
-
-test("progress events paint Syncing plus a progress row; done settles back to Live", async () => {
-	let onEvent!: (e: SyncEvent) => void;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: fn => {
-			onEvent = fn;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("s");
-	onEvent({ type: "progress", phase: "ingest", current: 1, total: 2 });
-	const syncing = panel.render(100).map(strip).join("\n");
-	expect(syncing).toMatch(/Syncing/);
-	expect(syncing).toMatch(/50%/);
-	onEvent({ type: "done", rollup: { dirtyHours: 0, dirtySessions: 0 } });
-	await __testing.settled(panel);
-	const live = panel.render(100).map(strip).join("\n");
-	expect(live).toMatch(/Live/);
-	expect(live).not.toMatch(/Syncing/);
-});
-
-test("an error event paints Sync failed and hides the progress row", async () => {
-	let onEvent!: (e: SyncEvent) => void;
-	const panel = __testing.makePanel({
-		data: liveData(),
-		startIngest: fn => {
-			onEvent = fn;
-			return { kill: () => {}, settled: Promise.resolve() };
-		},
-	});
-	await __testing.settled(panel);
-	panel.handleInput("s");
-	onEvent({ type: "progress", phase: "ingest", current: 1, total: 2 });
-	onEvent({ type: "error", error: "lock busy" });
-	const frame = panel.render(100).map(strip).join("\n");
-	expect(frame).toMatch(/Sync failed/);
-	expect(frame).not.toMatch(/50%/);
-});

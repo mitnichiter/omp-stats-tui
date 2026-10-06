@@ -1,29 +1,26 @@
-import { matchesKey, routeSgrMouseInput, TabBar, type Component, type SgrMouseEvent, type TUI } from "@oh-my-pi/pi-tui";
+import { getKeybindings, matchesKey, routeSgrMouseInput, TabBar, type Component, type SgrMouseEvent, type TUI } from "@oh-my-pi/pi-tui";
 import { OverlayPanel, PanelDivider, PanelRows } from "@oh-my-pi/pi-tui/chrome";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
-import {
-	matchesSelectCancel,
-	matchesSelectDown,
-	matchesSelectPageDown,
-	matchesSelectPageUp,
-	matchesSelectUp,
-} from "@oh-my-pi/pi-tui/keybinding-matchers";
+import { stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme as activeTheme, type Theme, type ThemeColor } from "@oh-my-pi/pi-tui/theme";
-import { node, text } from "@oh-my-pi/pi-tui/native/describe";
-import { overlayCard } from "@oh-my-pi/pi-tui/native/overlay";
-import { leafKey, type DescribeContext, type NativeNode, type NativeUiEvent } from "@oh-my-pi/pi-tui/native/node";
-import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
 
-import { fetchFor, type DataNeed, type PanelData } from "../data/api";
-import { DEFAULT_RANGE, nextRange, rangeLabel, type Range } from "../data/ranges";
-import { describeSyncProgress, startIngest, type IngestHandle, type SyncEvent } from "../sync/client";
-import { costsForBuckets, renderDailyBars } from "./charts/bars";
-import { costWithUnpriced, formatInteger, formatPercent, tokenCells } from "./format";
+import type { DataNeed, PanelData } from "../data/api";
+import { StatsReadClient } from "../data/client";
+import { copyToClipboard } from "@oh-my-pi/pi-natives";
+import { createCoreFeature } from "./features/core";
+import { createProvidersFeature } from "./features/providers";
+import { createGainFeature } from "./features/gain";
+import { createTracesFeature } from "./features/traces";
+import { createFrustrationFeature } from "./features/frustration";
+import type { FeatureContext, FeatureController } from "./features/types";
+import type { ReadStage } from "../data/protocol";
+import type { LiveStatus } from "@oh-my-pi/omp-stats/shared-types";
+import { DEFAULT_RANGE, nextRange, type Range } from "../data/ranges";
+import type { SyncEvent } from "../sync/client";
 import { glyph, glyphsFor, type SymbolPreset } from "./glyphs";
 import { statsIcon } from "./icons";
 // `MIN_USABLE_WIDTH` floors the narrowed body plan — see `render`.
-import { LABEL_WIDTH, MIN_USABLE_WIDTH, planLayout, type LayoutPlan } from "./layout";
-import { SCREENS, screenById, type Screen, type ScreenContext, type ScreenId } from "./screens/types";
+import { MIN_USABLE_WIDTH, planLayout, type LayoutPlan } from "./layout";
+import { SCREENS, screenById, type Screen, type ScreenId } from "./screens/types";
 import { isDrawableScreen, specForScreen } from "../layout/spec";
 import { renderScreenWith } from "./render/screen";
 import {
@@ -38,7 +35,7 @@ import {
 import { framePolicy } from "./responsive";
 import { TAB_BAR_INDENT, buildTabs, tabBarTheme } from "./tabs";
 import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, bodyRows } from "./frame";
-import { footerHints, hintsFor, type HintMode } from "./footer";
+import { footerHints, hintsFor, type HintMode, type PanelHint } from "./footer";
 import { hitTest, type MouseFrame } from "./mouse";
 
 /**
@@ -57,9 +54,8 @@ import { hitTest, type MouseFrame } from "./mouse";
  *     resize hook. Scroll is therefore clamped inside `render` and never in the
  *     key handler, which makes shrink-on-resize automatic instead of a second
  *     code path that has to be remembered.
- *  3. `bun:sqlite` is synchronous and `initDb()` costs ~850 ms, so the load is
- *     fire-and-forget behind a loading state. The constructor never awaits it,
- *     because the constructor runs on the keystroke the user just typed.
+	 *  3. Database initialization and reads run in a persistent standalone Bun
+	 *     process. The loading state keeps the host thread free for input/rendering.
  */
 
 /**
@@ -120,22 +116,7 @@ export const EXACT_DIRTY_LIMIT = 96;
 
 const NO_ROWS: readonly string[] = [];
 
-/**
- * Bucket width of `costSeries`, in ms. The costs route aggregates by DAY for
- * every range, which is why this is not `rangeMeta(range).bucketMs` — see
- * `#chartRows`, and the dashboard's own `CostsRoute.tsx:201`.
- */
-const COST_BUCKET_MS = 24 * 60 * 60 * 1000;
 
-/** The panel's own warm handle: a promise to join, never a trigger. */
-export interface WarmHandle {
-	/**
-	 * Resolve once the process-wide warm has settled. Idempotent, and already
-	 * running by the time a user can type `/stats-tui`, so calling this AWAITS
-	 * the warm rather than starting it — see `statsDbWarm` in src/index.ts.
-	 */
-	start(): Promise<boolean>;
-}
 
 /** The fetch the panel drives, narrowed so a test can answer with fixtures. */
 export type PanelFetch = (needs: readonly DataNeed[], range: Range) => Promise<PanelData>;
@@ -150,12 +131,8 @@ export interface StatsPanelOptions {
 	done: () => void;
 	/** Defaults to `tui.requestRender()`. Injected so a test can count repaints. */
 	requestRender?: () => void;
-	/** Awaited before the first query. Never triggered from here. */
-	warm?: WarmHandle;
-	/** Defaults to `fetchFor`. */
+	/** Production reads run in a cancellable standalone worker. */
 	fetch?: PanelFetch;
-	/** Defaults to `startIngest`. */
-	startIngest?: (onEvent: (event: SyncEvent) => void, signal?: AbortSignal) => IngestHandle;
 	/** Opening range. Defaults to the closed set's own default. */
 	range?: Range;
 	/** Opening screen. Defaults to the first selectable one. */
@@ -223,10 +200,9 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
  * then cancel, so a remapped cancel still closes; then the literal letters;
  * then the arrows and tab; then the digits.
  *
- * `matchesKey` / `matchesSelect*` read the module-global singleton, which is the
- * user's configured `keybindings.yml`. The `keybindings` argument the mount hands
- * the factory is deliberately NOT used: it is `KeybindingsManager.inMemory()`,
- * the static defaults, so resolving through it would ignore every remap.
+ * Selector actions resolve through `getKeybindings()`, the host's configured
+ * module-global manager. Raw keys use `matchesKey`. The manager passed to the
+ * custom factory is deliberately not used: it contains only static defaults.
  */
 
 /**
@@ -238,45 +214,7 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
  */
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
-/**
- * THE KEYMAP DECISION, stated once so it never goes ambiguous again — INCLUDING
- * the time it was got wrong, because a silent revert teaches the next reader
- * nothing.
- *
- * THE ARROWS SWITCH SCREENS. That is the decision. It has been made twice and
- * this is the second time.
- *
- * FIRST DECISION (reverted). `tab` was already switching screens while the
- * FOOTER advertised `←/→`, so the advertised key and the idiomatic key
- * disagreed. That was fixed by making `tab` the advertised primary and handing
- * the arrows to the range control, on the reasoning that "the arrows belong to
- * the one genuinely horizontal thing on screen".
- *
- * WHY THAT WAS WRONG. The reasoning was sound and the conclusion was not. This
- * panel is a SCREEN-SWITCHING panel: a tab strip runs across the top, a nav
- * column runs down the side, and the one thing a reader does here is move
- * between screens. `←/→` is what a hand already does on every dashboard anyone
- * has ever used, and the cost of the swap was that someone arriving at this
- * panel had to LEARN where `tab` went. Trading a key every reader already knows
- * for one they have to be told about is not a net gain, whatever the argument
- * for it was. The user read the result and asked for the arrows back.
- *
- * SO: `←`/`→` are the primary, advertised screen switch. `tab`/`shift+tab` stay
- * bound as an ALIAS, because a redundant key costs nothing and a dead key costs
- * the reader a keystroke — the same relationship digits and `g`-letters already
- * have for screens (see chrome.ts's KEYMAP DECISION). No key in this map means
- * two different things.
- *
- * THE RANGE KEEPS `r`/`R`. Nothing is left over to carry it, so it keeps the
- * pair whose letters already say what they do — and that was true before the
- * revert as well, which is the other half of why the revert costs nothing.
- *
- * WHAT WOULD CHANGE THIS AGAIN. A landmark-focus model would give `tab` a
- * second job, and that is the commit that reclaims it — by ADDING an action, not
- * by re-reading this mapping. Until such a model exists there is nothing for
- * `tab` to be reserved FOR, and a key reserved for a jump that does not exist
- * is a dead key.
- */
+/** Global fallback keys; focused controllers consume row/chart/search keys first. */
 
 
 export function panelAction(data: string, jumpArmed = false): PanelAction | null {
@@ -300,11 +238,15 @@ export function panelAction(data: string, jumpArmed = false): PanelAction | null
 		const id = screenForHotkey(data);
 		return id === null ? { type: "noop" } : { type: "screenId", id };
 	}
-	if (matchesSelectCancel(data) || matchesKey(data, "q")) return { type: "close" };
+	if (getKeybindings().matches(data, "tui.select.cancel") || matchesKey(data, "q")) return { type: "close" };
 	if (data === "g" || data === "G") return { type: "armJump" };
-	// The SCREEN switch: arrows first, because that is what the footer
-	// advertises and what a reader's hand already does. `tab`/`shift+tab` are
-	// an alias for the same target, not a second verb. See THE KEYMAP DECISION.
+	// Explicit host selector overrides take precedence over optional screen shortcuts.
+	if (getKeybindings().matches(data, "tui.select.up")) return { type: "scroll", rows: -1 };
+	if (getKeybindings().matches(data, "tui.select.down")) return { type: "scroll", rows: 1 };
+	if (getKeybindings().matches(data, "tui.select.pageUp")) return { type: "scroll", viewport: -1 };
+	if (getKeybindings().matches(data, "tui.select.pageDown")) return { type: "scroll", viewport: 1 };
+	if (data === "[" || matchesKey(data, "ctrl+p")) return { type: "screen", by: -1 };
+	if (data === "]" || matchesKey(data, "ctrl+n")) return { type: "screen", by: 1 };
 	if (matchesKey(data, "left") || matchesKey(data, "shift+tab")) return { type: "screen", by: -1 };
 	if (matchesKey(data, "right") || matchesKey(data, "tab")) return { type: "screen", by: 1 };
 	// The RANGE cluster, on the keys that are called range. Nothing is left over
@@ -315,10 +257,6 @@ export function panelAction(data: string, jumpArmed = false): PanelAction | null
 	if (matchesKey(data, "s")) return { type: "sync" };
 	const digit = DIGITS.indexOf(data);
 	if (digit !== -1) return { type: "screenIndex", index: digit };
-	if (matchesSelectUp(data)) return { type: "scroll", rows: -1 };
-	if (matchesSelectDown(data)) return { type: "scroll", rows: 1 };
-	if (matchesSelectPageUp(data)) return { type: "scroll", viewport: -1 };
-	if (matchesSelectPageDown(data)) return { type: "scroll", viewport: 1 };
 	if (matchesKey(data, "home")) return { type: "scrollTo", edge: "top" };
 	if (matchesKey(data, "end")) return { type: "scrollTo", edge: "bottom" };
 	return null;
@@ -344,13 +282,13 @@ interface PanelState {
 	error: string | null;
 	identity: string;
 	generation: number;
+	readStage: ReadStage;
 	closed: boolean;
 	done: boolean;
 	syncEvent: SyncEvent | null;
 	/** Wall clock of the last settled sync, for the Live chip's relative age (`s`/`done`). */
 	lastSyncedAt: number | null;
 	syncError: string | null;
-	ingest: IngestHandle | null;
 	/** `done()` calls so far. The mount promise must resolve exactly once. */
 	doneCalls: number;
 	/** Screen id under the pointer, or null. Painted with the host's `hoverTab` token. */
@@ -373,24 +311,21 @@ const STATE = new WeakMap<StatsPanel, PanelState>();
 // ---------------------------------------------------------------------------
 
 export class StatsPanel implements Component {
-	/**
-	 * TERN PROBE (F2 experiment, scratch — additive only). The terminal draws
-	 * the sheet: a large glass overlay titled Stats. `render()` is untouched
-	 * and stays the universal path; these methods only speak when a TSP
-	 * terminal is listening.
-	 */
-	readonly nativeOverlay = { role: "omp.overlay.stats", size: "lg", anchor: "center", head: "Stats" } as const;
-
 	readonly #options: StatsPanelOptions;
 	readonly #tui: TUI;
-	readonly #theme: Theme;
+	#theme: Theme;
 	readonly #panel: OverlayPanel;
 	readonly #tabBar: TabBar;
 	readonly #header: PanelRows;
 	readonly #body: PanelRows;
 	readonly #footer: PanelRows;
-	readonly #closeController = new AbortController();
 	readonly #state: PanelState;
+	readonly #reads = new StatsReadClient();
+	readonly #features = new Map<ScreenId, FeatureController>();
+	#featureContext: FeatureContext | undefined;
+	#traceOrigin: ScreenId | undefined;
+	#liveStatus: LiveStatus | undefined;
+	#refreshTimer: Timer | undefined;
 
 	constructor(options: StatsPanelOptions) {
 		this.#options = options;
@@ -406,12 +341,12 @@ export class StatsPanel implements Component {
 			error: null,
 			identity: "",
 			generation: 0,
+			readStage: "initializing",
 			closed: false,
 			done: false,
 			syncEvent: null,
 			lastSyncedAt: null,
 			syncError: null,
-			ingest: null,
 			doneCalls: 0,
 			hoveredSidebarId: null,
 			hoveredStripId: null,
@@ -438,8 +373,24 @@ export class StatsPanel implements Component {
 		this.#panel.addChild(new PanelDivider());
 		this.#panel.addChild(this.#footer);
 
-		// Fire-and-forget, never awaited: `initDb()` is ~850 ms of synchronous
-		// work and this constructor runs on the keystroke the user just typed.
+		// The worker owns initialization and synchronous queries; rendering never waits.
+		if (!options.fetch) this.#reads.subscribe(status => {
+			if (this.#state.closed) return;
+			const previous = this.#liveStatus;
+			this.#liveStatus = status;
+			this.#state.lastSyncedAt = status.sync.lastSyncedAt;
+			this.#state.syncError = status.sync.error;
+			this.#state.syncEvent = status.sync.phase === "syncing"
+				? { type: "progress", phase: "ingest", current: status.sync.current, total: status.sync.total } : null;
+			if (previous && (previous.version !== status.version ||
+				previous.sync.lastSyncedAt !== status.sync.lastSyncedAt)) this.#load();
+			this.#changed();
+		}, error => {
+			if (this.#state.closed) return;
+			this.#state.syncEvent = null;
+			this.#state.syncError = error.message;
+			this.#changed();
+		});
 		this.#load();
 	}
 
@@ -460,9 +411,43 @@ export class StatsPanel implements Component {
 		return declared.includes("rollupStatus") ? declared : [...declared, "rollupStatus"];
 	}
 
+	#feature(): FeatureController | undefined {
+		if (this.#options.fetch) return undefined;
+		const id = this.#state.screenId;
+		let feature = this.#features.get(id);
+		if (feature) return feature;
+		const ctx = this.#featureContext ??= {
+			reader: this.#reads, theme: this.#theme, changed: () => this.#changed(),
+			copy: async text => { copyToClipboard(text); },
+			now: () => this.#options.now?.() ?? Date.now(),
+			openScreen: target => this.#selectScreen(this.#indexOf(target as ScreenId)),
+			backToOrigin: () => {
+				const origin = this.#traceOrigin;
+				if (!origin) return false;
+				this.#traceOrigin = undefined;
+				this.#selectScreen(this.#indexOf(origin));
+				return true;
+			},
+			openTrace: (file, entryId) => {
+				if (this.#state.screenId !== "traces") this.#traceOrigin = this.#state.screenId;
+				this.#selectScreen(this.#indexOf("traces"));
+				void this.#feature()?.openTrace?.(file, entryId);
+			},
+		};
+		feature = createCoreFeature(id, ctx) ?? (
+			id === "providers" ? createProvidersFeature(ctx) :
+			id === "gain" ? createGainFeature(ctx) :
+			id === "traces" ? createTracesFeature(ctx) :
+			id === "frustration" ? createFrustrationFeature(ctx) : undefined);
+		if (feature) this.#features.set(id, feature);
+		return feature;
+	}
+
 	#load(): void {
 		const state = this.#state;
 		if (state.closed) return;
+		clearTimeout(this.#refreshTimer);
+		this.#refreshTimer = undefined;
 		const identity = `${state.screenId}:${state.range}`;
 		// A different question invalidates the old answer, so the panel says
 		// "loading" rather than painting one window's numbers under another's
@@ -480,24 +465,35 @@ export class StatsPanel implements Component {
 			this,
 			(async () => {
 				try {
-					// Awaited, never started: `start()` is memoised and was
-					// already called at extension load, so this joins it.
-					await (this.#options.warm ?? NO_WARM).start();
+					const range = state.range;
+					const feature = this.#feature();
+					await feature?.load(range);
 					if (this.#superseded(generation)) return;
-					const fetch = this.#options.fetch ?? fetchFor;
-					const data = await fetch(this.#needs(), state.range);
+					const needs = feature ? ["rollupStatus"] as const : this.#needs();
+					const data = this.#options.fetch
+						? await this.#options.fetch(needs, range)
+						: await this.#reads.fetch(needs, range, stage => {
+							if (this.#superseded(generation)) return;
+							state.readStage = stage;
+							this.#changed();
+						});
 					if (this.#superseded(generation)) return;
 					state.data = data;
 					state.error = null;
 				} catch (error) {
 					if (this.#superseded(generation)) return;
-					// Not zeroes, not an empty list: the panel says what it could
-					// not read. `fetchRollupStatus` throws when `currentDb()` is
-					// null, so this is the ordinary outcome of a failed warm.
-					state.data = null;
-					state.error = error instanceof Error ? error.message : String(error);
+					// Initialization/read failures are not empty usage.
+					const diagnostic = error instanceof Error ? error.message : String(error);
+					if (state.data) state.syncError = diagnostic;
+					else state.error = diagnostic;
 				} finally {
-					if (!this.#superseded(generation)) this.#changed();
+					if (!this.#superseded(generation)) {
+						this.#changed();
+						if (!this.#options.fetch) this.#refreshTimer = setTimeout(() => {
+							this.#refreshTimer = undefined;
+							this.#load();
+						}, state.screenId === "traces" ? 1_000 : 30_000);
+					}
 				}
 			})(),
 		);
@@ -512,76 +508,33 @@ export class StatsPanel implements Component {
 		(this.#options.requestRender ?? (() => this.#tui.requestRender()))();
 	}
 
-	// --- background ingest (Task 12's client) --------------------------------
+	// --- live sync -----------------------------------------------------------
 
 	#beginSync(): void {
 		const state = this.#state;
-		if (state.closed || state.ingest) return;
-		state.syncEvent = null;
-		state.syncError = null;
-		const spawn = this.#options.startIngest ?? startIngest;
-		let handle: IngestHandle;
-		try {
-			handle = spawn(event => this.#onSyncEvent(event), this.#closeController.signal);
-		} catch (error) {
+		if (state.closed) return;
+		void this.#reads.requestSync().catch(error => {
+			if (state.closed) return;
 			state.syncError = error instanceof Error ? error.message : String(error);
 			this.#changed();
-			return;
-		}
-		state.ingest = handle;
-		// The child reports failure through a rejected promise that nothing else
-		// observes, and an unobserved rejection is a crash in Bun.
-		void handle.settled
-			.catch(() => {})
-			.finally(() => {
-				if (state.ingest === handle) state.ingest = null;
-			});
-		this.#changed();
+		});
 	}
 
-	#onSyncEvent(event: SyncEvent): void {
-		const state = this.#state;
-		if (state.closed) return;
-		if (event.type === "done") {
-			state.syncEvent = null;
-			state.syncError = null;
-			// The settled moment the web stamps `lastSyncedAt` (live.ts): the age
-			// the Live chip reads comes from here. Clock is injected for tests.
-			state.lastSyncedAt = this.#options.now?.() ?? Date.now();
-			// The rollup moved underneath us, so every number on screen is one
-			// sync out of date until the reload lands.
-			this.#load();
-			return;
-		}
-		if (event.type === "error") {
-			state.syncEvent = null;
-			state.syncError = event.error;
-		} else {
-			state.syncEvent = event;
-		}
-		this.#changed();
-	}
 
 	// --- render --------------------------------------------------------------
 
-	/**
-	 * What the topbar's live chip reads. DERIVED per frame from the same
-	 * `SyncEvent` the progress line reads, so the chip and the bar can never
-	 * disagree about whether a sync is running (LiveChip.tsx's `sync.phase`).
-	 */
+	/** The live worker owns the sync phase and counters for the topbar. */
 	#chromeSync(): ChromeSync {
 		const state = this.#state;
-		const event = state.syncEvent;
-		const progress = event?.type === "progress" ? event : null;
+		const sync = this.#liveStatus?.sync;
 		return {
-			syncing: progress !== null || state.ingest !== null,
-			current: progress?.current ?? 0,
-			total: progress?.total ?? 0,
-			// Only ingest reports a denominator; scan and rollup are indeterminate
-			// by phase, exactly as progressLineFor treats them.
-			determinate: progress?.phase === "ingest" && progress.total > 0,
+			syncing: sync?.phase === "syncing",
+			current: sync?.current ?? 0,
+			total: sync?.total ?? 0,
+			determinate: sync?.phase === "syncing" && sync.total > 0,
 			error: state.syncError,
 			dirtyHours: state.data?.rollupStatus?.dirtyHours ?? 0,
+			live: this.#options.fetch ? false : this.#liveStatus !== undefined,
 			lastSyncedAt: state.lastSyncedAt,
 			now: this.#options.now?.() ?? Date.now(),
 		};
@@ -590,6 +543,10 @@ export class StatsPanel implements Component {
 	render(width: number): readonly string[] {
 		const state = this.#state;
 		const rows = this.#options.rows ?? this.#tui.terminal.rows ?? 40;
+		if (!this.#options.fetch && activeTheme && this.#theme !== activeTheme) {
+			this.#theme = activeTheme;
+			if (this.#featureContext) this.#featureContext.theme = activeTheme;
+		}
 		// The one and only `getSymbolPreset()` read in this feature. Every path
 		// below receives the preset; none of them branch on it.
 		const preset = this.#theme.getSymbolPreset();
@@ -709,7 +666,7 @@ export class StatsPanel implements Component {
 		// At least as tall as the nav: `#zipSidebar` may have added rows to keep the
 		// whole nav visible, and `setHeight` would clip them straight back off.
 		this.#body.setHeight(Math.max(plan.bodyRows, nav?.lines.length ?? 0));
-		this.#footer.setLines([this.#footerLine(plan)]);
+		this.#footer.setLines([this.#footerLine(plan, innerWidth)]);
 		return this.#panel.render(width);
 	}
 
@@ -734,14 +691,38 @@ export class StatsPanel implements Component {
 		const state = this.#state;
 		const phase = this.#phase();
 		state.chart = NO_ROWS;
-		if (phase === "loading") return loadingLines(this.#theme);
-		if (phase === "error") return errorLines(this.#theme, preset, state.error ?? "", state.syncError);
+		if (phase === "loading") return loadingLines(this.#theme, state.readStage);
+		if (phase === "error") return errorLines(this.#theme, preset, state.error ?? "", state.syncError)
+			.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth));
 
 		const data = state.data as PanelData;
+		const notices: string[] = [];
+		if (state.syncError) notices.push(this.#theme.fg("warning",
+			`Stats service failed; retained cached data. ${stripTerminalSequences(state.syncError)}`));
+		if (data.freshness?.pendingSessions) {
+			notices.push(this.#theme.fg("warning",
+				`${data.freshness.pendingSessions} transcript files have un-ingested changes. Press s to sync.`));
+		}
+		if (data.freshness?.records === 0) {
+			notices.push(this.#theme.fg("dim", data.freshness.pendingSessions
+				? "No ingested requests yet; this is not measured zero usage."
+				: "No recorded requests found."));
+		}
+		if (data.recent && state.screenId === "requests") {
+			notices.push(this.#theme.fg("dim",
+				`Loaded ${data.recent.length} requests in the selected range${data.recent.length === 50
+					? "; latest 50 may not cover the complete range." : "."}`));
+		}
+		if (data.freshness?.records === 0 && data.freshness.pendingSessions > 0) {
+			return notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth));
+		}
+		const feature = this.#feature();
+		if (feature) {
+			const noticeLines = notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth));
+			return [...noticeLines, ...feature.render(plan.innerWidth, Math.max(1, plan.bodyRows - noticeLines.length))];
+		}
 		const spec = specById(state.screenId);
-		// ONE rendering path. There is no `?? screen.render()` fallback: a fallback
-		// is how the panel got two grammars in the first place, and a screen the
-		// IR does not describe is a screen this panel cannot draw honestly.
+		// Pure IR fixtures/probes use declarative layouts; production controllers render above.
 		if (!spec) return [this.#theme.fg("muted", `No layout spec for "${state.screenId}".`)];
 		const rendered = renderScreenWith({
 			spec,
@@ -760,7 +741,18 @@ export class StatsPanel implements Component {
 		// scaling against the REAL frame. The charts are the IR's now, so this
 		// captures what the screen drew rather than keeping a second local chart.
 		state.chart = rendered.chart;
-		return rendered.lines;
+		if (!state.syncError && notices.length === 0) return rendered.lines;
+		return [
+			...(state.syncError ? [
+				this.#theme.fg("error", "Background sync failed"),
+				...wrapTextWithAnsi(stripTerminalSequences(state.syncError), plan.innerWidth)
+					.map(line => this.#theme.fg("warning", line)),
+				"",
+			] : []),
+			...notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth)),
+			...(notices.length ? [""] : []),
+			...rendered.lines,
+		];
 	}
 
 	/**
@@ -813,60 +805,8 @@ export class StatsPanel implements Component {
 		return SERIES_COLORS[((index % SERIES_COLORS.length) + SERIES_COLORS.length) % SERIES_COLORS.length];
 	}
 
-	#screenContext(plan: LayoutPlan, preset: SymbolPreset, data: PanelData): ScreenContext {
-		const theme = this.#theme;
-		return {
-			width: plan.innerWidth,
-			rows: plan.bodyRows,
-			range: this.#state.range,
-			theme,
-			preset,
-			glyphs: glyphsFor(preset),
-			plan,
-			data,
-			colorFor: index => text =>
-				theme.fg(SERIES_COLORS[((index % SERIES_COLORS.length) + SERIES_COLORS.length) % SERIES_COLORS.length], text),
-		};
-	}
 
-	/**
-	 * Bars over COST, bucketed onto the host's own axis for the active range.
-	 *
-	 * Cost, not tokens: the measured price spread across this database is 41x at
-	 * comparable token volume, so a token-scaled chart ranks sessions by volume
-	 * and then calls the most expensive one the smallest.
-	 *
-	 * The axis comes from the host's own `bucketAxis` rather than a hand-built
-	 * loop, because `densify` matches bucket timestamps EXACTLY and a chart on a
-	 * different alignment silently drops every point that misses.
-	 *
-	 * The bucket width is DAY for every range, because `costSeries` is
-	 * day-bucketed regardless of the range asked for — the dashboard's own costs
-	 * page passes `DAY_MS` explicitly for exactly this reason
-	 * (`omp-stats/src/client/routes/CostsRoute.tsx:201`). Deriving it from
-	 * `rangeMeta` instead would put an hourly axis under midnight-aligned rows
-	 * for `24h`, and the chart would be silently empty.
-	 *
-	 * An axis longer than the panel is wide is truncated from the FRONT: a time
-	 * series that has run out of room should lose its oldest column, not its
-	 * newest.
-	 */
-	#chartRows(ctx: ScreenContext): readonly string[] {
-		const series = ctx.data.costs?.costSeries ?? [];
-		if (series.length === 0) return NO_ROWS;
-		const width = Math.max(1, ctx.plan.innerWidth);
-		const axis = bucketAxis(ctx.range, series.map(point => point.timestamp), COST_BUCKET_MS, this.#options.now?.());
-		const buckets = axis.length > width ? axis.slice(-width) : axis;
-		return renderDailyBars(costsForBuckets(series, buckets), {
-			width,
-			height: ctx.plan.barHeight,
-			glyphs: ctx.glyphs,
-			accent: text => ctx.theme.fg("accent", text),
-			dim: text => ctx.theme.fg("dim", text),
-		});
-	}
-
-	#footerLine(plan: LayoutPlan): string {
+	#footerLine(plan: LayoutPlan, width: number): string {
 		const state = this.#state;
 		// DERIVED, never stored (F23 §3.2): an error shows a retry and a close
 		// rather than a range switch that would only discard the message the user
@@ -874,44 +814,25 @@ export class StatsPanel implements Component {
 		const mode: HintMode =
 			state.error !== null
 				? "error"
-				: state.syncEvent || state.ingest
+				: this.#liveStatus?.sync.phase === "syncing"
 					? "syncing"
 					: state.maxScroll > 0
 						? "scrollable"
 						: "idle";
-		const [row] = footerHints(hintsFor(mode), this.#theme, plan.innerWidth);
-		return row ?? "";
-	}
-
-	// --- tern probe (F2 experiment, scratch) -----------------------------------
-
-	/**
-	 * The probe description: the screen strip as a `tabs` node inside the
-	 * overlay card, plus one `text` leaf proving the mount. Screen switches
-	 * reuse `#selectScreen` — never a second keymap. `render()` output is
-	 * untouched; see the probe-render parity check.
-	 */
-	describe(_cx: DescribeContext): NativeNode {
-		return overlayCard("omp.overlay.stats", "Stats", [
-			node(
-				"tabs",
-				{
-					items: SELECTABLE_SCREENS.map(screen => ({ id: screen.id, label: screen.label })),
-					active: this.#state.screenId,
-				},
-				undefined,
-				"tabs",
-			),
-			text("probe"),
-		]);
-	}
-
-	/** Tab select/activate routes to the same screen index path as the keys. */
-	handleNativeEvent(event: NativeUiEvent): void {
-		if (event.type !== "select" && event.type !== "activate") return;
-		if (leafKey(event.key) !== "tabs") return;
-		const index = SELECTABLE_SCREENS.findIndex(screen => screen.id === event.item);
-		if (index !== -1) this.#selectScreen(index);
+		const hints: readonly PanelHint[] = this.#feature()?.inputMode === "text" ? [
+			{ keys: ["escape"], label: "finish search" },
+			{ keys: ["ctrl+p", "ctrl+n"], label: "screen" },
+			{ keys: ["ctrl+c"], label: "close" },
+		] : hintsFor(mode);
+		const scrollPosition = state.maxScroll > 0 ? `${state.scroll + 1}–${Math.min(state.source.length, state.scroll + plan.bodyRows)}/${state.source.length}` : "";
+		// Keep the close hint usable when the viewport cannot also fit the counter.
+		const position = visibleWidth(scrollPosition) + 12 <= width ? scrollPosition : "";
+		const reserve = position ? visibleWidth(position) + 2 : 0;
+		const hintWidth = Math.max(0, width - reserve);
+		const [row = ""] = footerHints(hints, this.#theme, hintWidth);
+		return position
+			? row + " ".repeat(Math.max(2, width - visibleWidth(row) - visibleWidth(position))) + this.#theme.fg("dim", position)
+			: row;
 	}
 
 	// --- input ---------------------------------------------------------------
@@ -927,7 +848,25 @@ export class StatsPanel implements Component {
 		// web compares timestamps on the next keypress and never clears).
 		const armed =
 			state.jumpArmedAt !== 0 && (this.#options.now?.() ?? Date.now()) - state.jumpArmedAt < JUMP_TIMEOUT_MS;
-		const action = panelAction(data, armed);
+		const feature = this.#feature();
+		const editing = feature?.inputMode === "text";
+		if (matchesKey(data, "ctrl+c") || !editing && matchesKey(data, "q")) { this.#finish(); return; }
+		let action: PanelAction | null = null;
+		if (matchesKey(data, "ctrl+p") || matchesKey(data, "ctrl+n")) {
+			action = panelAction(data, armed);
+			if (action?.type === "screen") {
+				this.#selectScreen(this.#indexOf(state.screenId) + action.by); return;
+			}
+		}
+		if (!editing && (data === "[" || data === "]")) {
+			this.#selectScreen(this.#indexOf(state.screenId) + (data === "[" ? -1 : 1)); return;
+		}
+		if (!armed && feature?.handleInput(data)) {
+			if (editing || this.#feature()?.inputMode === "text" || matchesKey(data, "tab") || matchesKey(data, "shift+tab") ||
+				matchesKey(data, "enter") || matchesKey(data, "escape")) state.scroll = 0;
+			return;
+		}
+		action ??= panelAction(data, armed);
 		if (action === null) return;
 		state.jumpArmedAt = 0;
 		switch (action.type) {
@@ -1024,6 +963,7 @@ export class StatsPanel implements Component {
 		if (count === 0) return;
 		const screen = SELECTABLE_SCREENS[((index % count) + count) % count];
 		if (screen.id === state.screenId) return;
+		if (state.screenId === "traces" && screen.id !== "traces") this.#traceOrigin = undefined;
 		// The pointer no longer points at what the old highlight meant, so a
 		// hover pill left on the old tab would lie — `/settings` clears on
 		// select the same way.
@@ -1061,12 +1001,11 @@ export class StatsPanel implements Component {
 		const state = this.#state;
 		if (state.closed) return;
 		state.closed = true;
-		this.#closeController.abort();
-		// The child may be inside `withStatsSyncLock`, which has no cancellation,
-		// so it is SIGKILLed rather than asked nicely. Per-file writes are
-		// transactional and the OS releases the lock when the process dies.
-		state.ingest?.kill();
-		state.ingest = null;
+		clearTimeout(this.#refreshTimer);
+		this.#refreshTimer = undefined;
+		for (const feature of this.#features.values()) feature.dispose();
+		this.#features.clear();
+		this.#reads.close();
 		this.#panel.dispose();
 	}
 }
@@ -1075,12 +1014,11 @@ export class StatsPanel implements Component {
 // Bodies
 // ---------------------------------------------------------------------------
 
-function loadingLines(theme: Theme): readonly string[] {
+function loadingLines(theme: Theme, stage: ReadStage): readonly string[] {
 	return [
-		theme.fg("dim", "Loading usage…"),
+		theme.fg("dim", stage === "initializing" ? "Initializing stats database…" : "Reading usage…"),
 		"",
-		theme.fg("dim", "Waiting on the database warm that ran at startup. The panel never starts one:"),
-		theme.fg("dim", "initDb() is ~850 ms of synchronous work, and this runs on the keystroke you typed."),
+		theme.fg("dim", "Stats work runs in a separate process. Navigation and close remain available."),
 	];
 }
 
@@ -1101,75 +1039,10 @@ function errorLines(theme: Theme, preset: SymbolPreset, error: string, syncError
 	return lines;
 }
 
-/**
- * The overview body: a cost-per-bucket chart over the active range, then the
- * figures that make it legible.
- *
- * Three rules are load-bearing in the rows below, and each one already cost this
- * project a lie:
- *
- *  - `costWithUnpriced`, never `formatCost`. A `$0.00` beside 34,870 unpriced
- *    requests reads as "this was free", which the data cannot support.
- *  - `tokenCells`, never a combined total. One number summing fresh, output,
- *    cache-read and cache-write tokens is dominated by cache reads and hides
- *    the rest, so output gets its own cell and cache read its own rate.
- *  - Bars scale by cost, in `#chartRows`, for the 41x price spread.
- */
-function overviewBody(ctx: ScreenContext, chart: readonly string[], notice?: string): readonly string[] {
-	const { theme, plan } = ctx;
-	const overall = ctx.data.overview?.overall;
-	const series = ctx.data.costs?.costSeries ?? [];
-	const rows: string[] = [
-		`${statsIcon(ctx.preset, "cost", theme)} Cost per bucket  ${theme.fg("dim", rangeLabel(ctx.range))}`,
-	];
-	if (notice) rows.push(theme.fg("warning", notice));
-	if (chart.length === 0 || series.length === 0) {
-		// Reachable only once `rollupStatus` has ANSWERED, so this is an honest
-		// "nothing happened in this window" rather than the silent-empty trap.
-		rows.push("", theme.fg("dim", "No activity recorded in this range."));
-		return rows;
-	}
-	rows.push(...chart);
-
-	// The peak is quoted with the same unpriced caveat as the total, so a window
-	// whose only activity was unpriced cannot claim a free tallest bar. The count
-	// beside it is REQUESTS, not buckets: `costSeries` is one row per model per
-	// day, so a bucket count here would be a count of model-runs dressed up as
-	// calendar days.
-	const peak = Math.max(...series.map(point => point.cost));
-	const activity = series.reduce((total, point) => total + point.requests, 0);
-	rows.push("", theme.fg("dim", `  tallest bucket ${costWithUnpriced(peak, 0)} · ${formatInteger(activity)} requests`));
-
-	if (!overall) {
-		rows.push("", theme.fg("warning", "  The range loaded but carried no aggregate; nothing is invented here."));
-		return rows;
-	}
-	const cells = tokenCells({
-		totalInputTokens: overall.totalInputTokens,
-		totalOutputTokens: overall.totalOutputTokens,
-		totalCacheReadTokens: overall.totalCacheReadTokens,
-		totalCacheWriteTokens: overall.totalCacheWriteTokens,
-		cacheRate: overall.cacheRate,
-	});
-	rows.push(
-		"",
-		row(theme, "cost", costWithUnpriced(overall.totalCost, overall.unpricedRequests)),
-		row(theme, "requests", `${formatInteger(overall.totalRequests)} · ${formatInteger(overall.failedRequests)} failed`),
-		row(theme, "tokens", `fresh ${cells.fresh} · read ${cells.cacheRead} · written ${cells.cacheWrite} · ${cells.rate}`),
-		row(theme, "output", formatInteger(overall.totalOutputTokens)),
-	);
-	if (overall.errorRate > 0) rows.push(row(theme, "errors", formatPercent(overall.errorRate)));
-	return rows;
-}
-
-function row(theme: Theme, label: string, value: string): string {
-	return `  ${theme.fg("dim", label.padEnd(LABEL_WIDTH))}${value}`;
-}
 
 /** Theme colour names, so a theme switch restyles the series without a code change. */
 const SERIES_COLORS: readonly ThemeColor[] = ["accent", "success", "warning", "error", "muted", "borderAccent"];
 
-const NO_WARM: WarmHandle = { start: () => Promise.resolve(true) };
 
 /** The in-flight load per panel, so a test can await a settle without a timer. */
 const LOADS = new WeakMap<StatsPanel, Promise<void>>();
@@ -1181,8 +1054,6 @@ const LOADS = new WeakMap<StatsPanel, Promise<void>>();
 export interface PanelTestState {
 	data?: PanelData;
 	fetch?: PanelFetch;
-	warm?: WarmHandle;
-	startIngest?: (onEvent: (event: SyncEvent) => void, signal?: AbortSignal) => IngestHandle;
 	range?: Range;
 	screenId?: ScreenId;
 	rows?: number;
@@ -1207,9 +1078,7 @@ export const __testing = {
 			theme: activeTheme,
 			done: () => {},
 			requestRender: () => {},
-			warm: state.warm ?? { start: () => Promise.resolve(true) },
 			fetch: state.fetch ?? (async () => state.data as PanelData),
-			startIngest: state.startIngest,
 			range: state.range,
 			screenId: state.screenId,
 			rows: state.rows ?? 40,

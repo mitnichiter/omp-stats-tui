@@ -1,5 +1,5 @@
-import { buildHeatmapLayout } from "@oh-my-pi/pi-tui/overlays/usage-dashboard";
-import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { calendarLayout } from "./calendar";
+import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 import type { GlyphSet } from "../glyphs";
 
@@ -12,15 +12,10 @@ import type { GlyphSet } from "../glyphs";
  * no I/O. Styling arrives injected (`dim`, `ramp`), because the theme
  * singleton throws when an extension reads it at module scope.
  *
- * What is reused, and what that buys: the LAYOUT is not reimplemented.
- * `buildHeatmapLayout` from `@oh-my-pi/pi-tui/overlays/usage-dashboard` is
- * exported, host-proven in production by `/usage`, and implements the rules
- * that are easy to get subtly wrong: zero-fill (a quiet day is level 0, not a
- * missing cell), max-anchored discrete levels (a quiet fortnight cannot look
- * like a busy one), `max <= 0` short-circuit (no division by zero), `null`
- * for future dates (absence, not zero), and LOCAL date keys (no UTC boundary
- * shift). The colour RAMP is not reimplemented either: callers pass the four
- * stops from `palette.heatRamp`, which ports `#heatRamp`'s own arithmetic.
+ * The terminal-owned calendar layout ports `/usage`'s local-date algorithm:
+ * zero-fill for quiet days, sqrt-compressed max-anchored levels, request
+ * fallback for unpriced activity, and `null` for future dates. The colour
+ * ramp arrives from `palette.heatRamp`, which ports `/usage`'s arithmetic.
  */
 
 /** Raw foreground reset. Deliberately not `theme.fg(...)` per cell: that would
@@ -48,6 +43,10 @@ export interface HeatmapOptions {
 	dim: (text: string) => string;
 	/** Injectable so tests are independent of the wall clock. */
 	today?: Date;
+	/** Local calendar day selected by keyboard; future cells remain absent. */
+	selectedDay?: string;
+	/** Selected-cell styling is injected from the active theme. */
+	selected?: (text: string) => string;
 }
 
 /**
@@ -78,7 +77,14 @@ export function renderHeatmap(
 	opts: HeatmapOptions,
 ): readonly string[] {
 	const weeks = Math.max(1, opts.weeks);
-	const layout = buildHeatmapLayout(points as DailyActivityPoint[], weeks, opts.today);
+	const layout = calendarLayout(points, weeks, opts.today);
+	const selectedDate = opts.selectedDay ? new Date(`${opts.selectedDay}T12:00:00`) : undefined;
+	const selectedOffset = selectedDate
+		? Math.round((Date.UTC(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()) -
+			Date.UTC(layout.start.getFullYear(), layout.start.getMonth(), layout.start.getDate())) / 86_400_000)
+		: -1;
+	const selectedWeek = Math.floor(selectedOffset / 7);
+	const selectedRow = selectedOffset % 7;
 
 	// Fixed at 2: the host's own gutter (usage-dashboard.ts:833), one label
 	// cell plus one space. Callers pass it through; anything else is clamped.
@@ -110,7 +116,9 @@ export function renderHeatmap(
 			if (cell === null) line += "  ";
 			// Present but no activity — drawn, so a quiet day still occupies its
 			// slot in the calendar rather than vanishing from the axis.
-			else if (cell === 0) line += `${opts.dim(emptyCell(opts.glyphs))} `;
+			else if (week === selectedWeek && dayIndex === selectedRow && opts.selected) {
+				line += `${opts.selected(cell === 0 ? emptyCell(opts.glyphs) : heatCell(opts.glyphs, cell))} `;
+			} else if (cell === 0) line += `${opts.dim(emptyCell(opts.glyphs))} `;
 			else line += `${opts.ramp[cell - 1] ?? ""}${heatCell(opts.glyphs, cell)}${FG_RESET} `;
 		}
 		return line.trimEnd();

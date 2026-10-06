@@ -3,14 +3,13 @@
  *
  * The no-card-vs-free distinction is asserted at render level in
  * `test/models-screen.test.ts` (Cost column) and `test/overview-screen.test.ts`
- * (cost tile + hint). What lives HERE: the headline-cost pipeline assertion and
- * the LIVE database classification that guards the data seam's no-catalog-card
- * workaround in `src/data/api.ts`.
+ * (cost tile + hint). This file checks the headline-cost pipeline on isolated
+ * fixture data; it never reads or initializes the user's database.
  */
 
 import { test, expect } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 import { SCREEN_SPECS } from "../src/layout/spec";
 import { screenBands, type ScreenRenderOptions } from "../src/tui/render/screen";
@@ -18,10 +17,8 @@ import { planLayout } from "../src/tui/layout";
 import { glyphsFor } from "../src/tui/glyphs";
 import { SERIES_COLORS, stripForTest } from "../src/tui/palette";
 import { DEFAULT_RANGE } from "../src/data/ranges";
-import { fetchModelDashboard, fetchOverview } from "../src/data/api";
 import type { PanelData } from "../src/data/api";
 import type { ModelStats } from "@oh-my-pi/omp-stats/shared-types";
-import { initDb } from "@oh-my-pi/omp-stats/db";
 
 ensureThemeSync();
 
@@ -120,27 +117,3 @@ test("the headline cost carries the corrected unpriced count", () => {
 	expect(stripForTest(cost.hint ?? "")).toBe("4,197 unpriced");
 });
 
-test("LIVE: the real database classifies both populations correctly", async () => {
-	// Skipped unless a database is present, so this never fails in CI.
-	if (!(await hasDb())) return;
-	await initDb();
-	const dashboard = await fetchModelDashboard("all");
-	const byId = new Map(dashboard.byModel.map(m => [m.model, m]));
-
-	// No card ⇒ unknown spend ⇒ N/A. These are the 4,359 requests.
-	expect(byId.get("gemini-3.7-flash-high")?.unpricedRequests ?? 0).toBeGreaterThan(0);
-	expect(byId.get("agnes-2.5-flash")?.unpricedRequests ?? 0).toBeGreaterThan(0);
-
-	// Explicit zero card ⇒ really free ⇒ stays $0, no unpriced marker.
-	for (const free of ["space-bunny-free", "big-pickle", "muse-spark-1.3-contributor-free"]) {
-		expect(byId.get(free)?.unpricedRequests ?? -1, free).toBe(0);
-	}
-
-	const overview = await fetchOverview("all");
-	expect(overview.overall.unpricedRequests).toBeGreaterThanOrEqual(4197);
-});
-
-/** True when a real stats database is present; keeps this out of CI. */
-async function hasDb(): Promise<boolean> {
-	return (await Bun.file(`${process.env.HOME}/.omp/stats.db`).size) > 0;
-}

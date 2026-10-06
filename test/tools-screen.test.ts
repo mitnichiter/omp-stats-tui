@@ -9,7 +9,7 @@
 
 import { expect, test } from "bun:test";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { ThemeColor } from "@oh-my-pi/pi-tui/theme/schema";
+import type { ThemeColor } from "@oh-my-pi/pi-tui";
 
 import { buildToolRows } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { resolveNumber } from "../src/layout/resolve";

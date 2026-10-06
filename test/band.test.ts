@@ -10,7 +10,7 @@ import {
 } from "../src/tui/band";
 import { glyphsFor, type SymbolPreset } from "../src/tui/glyphs";
 import { PALETTE, SERIES_COLORS } from "../src/tui/palette";
-import { visibleWidth } from "@oh-my-pi/pi-tui/utils";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 
 const PRESETS: SymbolPreset[] = ["unicode", "nerd", "ascii"];
 
@@ -99,7 +99,6 @@ function ctx(overrides: Partial<BandRenderOptions> = {}): BandRenderOptions {
 		},
 		bold: (t) => `${SET_BOLD}${t}${RESET_BOLD}`,
 		barHeight: 6,
-		tableLimit: 10,
 		labelWidth: 12,
 		valueWidth: 12,
 		...overrides,
@@ -445,7 +444,7 @@ test("a chart body is the renderer's rows verbatim, with a heading and nothing e
 	expect(rendered[2]).toBe("██████");
 });
 
-test("a table renders a header, its rows, and a count note when rows are dropped", () => {
+test("a table renders a header and all its rows", () => {
 	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows, source: "x" }], ctx());
 	// heading, header, two data rows.
 	expect(rendered).toHaveLength(4);
@@ -455,14 +454,14 @@ test("a table renders a header, its rows, and a count note when rows are dropped
 	expect(rendered[3]).toContain("space-bunny-free");
 });
 
-test("a table that drops rows says so, rather than implying it showed everything", () => {
+test("table rows remain reachable even when the table has few columns", () => {
 	const many = {
 		kind: "inline" as const,
 		rows: Array.from({ length: 25 }, (_, i) => ({ model: `m${i}`, cost: "$1.00", unpriced: "0" })),
 	};
-	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows: many }], ctx({ tableLimit: 5 }));
-	expect(rendered.some((r) => r.includes("5 of 25"))).toBe(true);
-	expect(rendered).toHaveLength(8); // heading + header + 5 rows + count note
+	const rendered = renderBands([{ kind: "table", title: "Models", columns, rows: many }], ctx());
+	expect(rendered).toHaveLength(27);
+	for (let i = 0; i < 25; i++) expect(rendered[i + 2]).toContain(`m${i}`);
 });
 
 test("a table body pads to aligned columns with single-space gutters, never tabs", () => {

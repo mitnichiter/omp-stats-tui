@@ -29,7 +29,6 @@ import {
 	resolveLabel,
 	resolveCell,
 	resolveSeriesValues,
-	sharedDenominator,
 	metricNeed,
 	isFetched,
 	explainUnresolved,
@@ -223,9 +222,10 @@ test("a SeriesRef grouped by a dimension collapses to one value per group, summe
 	const one = resolveSeriesValues(
 		{ kind: "series", source: "modelSeries", field: "requests", groupBy: "model" },
 		data,
-		{ model: "space-bunny-free" },
+		{ model: "space-bunny-free", provider: "opencode-go" },
 	);
 	expect(all.length).toBeGreaterThan(one.length);
+	expect(one.length).toBeGreaterThan(0);
 	expect(one.every(v => v > 0)).toBe(true);
 });
 test("AggregateRef over a grouped source reads the FIRST row, as the IR documents", () => {
@@ -455,31 +455,6 @@ test("rowsFor on an absent source is an empty list, never undefined", () => {
 	}
 });
 
-// ─── legend denominators ─────────────────────────────────────────────────────
-
-test("sharedDenominator is the total every share on a screen is drawn against", () => {
-	const data = liveData();
-	// Overview's legend mixes the token kinds with three agent shares of the same
-	// `totalRequests`. The denominator must be the TOKEN total, because that is
-	// what the four token rows sum to; dividing the agent rows by it is what makes
-	// "Main agent 0.02%" honest instead of a third of a pie nobody drew.
-	const denominator = sharedDenominator("overall", [
-		{ kind: "aggregate", source: "overall", field: "totalInputTokens" },
-		{ kind: "aggregate", source: "overall", field: "totalCacheReadTokens" },
-		{ kind: "aggregate", source: "overall", field: "totalCacheWriteTokens" },
-		{ kind: "aggregate", source: "overall", field: "totalOutputTokens" },
-	], data);
-	expect(denominator).toBe(47_100_000 + 1_204_000_000 + 12_800_000 + 9_400_000);
-	expect(sharedDenominator("overall", [], data)).toBe(0);
-});
-
-test("a share whose denominator is zero is 0, so no legend row ever reads NaN%", () => {
-	const data = liveData({ overview: { overall: { ...liveData().overview!.overall, totalInputTokens: 0, totalCacheReadTokens: 0, totalCacheWriteTokens: 0, totalOutputTokens: 0 }, byAgentType: [], timeSeries: [] } });
-	const denominator = sharedDenominator("overall", [
-		{ kind: "aggregate", source: "overall", field: "totalInputTokens" },
-	], data);
-	expect(denominator).toBe(0);
-});
 
 // ─── sourceOf / metricRefsOf are the IR's, and the resolver agrees ───────────
 

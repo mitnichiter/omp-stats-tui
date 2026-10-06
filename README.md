@@ -1,40 +1,43 @@
 # omp-stats-tui
 
-Fullscreen local usage-stats panel for [omp](https://github.com/oh-my-pi/omp) — a TUI port of the `omp-stats` web dashboard, rendered terminal-natively inside your session.
+Fullscreen local usage-stats panel for [omp](https://github.com/can1357/oh-my-pi), rendered terminal-natively inside your session.
 
-Type `/stats-tui` and the terminal flips to an alternate-screen panel drawn from `~/.omp/stats.db` — same records as the browser dashboard (`/stats`), same figures through `@oh-my-pi/omp-stats`, no server, no SQL of our own. The transcript underneath stays untouched; dismiss and you're back where you were.
+`/stats-tui` opens an alternate-screen panel over the same upstream stats records as the browser dashboard (`/stats`). Twelve interactive screen controllers provide terminal workflows without React or an HTTP listener. Dismissal restores the underlying transcript; built-in `/stats` is unchanged.
 
 > [!NOTE]
-> The built-in `/stats` launches a multi-screen browser app over the same records. `/stats-tui` is a different surface, not a replacement: terminal-native views, read-only, no port of the React components.
+> All twelve screens are implemented. The local compiled-host workflows, installation and theme matrix are verified; credentialed broker and paid-judge execution remain unverified. See the [execution roadmap](docs/plans/2026-10-05-dashboard-parity.md) for exact evidence and external prerequisites.
 
 ## Install
 
-Prerequisites: [Bun](https://bun.sh) ≥ 1.4 and omp 18.4.x on `PATH`.
+Prerequisites: [Bun](https://bun.sh) ≥ 1.4.2 and supported compiled omp **18.6.1** on `PATH`. Stats reads and live ingestion require a standalone `bun` executable even when omp itself is compiled.
+
+For the PR checkout commands, manual acceptance checklist, safety limits and troubleshooting, see the [testing guide](docs/TESTING.md).
 
 ```sh
-git clone <this-repo> && cd omp-stats-tui
-bun install          # installs @oh-my-pi/omp-stats (84 ms, 12 packages)
-omp plugin link .    # persistently link this directory as a plugin
+git clone https://github.com/yuzu-octopus/omp-stats-tui.git
+cd omp-stats-tui
+bun install
+bun run build
+omp plugin link .
 ```
 
 > [!IMPORTANT]
-> `bun install` is required, not optional. `@oh-my-pi/omp-stats` does not resolve bare from the extension loader (it is absent from the host's package allowlist), so the declared dependency plus a local install is how the import resolves. See `AGENTS.md` § Runtime & Tooling Constraints.
+> Both install and build are required. The manifest loads `dist/index.js`; the build bundles locally owned stats/private modules, keeps supported host APIs external, and emits `dist/data-worker.js`. Bun applies the committed `patchedDependencies` patch for stats 18.6.1 through `bun.lock`; the corrected dependency is included in the shipped bundle, not repaired at runtime.
 
-Verify the extension loads (fast feedback loop — loads extensions, prints load errors to stderr, no TUI, no LLM call):
+The runtime `pi-coding-agent` dependency supplies real standalone judging to the worker. Its judge/auth resources are opened lazily only when a judging action requests them; passive statistics do not start paid work. Keep runtime dependencies installed alongside the distribution.
+
+Verify extension loading (no TUI or LLM call):
 
 ```sh
-omp models -e /abs/path/to/src/index.ts
+omp models -e /abs/path/to/omp-stats-tui/dist/index.js
 ```
 
 > [!WARNING]
-> `-e` must come **after** the subcommand. `omp -e … models` silently ignores the extension, and `omp --help` never loads extensions at all. Exit code is 0 either way — read stderr, not `$?`.
-
-Other useful forms (all verified — see `AGENTS.md` § Development Commands):
+> `-e` must come **after** the subcommand. `omp -e … models` silently ignores the extension, and `omp --help` never loads extensions. Read stderr, not just the exit code.
 
 ```sh
-omp plugin                 # list installed plugins
-omp --profile <name> -e /abs/path/to/src/index.ts   # isolated auth/sessions while debugging
-ls -t ~/.omp/logs/ | head  # extension error log
+omp plugin
+omp --profile <name> -e /abs/path/to/omp-stats-tui/dist/index.js
 ```
 
 ## Use
@@ -43,80 +46,77 @@ ls -t ~/.omp/logs/ | head  # extension error log
 /stats-tui
 ```
 
-In headless / print / RPC modes the command declines with `/stats-tui needs an interactive terminal` instead of hanging.
+Headless / print / RPC modes decline with `/stats-tui needs an interactive terminal` instead of hanging.
 
-### Keys
-
-Digits and `g`-jumps are aliases for the same screen. Digits select screens (not ranges — a digit cannot pick both).
+### Global keys
 
 | Key | Action |
 |---|---|
-| `1`–`8` | Jump to screen by position |
-| `g` then letter | Jump to screen (`o` overview, `m` models, `c` costs, `a` activity, `r` requests, `e` errors, `l` tools, `j` projects). While armed, the next letter is consumed even on no match; a stale prefix (> 1200 ms) falls through |
-| `←` / `→`, `Tab` / `Shift+Tab` | Previous / next screen (`Tab` always switches screens — there is no landmark-focus model to reserve it for) |
-| `r` / `Shift+R` | Cycle range forward / back (`1h → 24h → 7d → 30d → 90d → all`, wraps) |
-| `s` | Background sync (subprocess, SIGKILLed on close — never blocks the TUI) |
-| `↑` / `↓`, `PgUp` / `PgDn`, `Home` / `End`, mouse wheel | Scroll |
-| `q`, `Esc` | Close (dismisses the overlay, transcript untouched) |
+| `[` / `]` outside text entry, `Ctrl+P` / `Ctrl+N` everywhere | Previous / next screen; explicit host selector binding overrides take precedence |
+| `g` then letter | Jump to any screen: `o` overview, `m` models, `c` costs, `v` providers, `a` activity, `r` requests, `e` errors, `t` traces, `l` tools, `j` projects, `n` gain, `f` frustration. Use outside text entry; the armed prefix consumes the next letter, expires after 1200 ms |
+| `Tab` | Cycle route focus/view; focused analytics tables precede charts. Single-area routes may fall through to next-screen navigation |
+| `r` / `R` | Cycle range forward / back outside text entry |
+| `s` | Request sync from the existing live worker (not a second one-shot ingest) |
+| `q` outside text entry, `Ctrl+C` everywhere | Close and restore the transcript; literal `q` and brackets remain searchable |
+| `Esc` | Leave search/details, clear a route filter or go back; close when the route has no back action |
+| `PgUp` / `PgDn`, `Home` / `End`, mouse wheel | Scroll the body when not consumed by a route |
 
-Screens adapt to width: wide terminals get a grouped sidebar + full topbar, narrower ones an icon rail + condensed topbar, the narrowest brand + active range only.
+Arrow keys select rows or inspect/pan route content where handled; otherwise left/right navigate screens and up/down scroll. Digits `1`–`9`, `0` select the first ten registry positions only when a controller does not own them (Frustration uses `1`–`4` for layers, Traces uses `0` to fit). Use `g` jumps for all twelve screens without that ambiguity.
 
-## Screens
+### Route controls
 
-Eight selectable screens, same figures as the dashboard's routes (parity is machine-checked in `test/parity.test.ts`, not eyeballed):
+These are controller keys, not universal aliases. Focus the relevant table/chart first; in search, ordinary letters edit text. The route's visible hints describe the active context.
 
-| Screen | Shows |
+| Route | Keyboard workflow |
 |---|---|
-| Overview | Cost, requests, tokens, cache rate, error rate + token/cost sparklines |
-| Models | Per-model cost (bars scale by **cost**, never tokens), cache split, sparklines |
-| Costs | Cost series, cache savings, unpriced-request counts beside every total |
-| Activity | Contribution-style heatmap calendar, summary line, `· syncing…` state |
-| Requests | Recent requests table |
-| Errors | Error breakdown |
-| Tools | Tool-call counts and shares |
-| Projects | Per-folder usage |
+| Overview | `Tab` latest requests/chart; list `/` search, `o`/`O` sort, arrows or `j`/`k` select, `+`/`a` reveal, `Enter` request detail; `A` all requests; chart `m` mode, `n` series, `v` visibility, `,`/`.` point |
+| Requests | `/` search model/provider/project, `Enter`/`Esc` leave input; `↑`/`↓` or `j`/`k` select; `f` status; `o` sort column, `O` direction; `+` reveal, `a` reveal loaded rows, `l` load 500 → 2,000 → 10,000; `Enter` details |
+| Errors | `Tab` signatures/models/requests; `Enter` select signature/model or open request; `/` search failures; `f` clear both filters, `x`/`X` clear signature/model independently; `u` latest request; `o`/`O` sort focused panel independently; `+`/`a` reveal; `l` load 50 → 200 → 1,000 |
+| Request detail | `t` associated trace (back returns to this retained inspector), `c` copy full JSON, `n` select JSON section, `v` expand/collapse selected section, `C` copy section, `e` retry failed read, `b`/`Esc` back. Timing/TTFT/throughput, token categories/premium, component costs, status/error, output, entry and raw stats are lazy-loaded |
+| Models / Costs / Tools | `Tab` chart/tables (`Shift+Tab` reverses); `m` mode; chart `n` series, `v` visibility, `,`/`.` point; table `/` search, `o`/`O` sort, `↑`/`↓` or `j`/`k` select, `+`/`a` reveal, `Enter` expand; `b`/`Esc` back/clear. Model detail `m` switches performance/request trend; all model/tool identities retain individual trends even if grouped into Other. Tools `f` cycles model filter, `x` resets, `d` opens full by-tool details without changing that filter |
+| Projects | `Tab` table/cost ranking/request ranking; `/` search; `t` include/exclude temporary folders; `o`/`O` sort; arrows or `j`/`k` select, `+`/`a` reveal; `Enter` details or scope table from ranking; `b`/`Esc` back; aggregates remain unfiltered |
+| Activity | `Tab` recorded days/calendar; recorded days `/` search, `o`/`O` sort, arrows or `j`/`k` select, `+`/`a` reveal, `Enter` details. Calendar `j`/`k` or down/up move a local day, `h`/`l` a week, `t` returns to today, `Enter` details even for quiet days. `b`/`Esc` back. Selected cells use the active theme; historical navigation shifts narrower calendar windows. Lookback is 371 local days, independent of global range |
+| Providers | `Tab`/`Shift+Tab` or `v` totals/burn/peak/windows/accounts; burn `m` metric; `p`/`P` provider, `w`/`W` window where applicable; `h`/`l` point/hour; `↑`/`↓` or `j`/`k` selection; `n`/`N` legend, `Space` visibility; `o` sort, `d` direction, `+` reveal; `Enter` token mix or accounts; `u` refresh quota reads. Sorting retains selected provider/account identity; hidden series are excluded from point details |
+| Gain | `Tab`/`Shift+Tab` or `v` project/history/sources; `p`/`P` project; `h`/`l` daily/cumulative point; `↑`/`↓` or `j`/`k` select; `o` sort, `d` direction, `+` reveal; `Enter` source details. Long project selectors keep the selected project visible |
+| Traces | Root list `/` search, `o` sort, `D` direction, `l` reveal, `+` load up to 300 candidates, `Enter` open. Inside: `Tab`/`Shift+Tab` timeline/minimap/transcript/tools/children; `↑`/`↓` select events, `Enter` inspect; `v` time/turn/call axis, `i` idle compression, `+`/`-` zoom, arrows or `a`/`d` pan, `h`/`l` cursor, `Space` pick event, `0` fit, `f` focus span; `c` track collapse, `C` collapse children, `E` expand; `/` span search, `n`/`N` matches, `x` clear; `o` reveal child, `O` open child transcript, `y` copy JSON, `u` refresh, `b`/`Esc` back; detail `j` raw entry. `m` minimap: arrows/Home/End move cursor, Space starts a range, Enter applies range/seeks, `h`/`l` resize start/end, `a`/`d` move brush, `+`/`-` zoom, `0` fit, Esc cancels range. Exhausting child history returns to the originating request inspector |
+| Frustration | `Tab` versions/families; `c` class, `m` small samples, `h` mostly-regex filter; `Space` family visibility; `1`–`3` rate layers, `4` trend; `o`/`O` sort, `v` reveal, arrows select; `Enter` raw model IDs/details, `p` copy detail; `j` obtain estimate, `y` explicitly confirm paid start, `n`/`Esc` dismiss estimate, `x` cancel running job |
 
-Ranges: `1h | 24h | 7d | 30d | 90d | all` (default `24h`). There is deliberately no `365d` — the host resolves unknown ranges to its 24 h default silently, so a picker offering it would show a day of data with no error.
+Ranges: `1h | 24h | 7d | 30d | 90d | all` (default `24h`). No `365d`: upstream resolves unknown ranges to its 24-hour default.
+
+## Screens and data boundaries
+
+Overview, Activity, Models, Costs, Projects, Requests, Errors, Tools, Providers, Gain, Traces and Frustration are all selectable. Controllers retain focus, selection, search, sort and chart controls when returning to a route. Requests show the loaded population and completeness separately from complete-range totals. Traces provides nested tracks, a minimap, linked transcript/markers, tool duration/errors and child navigation; upstream root-session discovery is limited to **300 candidates**, not exhaustive history.
+
+Provider local usage loads independently of subscription windows/account quota. Missing broker credentials, absent readings or quota-network failures do not mean no local usage; those sections report their own state. Gain's remembered project selector scopes totals, daily savings, cumulative history and source breakdown.
+
+Frustration's cached/regex metrics and coverage are passive. Paid judging requires a configured `judge` model role, provider credentials and explicit user authorization via the estimate/confirmation flow. No paid smoke has been verified. Missing credentials block that external scenario, not the implemented UI.
+
+Running judge state is independent of passive-read success: progress and cancellation remain reachable if metrics fail to load. A newly observed external run dismisses obsolete estimates; failed quote/cancel actions remain retryable. None of these controls authorizes a paid start implicitly.
 
 > [!CAUTION]
-> A cost figure without its unpriced count beside it is a wrong number, not a rounded one. Requests with zero recorded cost and no catalog price card are **unpriced, not free** — every total we show is a floor, and the panel says so.
-
-`providers` (needs network I/O) is deferred and `gain` persists as a scaffold; neither is selectable. The traces flamegraph is excluded by design — see ADR 0004.
+> Unknown spend is `N/A`, not free. The patched upstream pricing-v2 replay and rollup-v3 invalidation distinguish absent provider/model price cards from explicit free cards and recorded zero charges. Priced totals containing unpriced requests are floors and show their unpriced count.
 
 ## Develop
 
 ```sh
-bun test                                              # 619 tests, 42 files — pure functions only
-bun scripts/probe-render.ts [screenId] [--width N] [--range 24h] [--preset P]
+bun test
+bun run build
 bun scripts/probe-render.ts all --width 100 --width 60
-omp models -e /abs/path/to/src/index.ts               # extension load check (stderr, not $?)
+omp models -e /abs/path/to/omp-stats-tui/dist/index.js
 ```
 
-`probe-render` draws any screen (or `all`) to stdout at any width without launching a terminal — this is how a screen gets reviewed. `--range` accepts only the six valid keys; `--preset` one of `unicode | nerd | ascii` (a setting, never a detection). Other probes: `bun run scripts/probe-data.ts`, `bun run scripts/probe-glyphs.ts`.
+`probe-render` renders the pure chart/layout IR, not the interactive controller workflow. It accepts `--range` from the six keys and `--preset unicode|nerd|ascii`. Controller acceptance needs a mounted host in addition to fixture/render tests. Other probes: `bun run scripts/probe-data.ts`, `bun run scripts/probe-glyphs.ts`.
+
+Source-mode development uses standalone Bun and installed dependencies. `StatsReadClient` resolves `scripts/data-worker.ts` relative to its source module; the production build's `__STATS_READ_WORKER__` macro instead resolves `./data-worker.js` relative to `dist/index.js`. Workers use absolute paths, inherit the host working directory for project/judge configuration, and receive the active agent directory plus `OMP_PROFILE`/`PI_PROFILE`; `PI_BUNDLED` is cleared. Launching compiled omp from another directory does not relocate the worker. Directly loading `src/index.ts` in compiled omp is not the supported distribution entry.
 
 ## Architecture
 
-The pipeline is `ScreenSpec → renderScreen → renderBands` over a small band grammar (`statRow`, `chart`, `table`, `legend`, `note`):
+- `src/index.ts` registers `/stats-tui`; it does **not** initialize the database on the host thread.
+- `src/tui/panel.ts` mounts twelve `FeatureController`s from `src/tui/features/`, owns global navigation/scroll/disposal and injects the reader/theme/clipboard/open-trace context.
+- `src/data/client.ts` owns one persistent isolated `StatsReadClient` per mounted panel. `scripts/data-worker.ts` initializes the upstream DB, runs synchronous queries/transcript reads and owns patched upstream `StatsLive({ workers: 1 })` with initial ingest and transcript watching. Request/reply and unsolicited live status use NDJSON pipes. `s` calls this same live owner's `requestSync()`; committed-data updates refresh active queries without replacing controller state.
+- `src/data/api.ts` reuses upstream `handleApi(Request)` and data helpers inside the worker. Synthetic localhost requests open no socket; there is no plugin SQL workaround or independent backend.
+- `src/layout/spec.ts`, `src/layout/resolve.ts`, `src/tui/render/screen.ts` and `src/tui/band.ts` remain the pure chart/probe renderer (`ScreenSpec → renderScreen → renderBands`), not a substitute for interactive controllers.
+- `src/tui/charts/` and feature timelines colour sparkline/bar/calendar/timeline characters from the active omp theme. The panel refreshes the mutable injected feature theme each render; primitives receive theme/paint arguments, not an eagerly read singleton. Series/legend identity is shared; each terminal cell has one colour, not independently coloured braille dots.
+- `src/tui/chrome.ts`, `tabs.ts`, `footer.ts` and `responsive.ts` own navigation and responsive frame policy. Close disposes controllers/watchers and kills/reaps the child; late payloads cannot replace newer selections.
 
-- `src/index.ts` — extension entry, registers `/stats-tui`, warms the DB at load (behind the loading state, never on the render loop)
-- `src/data/api.ts` — the data seam: `fetchFor` fetches exactly what the screen declared, in-process via `handleApi`. No webserver, no own SQL (one marked narrow-query workaround — see the `WORKAROUND` block there)
-- `src/data/ranges.ts` — the closed range set and bucket math, derived from the host's `rangeMeta`
-- `src/layout/spec.ts` — the IR: `ScreenSpec`, `Band[]`, `MetricRef`
-- `src/layout/resolve.ts` — `resolveCell` / `resolveNumber` / `resolveLabel`: where a ref meets data (unresolvable is `null`, never a blank cell)
-- `src/tui/panel.ts` — `SELECTABLE_SCREENS`, the frame, the keymap
-- `src/tui/band.ts` — `renderBands`, the G1–G6 grammar (G5: no full-width rule inside a band, ever)
-- `src/tui/chrome.ts` — the one nav grammar: sidebar, topbar, live/sync chip, hotkeys
-- `src/tui/responsive.ts` — `framePolicy(width)`: the width class and what chrome it affords
-- `src/tui/charts/` — `bars`, `heatmap`, `sparkline`, `compose` (multi-series charts compose single-series renders — byte-identical, asserted)
-- `src/tui/screens/` — one module per screen; spec'd screens carry identity and defer `render` to the pipeline
-- `src/sync/`, `scripts/sync-worker.ts` — background ingest subprocess
-
-Pointers for contributors and agents:
-
-- **`AGENTS.md`** — repository guidelines: settled design, measured latencies, key directories, conventions, dead ends. Read it before touching code.
-- **`CONTEXT.md`** — the glossary. Vocabulary is load-bearing here (`request` not message, `bucket` not granularity, `band`, `MetricRef`, `parity`, `data ink`…).
-- **`docs/adr/`** — six settled decisions: reuse `@oh-my-pi/omp-stats` (0001), the `/stats-tui` name (0002), read-only panel (0003, amended by 0006), terminal-native rendering over a React port (0004), hardcoded Unicode data ink (0005), background-ingest subprocess (0006).
-- **`docs/research/omp-stats-tui/REPORT.md`** (+ `findings/` F1–F11) — the investigation synthesis behind the design.
-
-> [!TIP]
-> Screens render through the IR: to change a screen, add `Band[]` to its spec — never rows to a screen module. Band order is panel order.
+Contributor references: **AGENTS.md**, **CONTEXT.md**, [roadmap](docs/plans/2026-10-05-dashboard-parity.md), and **docs/adr/** (historical superseded decisions are labeled).
