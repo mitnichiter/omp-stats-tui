@@ -8,6 +8,7 @@ import { accountNames, accountReadings, rangeAxis, rangeStep, resolveWindow, uti
 import { boundLines, recordViewport, timeline } from "./provider-gain-chart";
 import { densify, pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
 import { renderSparkline } from "../charts/sparkline";
+import { glyph } from "../glyphs";
 
 const VIEWS = ["Provider totals", "Burn by provider", "Peak local hours", "Subscription windows", "Account utilization"];
 const METRICS = ["tokens", "output", "requests", "cost"] as const;
@@ -161,6 +162,9 @@ export function createProvidersFeature(ctx: FeatureContext): FeatureController {
 	return {
 		load,
 		render(width, height) {
+			// The ONE `getSymbolPreset()` read for this screen, so every data-ink
+			// mark below answers to the preset instead of being hardcoded.
+			const preset = ctx.theme.getSymbolPreset();
 			const lines = [
 				ctx.theme.bold(`Providers · ${range} · ${VIEWS[view]}`),
 				...wrapTextWithAnsi(ctx.theme.fg("dim", "Tab/Shift-Tab/v view · j/k select · Enter expand/select · m metric · h/l point · p/P provider · w/W window"), width),
@@ -199,13 +203,13 @@ export function createProvidersFeature(ctx: FeatureContext): FeatureController {
 						const mix = [["Uncached input", p.totalInputTokens], ["Cache read", p.totalCacheReadTokens], ["Cache write", p.totalCacheWriteTokens], ["Output", p.totalOutputTokens]] as const;
 						let cells = 0;
 						const track = Math.max(1, Math.min(48, width - 2));
-						lines.push(mix.map(([_, value], i) => { const next = Math.round(mix.slice(0, i + 1).reduce((sum, [, n]) => sum + n, 0) / Math.max(1, p.totalTokens) * track); const text = ctx.theme.fg(SERIES_COLORS[i % SERIES_COLORS.length], "█".repeat(Math.max(0, next - cells))); cells = next; return text; }).join(""));
-						mix.forEach(([label, value], i) => lines.push(`${ctx.theme.fg(SERIES_COLORS[i % SERIES_COLORS.length], "■")} ${label}: ${formatInteger(value)} · ${p.totalTokens > 0 ? formatPercent(value / p.totalTokens) : "—"}`));
+					lines.push(mix.map(([_, value], i) => { const next = Math.round(mix.slice(0, i + 1).reduce((sum, [, n]) => sum + n, 0) / Math.max(1, p.totalTokens) * track); const text = ctx.theme.fg(SERIES_COLORS[i % SERIES_COLORS.length], glyph(preset, "barFill").repeat(Math.max(0, next - cells))); cells = next; return text; }).join(""));
+					mix.forEach(([label, value], i) => lines.push(`${ctx.theme.fg(SERIES_COLORS[i % SERIES_COLORS.length], glyph(preset, "legendKey"))} ${label}: ${formatInteger(value)} · ${p.totalTokens > 0 ? formatPercent(value / p.totalTokens) : "—"}`));
 					}
 				}
 				lines.push(`Sort ${TOTAL_SORTS[totalSort]} ${descending ? "↓" : "↑"} · ${Math.min(reveal, rows.length)}/${rows.length}`, "Provider | Requests | Tokens | Output | API-equivalent cost");
 				const viewport = recordViewport(rows, providerRow, height, reveal);
-				lines.push(...viewport.rows.map((p, i) => `${viewport.start + i === providerRow ? "▶" : " "} ${p.provider} | ${formatInteger(p.totalRequests)} | ${compactTokens(p.totalTokens)} | ${compactTokens(p.totalOutputTokens)} | ${costWithUnpriced(p.totalCost, p.unpricedRequests)}`));
+			lines.push(...viewport.rows.map((p, i) => `${viewport.start + i === providerRow ? glyph(preset, "rowCursor") : " "} ${p.provider} | ${formatInteger(p.totalRequests)} | ${compactTokens(p.totalTokens)} | ${compactTokens(p.totalOutputTokens)} | ${costWithUnpriced(p.totalCost, p.unpricedRequests)}`));
 				if (!rows.length) lines.push("No provider activity in this range");
 			} else if (view === 1) {
 				const chart = burn(); point = Math.max(0, Math.min(chart.axis.length - 1, point));
@@ -227,7 +231,7 @@ export function createProvidersFeature(ctx: FeatureContext): FeatureController {
 				lines.push(`Provider ${peakProvider ?? "All providers"} · peak ${hours[peak].tokens > 0 ? `${String(peak).padStart(2, "0")}:00` : "none"}`, `Hour ${String(hour).padStart(2, "0")}:00 local · ${formatInteger(hours[hour].tokens)} tokens · ${formatInteger(hours[hour].output)} output · ${formatInteger(hours[hour].requests)} requests`);
 				const max = Math.max(0, ...hours.map(p => p.tokens));
 				const track = Math.max(1, Math.min(36, width - 25));
-				for (let i = Math.max(0, hour - 4); i < Math.min(24, Math.max(9, hour + 5)); i++) lines.push(`${i === hour ? "▶" : " "} ${String(i).padStart(2, "0")} ${ctx.theme.fg(i === peak ? "warning" : "success", "█".repeat(max > 0 ? Math.round(hours[i].tokens / max * track) : 0))} ${compactTokens(hours[i].tokens)}`);
+				for (let i = Math.max(0, hour - 4); i < Math.min(24, Math.max(9, hour + 5)); i++) lines.push(`${i === hour ? glyph(preset, "rowCursor") : " "} ${String(i).padStart(2, "0")} ${ctx.theme.fg(i === peak ? "warning" : "success", glyph(preset, "barFill").repeat(max > 0 ? Math.round(hours[i].tokens / max * track) : 0))} ${compactTokens(hours[i].tokens)}`);
 				lines.push("h/l selects all 24 local hours; p/P changes provider. Peak mark uses warning ink.");
 				if (max === 0) lines.push("No activity in this range");
 			} else if (view === 3) {
@@ -238,7 +242,7 @@ export function createProvidersFeature(ctx: FeatureContext): FeatureController {
 				if (i) lines.push(ctx.theme.bold(`${i.provider} · ${i.windowLabel}`), `Windows burned ${i.fractionConsumed.toFixed(2)} · resets ${i.cycles} · capacity ${i.estTokensPerWindow === null ? "— (too little consumed to estimate)" : `${compactTokens(i.estTokensPerWindow)} tokens/window`}`, `Peak ${formatPercent(i.peakConcurrentFraction)} summed · fleet ${i.accounts} accounts · fleet load ${i.accounts ? formatPercent(i.peakConcurrentFraction / i.accounts) : "—"}`, `Accounts needed ${i.idealAccounts} at <90% · have ${i.accounts} · ${i.idealAccounts > i.accounts ? `short ${i.idealAccounts - i.accounts}` : `headroom ${i.accounts - i.idealAccounts}`} · exhaustions ${i.exhaustedEvents}`);
 				lines.push(`Sort ${WINDOW_SORTS[windowSort]} ${descending ? "↓" : "↑"} · ${Math.min(reveal, rows.length)}/${rows.length}`, "Provider / window | Accounts | Burned | Capacity | Exhaustions");
 				const viewport = recordViewport(rows, Math.max(0, selected), height, reveal);
-				lines.push(...viewport.rows.map((i, n) => `${viewport.start + n === selected ? "▶" : " "} ${i.provider} / ${i.windowLabel} | ${i.accounts} | ${i.fractionConsumed.toFixed(2)} | ${i.estTokensPerWindow === null ? "—" : compactTokens(i.estTokensPerWindow)} | ${i.exhaustedEvents}`));
+			lines.push(...viewport.rows.map((i, n) => `${viewport.start + n === selected ? glyph(preset, "rowCursor") : " "} ${i.provider} / ${i.windowLabel} | ${i.accounts} | ${i.fractionConsumed.toFixed(2)} | ${i.estTokensPerWindow === null ? "—" : compactTokens(i.estTokensPerWindow)} | ${i.exhaustedEvents}`));
 				if (insights && !insights.length) lines.push("No usage snapshots in this range. Snapshots accumulate when limits are fetched (footer, /usage, omp usage).");
 				lines.push("Capacity uses upstream broker fleet tokens when present, otherwise local provider tokens; it is an estimate, not billing.");
 			} else {
@@ -266,7 +270,7 @@ export function createProvidersFeature(ctx: FeatureContext): FeatureController {
 				} else if (accountData) lines.push("No utilization readings for this window");
 				lines.push("Readings hold at most six hours; longer silence is a gap, not zero.", `Accounts / all provider windows · sort ${ACCOUNT_SORTS[accountSort]} ${descending ? "↓" : "↑"} · ${Math.min(reveal, rows.length)}/${rows.length}`, "Account / window | Latest | Peak | Snapshots | Resets");
 				const viewport = recordViewport(rows, row, height, reveal);
-				lines.push(...viewport.rows.map((r, i) => `${viewport.start + i === row ? "▶" : " "} ${r.name} / ${r.series.windowLabel} | ${r.latest ? formatPercent(r.latest.fraction) : "—"}${r.latest?.exhausted ? " exhausted" : ""} | ${r.peak === null ? "—" : formatPercent(r.peak)} | ${r.samples} | ${r.resets}`));
+			lines.push(...viewport.rows.map((r, i) => `${viewport.start + i === row ? glyph(preset, "rowCursor") : " "} ${r.name} / ${r.series.windowLabel} | ${r.latest ? formatPercent(r.latest.fraction) : "—"}${r.latest?.exhausted ? " exhausted" : ""} | ${r.peak === null ? "—" : formatPercent(r.peak)} | ${r.samples} | ${r.resets}`));
 			}
 			return boundLines(lines, width);
 		},

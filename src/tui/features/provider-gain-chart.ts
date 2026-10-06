@@ -2,6 +2,7 @@ import { truncateToWidth, visibleWidth } from "@oh-my-pi/pi-tui";
 import type { FeatureContext } from "./types";
 import { resolveSeries } from "../palette";
 import { compactTokens, formatPercent } from "../format";
+import { glyph } from "../glyphs";
 
 export interface TimelineRow { key: string; label: string; values: readonly (number | null)[]; legendValue?: string; colorIndex?: number }
 /** Focused local slice: real timestamps, no downsampled/imputed readings. */
@@ -12,6 +13,9 @@ export function timeline(ctx: FeatureContext, axis: readonly number[], rows: rea
 	const start = Math.max(0, Math.min(axis.length - columns, selected - Math.floor(columns / 2)));
 	const active = rows.filter(r => !options.hidden?.has(r.key));
 	const colors = resolveSeries(Math.max(rows.length, ...rows.map(r => (r.colorIndex ?? 0) + 1)), ctx.theme);
+	// The ONE `getSymbolPreset()` read for this chart, so every mark below
+	// answers to the preset instead of being hardcoded into the module.
+	const preset = ctx.theme.getSymbolPreset();
 	const ranked = active.map(row => ({ row, color: colors[row.colorIndex ?? rows.indexOf(row)] }));
 	let max = options.percent ? 1 : 0;
 	for (let i = 0; i < axis.length; i++) {
@@ -21,7 +25,7 @@ export function timeline(ctx: FeatureContext, axis: readonly number[], rows: rea
 	}
 	const grid: string[][] = Array.from({ length: 5 }, () => Array.from({ length: columns }, () => " "));
 	const referenceRow = options.percent ? 4 - Math.round(4 / max) : -1;
-	if (referenceRow >= 0) grid[referenceRow].fill(ctx.theme.fg("dim", "┄"));
+	if (referenceRow >= 0) grid[referenceRow].fill(ctx.theme.fg("dim", glyph(preset, "plotGrid")));
 	for (let x = 0; x < columns; x++) {
 		let base = 0;
 		for (const { row: r, color } of ranked) {
@@ -30,21 +34,21 @@ export function timeline(ctx: FeatureContext, axis: readonly number[], rows: rea
 			const level = max > 0 ? Math.max(0, Math.min(4, Math.round(((options.stacked ? base + value : value) / max) * 4))) : 0;
 			if (options.stacked) {
 				const bottom = max > 0 ? Math.max(0, Math.min(4, Math.round(base / max * 4))) : 0;
-				if (value > 0) for (let y = bottom; y <= level; y++) grid[4 - y][x] = ctx.theme.fg(color, "█");
-				base += value;
-			} else grid[4 - level][x] = ctx.theme.fg(color, options.cumulative ? "●" : "•");
+			if (value > 0) for (let y = bottom; y <= level; y++) grid[4 - y][x] = ctx.theme.fg(color, glyph(preset, "barFill"));
+			base += value;
+		} else grid[4 - level][x] = ctx.theme.fg(color, glyph(preset, options.cumulative ? "pointFilled" : "pointHollow"));
 		}
 	}
 	const scale = options.percent ? formatPercent(max, 0) : (options.format ?? compactTokens)(max);
 	const lines = [`Scale 0–${scale} · buckets ${start + 1}–${start + columns}/${axis.length}`];
-	lines.push(...grid.map((cells, y) => `  │${cells.join("")}${y === referenceRow ? " 100%" : ""}`));
-	lines.push(`  └${"─".repeat(columns)}`, `   ${" ".repeat(selected - start)}${ctx.theme.fg("accent", "▲")}`);
+	lines.push(...grid.map((cells, y) => `  ${glyph(preset, "plotSpine")}${cells.join("")}${y === referenceRow ? " 100%" : ""}`));
+	lines.push(`  ${glyph(preset, "axisCorner")}${glyph(preset, "axisRule").repeat(columns)}`, `   ${" ".repeat(selected - start)}${ctx.theme.fg("accent", glyph(preset, "plotCursor"))}`);
 	const first = new Date(axis[start]).toISOString().slice(0, 16).replace("T", " ");
 	const last = new Date(axis[start + columns - 1]).toISOString().slice(0, 16).replace("T", " ");
 	lines.push(`${first} → ${last} UTC`);
 	for (let i = 0; i < rows.length; i++) {
 		const r = rows[i];
-		lines.push(`${ctx.theme.fg(colors[r.colorIndex ?? i], "■")} ${options.hidden?.has(r.key) ? "[hidden] " : ""}${r.label}${r.legendValue === undefined ? "" : ` · ${r.legendValue}`}`);
+		lines.push(`${ctx.theme.fg(colors[r.colorIndex ?? i], glyph(preset, "legendKey"))} ${options.hidden?.has(r.key) ? "[hidden] " : ""}${r.label}${r.legendValue === undefined ? "" : ` · ${r.legendValue}`}`);
 	}
 	return lines.map(line => truncateToWidth(line, Math.max(0, width)));
 }

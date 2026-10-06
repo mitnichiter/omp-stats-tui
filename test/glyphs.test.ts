@@ -44,6 +44,72 @@ test("every data-ink glyph in every preset is exactly one cell wide", () => {
 	}
 });
 
+// ─── the roles added for src/tui/features/** ─────────────────────────────────
+
+/** Every role added when the feature modules stopped hand-drawing their ink. */
+const FEATURE_ROLES = [
+	"rowCursor",
+	"legendKey",
+	"pointHollow",
+	"pointFilled",
+	"axisCorner",
+	"axisRule",
+	"plotSpine",
+	"plotGrid",
+	"trackMarker",
+	"playhead",
+	"plotCursor",
+] as const satisfies readonly GlyphRole[];
+
+test("every feature-module role is exactly one cell wide under ALL THREE presets", () => {
+	// Stated separately from the table-wide sweep above because these are the
+	// roles that replaced hand-written literals in `src/tui/features/**`, and the
+	// failure they exist to prevent is precisely one an ascii user would hit: a
+	// `█` or `▓` surviving where the rest of the panel degraded to `#`.
+	for (const role of FEATURE_ROLES) {
+		for (const preset of PRESETS) {
+			const g = glyph(preset, role);
+			expect(Bun.stringWidth(g), `${preset}/${role}/${g}`).toBe(1);
+			expect(g, `${preset}/${role} must never be a blank`).not.toBe(" ");
+		}
+	}
+});
+
+test("the feature roles are all reachable from ALL_GLYPH_CLASS, so a detector cannot miss one", () => {
+	// `ALL_GLYPH_CLASS` is derived from the role keys rather than hand-listed, so
+	// a new role cannot be added without becoming detectable. This asserts that
+	// derivation still holds for the roles added here.
+	const every = new RegExp(`^[${ALL_GLYPH_CLASS}]`);
+	for (const preset of PRESETS) {
+		for (const role of FEATURE_ROLES) {
+			expect(every.test(glyph(preset, role)), `${preset}/${role} missing from ALL_GLYPH_CLASS`).toBe(true);
+		}
+	}
+});
+
+test("ascii picks a fallback that disambiguates rather than one that merely looks right", () => {
+	// Each fallback below was chosen against the characters already in the ascii
+	// set. The two that could plausibly have gone wrong are pinned: a gridline
+	// that reused the axis's `-` would make them the same line (the exact
+	// confusion the dashed unicode gridline exists to prevent), and a playhead
+	// that reused `|` would be indistinguishable from the plot spine.
+	expect(glyph("ascii", "plotGrid")).toBe(":");
+	expect(glyph("ascii", "plotGrid")).not.toBe(glyph("ascii", "axisRule"));
+	expect(glyph("ascii", "playhead")).toBe("v");
+	expect(glyph("ascii", "playhead")).not.toBe(glyph("ascii", "plotSpine"));
+	// The row cursor deliberately matches the host's own ascii `nav.cursor`, so a
+	// list row points the same way under ascii as it does in the sidebar.
+	expect(glyph("ascii", "rowCursor")).toBe(">");
+});
+
+test("nerd emits byte-identical feature ink to unicode", () => {
+	// The same structural guarantee the spark/bar ramps rely on: no Nerd Font
+	// codepoint means magnitude, so the two presets must not diverge here either.
+	for (const role of FEATURE_ROLES) {
+		expect(glyphsFor("nerd")[role], `nerd/${role}`).toEqual(glyphsFor("unicode")[role]);
+	}
+});
+
 // ─── axisLine ─────────────────────────────────────────────────────────────────
 
 test("axisLine is a floor mark, not a rule run and not a sparkline rung", () => {

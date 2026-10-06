@@ -6,6 +6,7 @@ import type { FeatureContext, FeatureController } from "./types";
 import { projectOptions, savingsHistory } from "./provider-gain-data";
 import { boundLines, recordViewport, timeline } from "./provider-gain-chart";
 import { renderSparkline } from "../charts/sparkline";
+import { glyph } from "../glyphs";
 
 const SORTS = ["tokens", "source", "share", "bytes", "hits", "reduction"] as const;
 type SourceRow = GainSourceTotals & { source: string; share: number };
@@ -59,6 +60,9 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 	return {
 		load,
 		render(width, height) {
+			// The ONE `getSymbolPreset()` read for this screen, so every data-ink
+			// mark below answers to the preset instead of being hardcoded.
+			const preset = ctx.theme.getSymbolPreset();
 			const lines = [
 				ctx.theme.bold(`Gain · ${range} · ${project ?? "All projects"}`),
 				...wrapTextWithAnsi(ctx.theme.fg("dim", "Tab/Shift-Tab focus · p/P project · h/l day · j/k source · o sort · d direction · Enter detail · + reveal"), width),
@@ -68,7 +72,7 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 			if (focus === 0) {
 				const options = projectOptions(projects, project);
 				const viewport = recordViewport(options, options.indexOf(project), height, reveal);
-				lines.push(...viewport.rows.map(p => `${p === project ? "▶" : " "} ${p ?? "All projects"}`));
+			lines.push(...viewport.rows.map(p => `${p === project ? glyph(preset, "rowCursor") : " "} ${p ?? "All projects"}`));
 				if (viewport.rows.length < options.length) lines.push(`Projects ${viewport.start + 1}–${viewport.start + viewport.rows.length}/${options.length} · p/P selects`);
 			}
 			if (!data) { lines.push(loading ? "Loading savings…" : "No savings payload available"); return boundLines(lines, width); }
@@ -92,7 +96,7 @@ export function createGainFeature(ctx: FeatureContext): FeatureController {
 			if (chosen && expanded) lines.splice(3, 0, `Source ${chosen.source} · saved ${formatInteger(chosen.savedTokens)} tokens · ${formatBytes(chosen.savedBytes)} bytes · ${formatInteger(chosen.hits)} hits`, `Share ${formatPercent(chosen.share)} · reduction ${chosen.reductionPercent === null ? "— (original size unknown)" : formatPercent(chosen.reductionPercent)} · original ${formatBytes(chosen.originalBytes)} · output ${formatBytes(chosen.outputBytes)}`);
 			const view = recordViewport(sourceRows, selected, height, reveal);
 			lines.push("Source | Saved tokens | Share | Bytes | Hits | Reduction");
-			lines.push(...view.rows.map((r, i) => `${i + view.start === selected ? "▶" : " "} ${r.source} | ${compactTokens(r.savedTokens)} | ${formatPercent(r.share)} | ${formatBytes(r.savedBytes)} | ${formatInteger(r.hits)} | ${r.reductionPercent === null ? "—" : formatPercent(r.reductionPercent)}`));
+		lines.push(...view.rows.map((r, i) => `${i + view.start === selected ? glyph(preset, "rowCursor") : " "} ${r.source} | ${compactTokens(r.savedTokens)} | ${formatPercent(r.share)} | ${formatBytes(r.savedBytes)} | ${formatInteger(r.hits)} | ${r.reductionPercent === null ? "—" : formatPercent(r.reductionPercent)}`));
 			return boundLines(lines, width);
 		},
 		handleInput(input) {

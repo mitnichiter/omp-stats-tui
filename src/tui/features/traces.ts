@@ -6,6 +6,7 @@ import type { FeatureContext, FeatureController } from "./types";
 import { ancestors, buildScale, clampViewport, fit, localWindow, overviewViewport, remapViewport, resizeOverview, revealSpan, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport, type AxisMode, type TraceRow, type TraceScale, type Viewport } from "./traces/model";
 import { bounded, clean, renderEntry, renderTimeline, rowLabel } from "./traces/render";
 import { SPAN_COLORS } from "../palette";
+import { glyph } from "../glyphs";
 
 type Focus = "timeline" | "transcript" | "tools" | "children" | "minimap";
 type SessionSort = "started" | "title" | "duration" | "requests" | "tools" | "agents" | "tokens" | "cost";
@@ -258,6 +259,9 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 		dispose() { closed = true; generation++; entryGeneration++; history.length = 0; },
 		render(width, height) {
 			const w = Math.max(1, width), capacity = Math.max(3, height - 9);
+			// The ONE `getSymbolPreset()` read for this screen, so every data-ink
+			// mark below answers to the preset instead of being hardcoded.
+			const preset = ctx.theme.getSymbolPreset();
 			const lines: string[] = [];
 			if (notice) lines.push(ctx.theme.fg("warning", clean(notice)));
 			if (error) lines.push(ctx.theme.fg("error", `Trace read failed: ${clean(error)} · u retry`));
@@ -278,7 +282,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 				const window = localWindow(shown, Math.max(0, index), capacity);
 				for (const row of window.rows) {
 					const selected = row.file === sessionSelected;
-					const text = `${selected ? "▶" : " "} ${row.title ?? row.file.split("/").pop()} · ${formatDurationMs(row.endedAt - row.startedAt)} · ${row.requests} req · ${row.subagents} children · ${formatEstimatedCost(row.costTotal, row.unpricedRequests)}`;
+					const text = `${selected ? glyph(preset, "rowCursor") : " "} ${row.title ?? row.file.split("/").pop()} · ${formatDurationMs(row.endedAt - row.startedAt)} · ${row.requests} req · ${row.subagents} children · ${formatEstimatedCost(row.costTotal, row.unpricedRequests)}`;
 					lines.push(selected ? ctx.theme.fg("accent", clean(text)) : clean(text));
 				}
 				const selected = all.find(row => row.file === sessionSelected);
@@ -315,14 +319,14 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 				const index = all.findIndex(row => row.key === state?.selected);
 				const window = localWindow(all, Math.max(0, index), capacity);
 				lines.push(`Linked transcript + markers · ${all.length} events · ↑/↓ select · Enter inspect · o child`);
-				for (const row of window.rows) lines.push(ctx.theme.fg(row.span?.isError ? "error" : row.span ? SPAN_COLORS[row.span.kind] : "muted", clean(`${row.key === state.selected ? "▶" : " "} ${rowLabel(row, trace.startedAt)}${row.span?.detail ? ` · ${row.span.detail}` : ""}`)));
+				for (const row of window.rows) lines.push(ctx.theme.fg(row.span?.isError ? "error" : row.span ? SPAN_COLORS[row.span.kind] : "muted", clean(`${row.key === state.selected ? glyph(preset, "rowCursor") : " "} ${rowLabel(row, trace.startedAt)}${row.span?.detail ? ` · ${row.span.detail}` : ""}`)));
 				if (!all.length) lines.push("No matching transcript events.");
 			} else if (state.focus === "tools") {
 				const tools = sortedTools();
 				if (!tools.some(tool => tool.tool === state?.toolSelected)) state.toolSelected = tools[0]?.tool ?? null;
 				const window = localWindow(tools, tools.findIndex(tool => tool.tool === state?.toolSelected), capacity);
 				lines.push(`Per-tool duration · sort ${toolSort} ${toolDescending ? "↓" : "↑"} · o sort · D reverse · Enter linked calls`);
-				for (const tool of window.rows) lines.push(clean(`${tool.tool === state.toolSelected ? "▶" : " "} ${tool.tool} · ${tool.calls} calls · ${tool.errors} errors · total ${formatDurationMs(tool.totalMs)} · avg ${formatDurationMs(tool.calls ? tool.totalMs / tool.calls : 0)} · max ${formatDurationMs(tool.maxMs)}`));
+				for (const tool of window.rows) lines.push(clean(`${tool.tool === state.toolSelected ? glyph(preset, "rowCursor") : " "} ${tool.tool} · ${tool.calls} calls · ${tool.errors} errors · total ${formatDurationMs(tool.totalMs)} · avg ${formatDurationMs(tool.calls ? tool.totalMs / tool.calls : 0)} · max ${formatDurationMs(tool.maxMs)}`));
 				const tool = tools.find(item => item.tool === state?.toolSelected);
 				if (tool) lines.push(...wrapTextWithAnsi(clean(`Selected tool: ${tool.tool}\nCalls: ${tool.calls} · Errors: ${tool.errors}\nTotal duration: ${formatDurationMs(tool.totalMs)} · Average: ${formatDurationMs(tool.calls ? tool.totalMs / tool.calls : 0)} · Maximum: ${formatDurationMs(tool.maxMs)}`), w));
 				if (!tools.length) lines.push("No recorded tool calls.");
@@ -335,7 +339,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 					const depth = ancestors(tracks, track.id).length;
 					const tools = track.spans.filter(span => span.kind === "tool");
 					const model = track.spans.filter(span => span.kind === "model");
-					lines.push(clean(`${track.id === state.childSelected ? "▶" : " "}${"  ".repeat(depth)}${state.collapsed.has(track.id) ? "+" : "−"} ${track.label} [${track.id}] · ${model.length} requests · ${tools.length} tools · ${formatDurationMs(track.spans.reduce((sum, span) => sum + span.end - span.start, 0))} summed span time`));
+					lines.push(clean(`${track.id === state.childSelected ? glyph(preset, "rowCursor") : " "}${"  ".repeat(depth)}${state.collapsed.has(track.id) ? "+" : "−"} ${track.label} [${track.id}] · ${model.length} requests · ${tools.length} tools · ${formatDurationMs(track.spans.reduce((sum, span) => sum + span.end - span.start, 0))} summed span time`));
 				}
 				const track = tracks.find(item => item.id === state?.childSelected);
 				if (track) lines.push(...wrapTextWithAnsi(clean(`Agent: ${track.agent ?? "main"} · Model: ${track.model ?? "unknown"}\nFile: ${track.file}\n${track.spans.filter(span => span.isError).length} failed spans · ${track.markers.length} markers · ${tracks.filter(item => item.parentId === track.id).length} direct children`), w));

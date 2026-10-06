@@ -5,6 +5,7 @@ import type { SessionTrace, TraceSpanKind, TraceTrack } from "@oh-my-pi/omp-stat
 import { ancestors, buildLanes, KINDS, localWindow, MARKS, spanCells, visibleTracks, type Lane, type TraceRow, type TraceScale, type Viewport } from "./model";
 
 import { SPAN_COLORS } from "../../palette";
+import { glyph } from "../../glyphs";
 export function clean(value: unknown): string {
 	return stripTerminalSequences(String(value ?? "")).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 }
@@ -24,6 +25,9 @@ export function renderTimeline(options: {
 	overviewCursor?: number | null; overviewAnchor?: number | null;
 }): string[] {
 	const { trace, scale, viewport, collapsed, selected, cursor, theme, search } = options;
+	// The ONE `getSymbolPreset()` read for this view, so every mark below
+	// answers to the preset instead of being hardcoded into the module.
+	const preset = theme.getSymbolPreset();
 	const width = Math.max(1, options.width);
 	const labelWidth = Math.min(22, Math.max(4, Math.floor(width * 0.27)));
 	const plotWidth = Math.max(1, width - labelWidth - 1);
@@ -33,11 +37,11 @@ export function renderTimeline(options: {
 	const windowStart = Math.max(0, Math.floor((viewport.u0 - full.u0) / domainSize * plotWidth));
 	const windowEnd = Math.min(plotWidth - 1, Math.floor((viewport.u1 - full.u0) / domainSize * (plotWidth - 1)));
 	const brush = Array<string>(plotWidth).fill(" ");
-	for (let x = windowStart; x <= windowEnd; x++) brush[x] = theme.fg("dim", "─");
+	for (let x = windowStart; x <= windowEnd; x++) brush[x] = theme.fg("dim", glyph(preset, "axisRule"));
 	brush[windowStart] = theme.fg("accent", "[");
 	brush[windowEnd] = theme.fg("accent", "]");
 	if (options.overviewAnchor !== null && options.overviewAnchor !== undefined) brush[Math.min(plotWidth - 1, Math.floor(options.overviewAnchor * (plotWidth - 1)))] = theme.fg("warning", "|");
-	if (options.overviewCursor !== null && options.overviewCursor !== undefined) brush[Math.min(plotWidth - 1, Math.floor(options.overviewCursor * (plotWidth - 1)))] = theme.fg("accent", "▼");
+	if (options.overviewCursor !== null && options.overviewCursor !== undefined) brush[Math.min(plotWidth - 1, Math.floor(options.overviewCursor * (plotWidth - 1)))] = theme.fg("accent", glyph(preset, "playhead"));
 	lines.push(`${"Minimap".padEnd(labelWidth)} ${brush.join("")}`);
 	// Separate categories retain concurrent activity instead of overwriting one another.
 	for (const kind of KINDS) {
@@ -48,15 +52,15 @@ export function renderTimeline(options: {
 			const cells = spanCells(scale, full, span, plotWidth);
 			if (cells) for (let x = cells[0]; x < cells[1]; x++) { density[x]++; errors[x] ||= !!span.isError; }
 		}
-		lines.push(`${`Overview ${kind}`.padEnd(labelWidth)} ${density.map((count, x) => count ? theme.fg(errors[x] ? "error" : SPAN_COLORS[kind], count > 1 ? "▓" : MARKS[kind]) : "·").join("")}`);
+		lines.push(`${`Overview ${kind}`.padEnd(labelWidth)} ${density.map((count, x) => count ? theme.fg(errors[x] ? "error" : SPAN_COLORS[kind], count > 1 ? glyph(preset, "barFill") : MARKS[kind]) : glyph(preset, "heatEmpty")).join("")}`);
 	}
 	lines.push(`Window +${formatDurationMs(scale.toT(viewport.u0) - trace.startedAt)} → +${formatDurationMs(scale.toT(viewport.u1) - trace.startedAt)} · ${(domainSize / (viewport.u1 - viewport.u0)).toFixed(1)}×`);
-	const ruler = Array<string>(plotWidth).fill("─");
+	const ruler = Array<string>(plotWidth).fill(glyph(preset, "axisRule"));
 	for (const gap of scale.gaps) {
 		const x = Math.floor((gap.uMid - viewport.u0) / (viewport.u1 - viewport.u0) * plotWidth);
 		if (x >= 0 && x < plotWidth) ruler[x] = theme.fg("warning", "~");
 	}
-	ruler[Math.min(plotWidth - 1, Math.floor(cursor * (plotWidth - 1)))] = theme.fg("accent", "▼");
+	ruler[Math.min(plotWidth - 1, Math.floor(cursor * (plotWidth - 1)))] = theme.fg("accent", glyph(preset, "playhead"));
 	lines.push(`${"Cursor".padEnd(labelWidth)} ${ruler.join("")}`);
 	const lanes = buildLanes(trace.tracks, collapsed), timelineRows: TimelineRow[] = [];
 	for (const track of visibleTracks(trace.tracks, collapsed)) {
@@ -80,7 +84,7 @@ export function renderTimeline(options: {
 				const u = scale.toU(marker.time);
 				if (u < viewport.u0 || u > viewport.u1) return;
 				const x = Math.min(plotWidth - 1, Math.floor((u - viewport.u0) / (viewport.u1 - viewport.u0) * plotWidth));
-				cells[x] = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", "◆");
+				cells[x] = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", glyph(preset, "trackMarker"));
 			});
 			lines.push(`${"Markers".padEnd(labelWidth)} ${cells.join("")}`);
 			continue;
@@ -97,10 +101,12 @@ export function renderTimeline(options: {
 			// Labels retain identity in the selected-span line; narrow bars use category glyphs.
 			const label = end - start >= 7 ? Array.from(text).filter(char => visibleWidth(char) === 1) : [];
 			for (let x = start; x < end; x++) {
-				let glyph = label[x - start - 1] ?? MARKS[span.kind];
-				if (x === start && span.id === selected) glyph = "▶";
-				else if (x === start && match) glyph = "*";
-				const ink = theme.fg(span.isError ? "error" : SPAN_COLORS[span.kind], glyph);
+				// Named `mark`, not `glyph`: the imported resolver is called
+				// `glyph`, and a local of the same name would shadow it.
+				let mark = label[x - start - 1] ?? MARKS[span.kind];
+				if (x === start && span.id === selected) mark = glyph(preset, "rowCursor");
+				else if (x === start && match) mark = "*";
+				const ink = theme.fg(span.isError ? "error" : SPAN_COLORS[span.kind], mark);
 				cells[x] = span.id === selected ? theme.bold(ink) : ink;
 			}
 		}
@@ -109,7 +115,10 @@ export function renderTimeline(options: {
 	}
 	if (!trace.tracks.some(track => track.spans.length || track.markers.length)) lines.push("No recorded spans or markers in this trace.");
 	if (visible.rows.length < timelineRows.length) lines.push(theme.fg("dim", `Rows ${visible.offset + 1}–${visible.offset + visible.rows.length}/${timelineRows.length}; ↑/↓ selection reveals its row, Tab opens the track tree.`));
-	lines.push(...wrapTextWithAnsi("I input · M model · T tool · A agent · B background · ◆ marker · ~ compressed idle", width));
+	// The legend NAMES the marker the timeline draws, so it interpolates the same
+	// role rather than repeating `◆` — otherwise the legend would promise one
+	// glyph under unicode and a different one under ascii.
+	lines.push(...wrapTextWithAnsi(`I input · M model · T tool · A agent · B background · ${glyph(preset, "trackMarker")} marker · ~ compressed idle`, width));
 	return bounded(lines, width);
 }
 
