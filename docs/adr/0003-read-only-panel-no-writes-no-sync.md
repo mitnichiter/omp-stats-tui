@@ -1,5 +1,7 @@
 # The panel is read-only: it never writes and never triggers ingest
 
+Status: **superseded** by ADR 0006 and the [dashboard-parity roadmap](../plans/2026-10-05-dashboard-parity.md). The persistent isolated worker initializes the upstream DB (which can create/migrate/backfill), owns patched `StatsLive({ workers: 1 })` initial ingest/transcript watching, and handles explicit sync through that same live owner. The host source entry does no DB initialization. Twelve interactive controllers include on-demand request/trace/quota reads and explicit-confirmation paid judging; cached Frustration remains passive. The text below records the original decision, not a current read-only/no-sync guarantee.
+
 The panel shows what is already in the database and nothing more. The database-opening path in the stats
 package runs DDL and opens read-write, and the ingest routine takes an OS file lock that polls every 25 ms
 for up to one hour before giving up — a panel that triggered it could hang for an hour under contention.
