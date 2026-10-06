@@ -44,7 +44,7 @@ import {
 	topbar,
 } from "../src/tui/chrome";
 import { SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
-import { __testing, SELECTABLE_SCREENS } from "../src/tui/panel";
+import { __testing, SELECTABLE_SCREENS, panelAction } from "../src/tui/panel";
 import type { SyncEvent } from "../src/sync/client";
 import { liveData } from "./fixtures/panel";
 
@@ -801,3 +801,112 @@ test("a stale g prefix falls through to the normal keymap", async () => {
 	expect(__testing.debugRange(panel)).toBe("7d");
 });
 
+
+// ─── the number row ───────────────────────────────────────────────────────────
+
+/**
+ * Ported from the base branch's `test/panel.test.ts` ("every selectable screen
+ * is on the number row, so no digit is a dead key" / "digits index the
+ * SELECTABLE screens"). PR #1 took the panel from eleven routes to twelve and
+ * rewrote `chrome.ts`'s hotkey map; both base assertions went with it and
+ * nothing replaced them.
+ *
+ * The digits are written out rather than imported because `panel.ts` keeps
+ * `DIGITS` module-private, and this is the whole point of the guard: the list
+ * has to be observable from outside. Everything else here is DERIVED — from
+ * `panelAction`, which is the real keymap, and from `SELECTABLE_SCREENS`, which
+ * is the real registry. Nothing is a restatement, so nothing can go stale the
+ * way a literal eight-id list did when `providers` and `gain` arrived.
+ */
+const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] as const;
+
+test("every digit on the number row is live and indexes a distinct selectable screen", () => {
+	// The base asserted the panel's own `DIGIT_KEYS` list, which is gone; this
+	// asks the keymap instead. A digit that indexes nothing, indexes past the
+	// end, or lands on the same screen as another digit is a dead or aliased
+	// key, and neither is observable from the constant alone.
+	const landed: string[] = [];
+	for (let index = 0; index < DIGIT_KEYS.length; index++) {
+		const key = DIGIT_KEYS[index]!;
+		expect(panelAction(key), `digit ${key} is not owned by the panel`).toEqual({ type: "screenIndex", index });
+		const screen = SELECTABLE_SCREENS[index];
+		expect(screen, `digit ${key} indexes past the end of SELECTABLE_SCREENS`).toBeDefined();
+		landed.push(screen!.id);
+	}
+	expect(new Set(landed).size, `two digits select the same screen: ${landed.join(" ")}`).toBe(landed.length);
+});
+
+test("every selectable screen is on the number row, so no digit is a dead key", () => {
+	// Direction matters. `DIGITS` is `1`-`9` then `0` — ten keys, and there is
+	// no eleventh digit — so the row's length is a hard ceiling on how many
+	// routes can carry one. `panel.ts` says as much ("An eleventh screen is
+	// simply not on the number row and is reached with `tab`; test/panel.test.ts
+	// asserts `SELECTABLE_SCREENS.length` against this list, so the gap becomes a
+	// test failure rather than a silently dead key") — and that test is what PR
+	// #1 deleted. The message names the orphans, because "12 > 10" on its own
+	// does not tell a reader which two screens are the unreachable ones.
+	const onRow = DIGIT_KEYS.slice(0, Math.min(DIGIT_KEYS.length, SELECTABLE_SCREENS.length)).map(
+		(_, index) => SELECTABLE_SCREENS[index]!.id,
+	);
+	const orphans = SELECTABLE_SCREENS.map(screen => screen.id).filter(id => !onRow.includes(id));
+	expect(
+		SELECTABLE_SCREENS.length,
+		`${orphans.length} selectable screen(s) are reachable but have no digit: ${orphans.join(", ") || "none"} — the number row holds ${DIGIT_KEYS.length}`,
+	).toBeLessThanOrEqual(DIGIT_KEYS.length);
+});
+
+test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {
+	// The selectable set is spec-driven: every non-deferred screen the IR can
+	// describe, minus the ones the registry marks excluded. A digit that could
+	// reach an excluded screen would spend a keystroke on a page the panel
+	// cannot honestly fill, which is exactly what `excluded` exists to prevent.
+	expect(__testing.debugScreenIds()).toEqual(SELECTABLE_SCREENS.map(screen => screen.id));
+	expect(SELECTABLE_SCREENS.every(screen => screen.status !== "excluded")).toBe(true);
+	for (let index = 0; index < DIGIT_KEYS.length; index++) {
+		const screen = SELECTABLE_SCREENS[index];
+		expect(screen, `digit ${DIGIT_KEYS[index]} has nothing to select`).toBeDefined();
+		expect(__testing.debugScreenIds(), `digit ${DIGIT_KEYS[index]}`).toContain(screen!.id);
+	}
+});
+
+// ─── jump letters ────────────────────────────────────────────────────────────
+
+test("every jump letter resolves back to the row that shows it, and none is claimed twice", () => {
+	// The base pinned eight specific letters. This derives the whole set from
+	// `NAV_GROUPS`, which is what `screenForHotkey` itself reads, so a letter
+	// can no longer be added to one and forgotten in the other: `HOTKEYS` is
+	// module-private in `chrome.ts`, and this asserts its observable projection
+	// — every row has exactly one single lowercase letter, no two rows share
+	// one, and `screenForHotkey` round-trips each of them in both cases.
+	const rows = NAV_GROUPS.flatMap(group => group.items);
+	const claimed = new Map<string, string>();
+	for (const row of rows) {
+		expect(row.hotkey, `${row.id} has no jump letter`).toMatch(/^[a-z]$/);
+		expect(screenForHotkey(row.hotkey), `${row.id} claims ${row.hotkey}, which resolves elsewhere`)
+			.toBe(row.id);
+		expect(screenForHotkey(row.hotkey.toUpperCase()), `${row.id} is not case-insensitive`).toBe(row.id);
+		const prior = claimed.get(row.hotkey);
+		expect(prior, `letter ${row.hotkey} is claimed by both ${prior} and ${row.id}`).toBeUndefined();
+		claimed.set(row.hotkey, row.id);
+	}
+	// `g` is the ARM, never a jump target: a row that claimed it would make
+	// `g g` a screen and the prefix unexplainable.
+	expect(claimed.has("g")).toBe(false);
+	// Every selectable screen has a row, and therefore a letter — otherwise it
+	// is reachable by arrow and by digit and not by jump.
+	for (const screen of SELECTABLE_SCREENS) {
+		expect(rows.map(row => row.id), `${screen.id} has no nav row and no jump letter`).toContain(screen.id);
+	}
+});
+
+test("no jump letter resolves to a screen with no nav row to show it on", () => {
+	// `screenForHotkey` reads `NAV_GROUPS`, so this cannot drift from it — but
+	// the invariant is worth stating, because it is what makes `g` + a letter
+	// safe: a keystroke never lands on a route the sidebar cannot name.
+	for (let code = 97; code <= 122; code++) {
+		const letter = String.fromCharCode(code);
+		const id = screenForHotkey(letter);
+		if (id === null) continue;
+		expect(NAV_GROUPS.flatMap(group => group.items.map(row => row.id)), letter).toContain(id);
+	}
+});
