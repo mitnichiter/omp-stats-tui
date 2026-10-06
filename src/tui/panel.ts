@@ -35,7 +35,7 @@ import {
 import { framePolicy } from "./responsive";
 import { TAB_BAR_INDENT, buildTabs, tabBarTheme } from "./tabs";
 import { MIN_PANEL_ROWS as FRAME_MIN_PANEL_ROWS, bodyRows } from "./frame";
-import { footerHints, hintsFor, type HintMode } from "./footer";
+import { footerHints, hintsFor, type HintMode, type PanelHint } from "./footer";
 import { hitTest, type MouseFrame } from "./mouse";
 
 /**
@@ -323,6 +323,7 @@ export class StatsPanel implements Component {
 	readonly #reads = new StatsReadClient();
 	readonly #features = new Map<ScreenId, FeatureController>();
 	#featureContext: FeatureContext | undefined;
+	#traceOrigin: ScreenId | undefined;
 	#liveStatus: LiveStatus | undefined;
 	#refreshTimer: Timer | undefined;
 
@@ -420,7 +421,15 @@ export class StatsPanel implements Component {
 			copy: async text => { copyToClipboard(text); },
 			now: () => this.#options.now?.() ?? Date.now(),
 			openScreen: target => this.#selectScreen(this.#indexOf(target as ScreenId)),
+			backToOrigin: () => {
+				const origin = this.#traceOrigin;
+				if (!origin) return false;
+				this.#traceOrigin = undefined;
+				this.#selectScreen(this.#indexOf(origin));
+				return true;
+			},
 			openTrace: (file, entryId) => {
+				if (this.#state.screenId !== "traces") this.#traceOrigin = this.#state.screenId;
 				this.#selectScreen(this.#indexOf("traces"));
 				void this.#feature()?.openTrace?.(file, entryId);
 			},
@@ -657,7 +666,7 @@ export class StatsPanel implements Component {
 		// At least as tall as the nav: `#zipSidebar` may have added rows to keep the
 		// whole nav visible, and `setHeight` would clip them straight back off.
 		this.#body.setHeight(Math.max(plan.bodyRows, nav?.lines.length ?? 0));
-		this.#footer.setLines([this.#footerLine(plan)]);
+		this.#footer.setLines([this.#footerLine(plan, innerWidth)]);
 		return this.#panel.render(width);
 	}
 
@@ -708,10 +717,10 @@ export class StatsPanel implements Component {
 			return notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth));
 		}
 		const feature = this.#feature();
-		if (feature) return [
-			...notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth)),
-			...feature.render(plan.innerWidth, Math.max(1, (this.#tui.terminal.rows ?? 40) - 9)),
-		];
+		if (feature) {
+			const noticeLines = notices.flatMap(line => wrapTextWithAnsi(line, plan.innerWidth));
+			return [...noticeLines, ...feature.render(plan.innerWidth, Math.max(1, plan.bodyRows - noticeLines.length))];
+		}
 		const spec = specById(state.screenId);
 		// Pure IR fixtures/probes use declarative layouts; production controllers render above.
 		if (!spec) return [this.#theme.fg("muted", `No layout spec for "${state.screenId}".`)];
@@ -797,7 +806,7 @@ export class StatsPanel implements Component {
 	}
 
 
-	#footerLine(plan: LayoutPlan): string {
+	#footerLine(plan: LayoutPlan, width: number): string {
 		const state = this.#state;
 		// DERIVED, never stored (F23 §3.2): an error shows a retry and a close
 		// rather than a range switch that would only discard the message the user
@@ -810,13 +819,20 @@ export class StatsPanel implements Component {
 					: state.maxScroll > 0
 						? "scrollable"
 						: "idle";
-		const hints = this.#feature()?.inputMode === "text" ? [
+		const hints: readonly PanelHint[] = this.#feature()?.inputMode === "text" ? [
 			{ keys: ["escape"], label: "finish search" },
 			{ keys: ["ctrl+p", "ctrl+n"], label: "screen" },
 			{ keys: ["ctrl+c"], label: "close" },
 		] : hintsFor(mode);
-		const [row] = footerHints(hints, this.#theme, plan.innerWidth);
-		return row ?? "";
+		const scrollPosition = state.maxScroll > 0 ? `${state.scroll + 1}–${Math.min(state.source.length, state.scroll + plan.bodyRows)}/${state.source.length}` : "";
+		// Keep the close hint usable when the viewport cannot also fit the counter.
+		const position = visibleWidth(scrollPosition) + 12 <= width ? scrollPosition : "";
+		const reserve = position ? visibleWidth(position) + 2 : 0;
+		const hintWidth = Math.max(0, width - reserve);
+		const [row = ""] = footerHints(hints, this.#theme, hintWidth);
+		return position
+			? row + " ".repeat(Math.max(2, width - visibleWidth(row) - visibleWidth(position))) + this.#theme.fg("dim", position)
+			: row;
 	}
 
 	// --- input ---------------------------------------------------------------
@@ -846,7 +862,7 @@ export class StatsPanel implements Component {
 			this.#selectScreen(this.#indexOf(state.screenId) + (data === "[" ? -1 : 1)); return;
 		}
 		if (!armed && feature?.handleInput(data)) {
-			if (editing || feature.inputMode === "text" || matchesKey(data, "tab") || matchesKey(data, "shift+tab") ||
+			if (editing || this.#feature()?.inputMode === "text" || matchesKey(data, "tab") || matchesKey(data, "shift+tab") ||
 				matchesKey(data, "enter") || matchesKey(data, "escape")) state.scroll = 0;
 			return;
 		}
@@ -947,6 +963,7 @@ export class StatsPanel implements Component {
 		if (count === 0) return;
 		const screen = SELECTABLE_SCREENS[((index % count) + count) % count];
 		if (screen.id === state.screenId) return;
+		if (state.screenId === "traces" && screen.id !== "traces") this.#traceOrigin = undefined;
 		// The pointer no longer points at what the old highlight meant, so a
 		// hover pill left on the old tab would lie — `/settings` clears on
 		// select the same way.

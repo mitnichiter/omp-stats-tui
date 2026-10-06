@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
 import { stripTerminalSequences, visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
-import type { SessionTrace, TraceSpan, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
+import type { SessionSummary, SessionTrace, TraceSpan, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
 import { createTracesFeature } from "../src/tui/features/traces";
 import type { FeatureContext } from "../src/tui/features/types";
-import { ancestors, buildLanes, buildScale, fit, remapViewport, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport } from "../src/tui/features/traces/model";
+import { ancestors, buildLanes, buildScale, fit, overviewViewport, remapViewport, resizeOverview, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport } from "../src/tui/features/traces/model";
 
 ensureThemeSync();
 const START = 1_700_000_000_000;
@@ -167,5 +167,234 @@ test("late entry payload cannot replace a newer selected span's journal entry", 
 	expect(text).toContain("Selected: main · subagent · Agent alpha");
 	expect(text).toContain("CURRENT selected task entry");
 	expect(text).not.toContain("OBSOLETE model entry");
+	controller.dispose();
+});
+
+test("overview seeking, range creation and independent edge resizing respect the full domain", () => {
+	const scale = buildScale(nestedTrace().tracks, "time", false);
+	const initial = { u0: START + 10_000, u1: START + 30_000 };
+	expect(overviewViewport(scale, initial, 0.9, null)).toEqual({ u0: START + 89_000, u1: START + 109_000 });
+	const range = overviewViewport(scale, initial, 0.8, 0.2);
+	expect(range).toEqual({ u0: START + 22_000, u1: START + 88_000 });
+	expect(resizeOverview(scale, range, 0.3, "start")).toEqual({ u0: START + 33_000, u1: range.u1 });
+	expect(resizeOverview(scale, range, 0.6, "end")).toEqual({ u0: range.u0, u1: START + 66_000 });
+	expect(resizeOverview(scale, range, 1, "start")).toEqual({ u0: range.u1 - 10, u1: range.u1 });
+	expect(overviewViewport(scale, initial, 0, null)).toEqual({ u0: START, u1: START + 20_000 });
+});
+
+test("keyboard minimap creates and seeks a brush without changing the linked selected event", async () => {
+	const controller = createTracesFeature(context());
+	await controller.openTrace!(ROOT, "spawn");
+	controller.handleInput("\x1b");
+	controller.handleInput("i"); // real wall time
+	controller.handleInput("m");
+	controller.handleInput("\x1b[H"); // full-domain start
+	controller.handleInput(" ");
+	controller.handleInput("\x1b[C");
+	controller.handleInput("\x1b[C");
+	controller.handleInput("\r");
+	let text = stripTerminalSequences(controller.render(110, 45).join("\n"));
+	expect(text).toMatch(/Window \+0\.00s → \+11\.0s/);
+	expect(text).toContain("Selected: main · subagent · Agent alpha");
+	controller.handleInput("\x1b[F");
+	controller.handleInput("\r"); // seek to the end, retaining brush width
+	text = stripTerminalSequences(controller.render(110, 45).join("\n"));
+	expect(text).toMatch(/Window \+99\.0s → \+110\.0s/);
+	expect(text).toContain("Selected: main · subagent · Agent alpha");
+	controller.handleInput("m");
+	controller.handleInput("f"); // linked event still focuses normally
+	expect(stripTerminalSequences(controller.render(110, 45).join("\n"))).toContain("Selected: main · subagent · Agent alpha");
+	controller.dispose();
+});
+
+test("marker-only child tracks remain visible, selectable and inspectable without inventing entries", async () => {
+	const trace = nestedTrace();
+	const markerTrack = track("marker-child", "main", CHILD, []);
+	markerTrack.markers = [{ time: START + 4000, kind: "compaction", label: "Recorded compaction" }];
+	trace.tracks = [trace.tracks[0]!, markerTrack, track("empty-child", "main", GRANDCHILD, [])];
+	const ctx = context();
+	ctx.reader.api = async <T>(path: string): Promise<T> => {
+		if (path === "/api/session/trace") return trace as T;
+		throw new Error(`Marker inspection must not fetch journal entries: ${path}`);
+	};
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT);
+	let text = stripTerminalSequences(controller.render(120, 60).join("\n"));
+	expect(text).toContain("marker-child [marker-child]");
+	expect(text).toContain("◆");
+	expect(text).toContain("empty-child [empty-child]");
+	for (let i = 0; i < 3; i++) controller.handleInput("\x1b[B");
+	controller.handleInput("\r");
+	await settle();
+	text = stripTerminalSequences(controller.render(120, 60).join("\n"));
+	expect(text).toContain("compaction · Recorded compaction");
+	expect(text).toContain("No journal entry is associated");
+	controller.handleInput("j");
+	expect(stripTerminalSequences(controller.render(120, 60).join("\n"))).toContain('"kind": "compaction"');
+	controller.dispose();
+});
+
+test("keyboard hit selection includes the rendered cell of a zero-duration input", async () => {
+	const controller = createTracesFeature(context());
+	await controller.openTrace!(ROOT, "later");
+	controller.handleInput("\x1b");
+	controller.handleInput("0");
+	for (let i = 0; i < 20; i++) controller.handleInput("h");
+	controller.render(100, 40);
+	controller.handleInput(" ");
+	expect(stripTerminalSequences(controller.render(100, 40).join("\n"))).toContain("Selected: main · turn · First prompt");
+	controller.dispose();
+});
+
+test("previous search match starts with the last result when current selection is outside results", async () => {
+	const controller = createTracesFeature(context());
+	await controller.openTrace!(ROOT);
+	controller.handleInput("/");
+	controller.handleInput("response");
+	controller.handleInput("\r");
+	await controller.openTrace!(ROOT, "spawn"); // request-origin selection can be outside the active search
+	controller.handleInput("\x1b");
+	controller.handleInput("N");
+	expect(stripTerminalSequences(controller.render(110, 40).join("\n"))).toContain("Selected: main · model · Later response");
+	controller.dispose();
+});
+
+test("root discovery reveals and searches only actual candidates up to the upstream boundary", async () => {
+	const candidates: SessionSummary[] = Array.from({ length: 300 }, (_, index) => ({
+		file: `/isolated/sessions/root-${index}.jsonl`, folder: "/isolated/project", title: `Recorded ${index}`,
+		startedAt: START - index * 1000, endedAt: START + 1000, requests: 1, toolCalls: 0, subagents: 0,
+		totalTokens: index, costTotal: 0, unpricedRequests: 0, models: [index === 250 ? "Rare recorded model" : "Common model"],
+	}));
+	const ctx = context();
+	ctx.reader.api = async <T>(path: string, params?: Record<string, string>): Promise<T> => {
+		if (path !== "/api/sessions") throw new Error(`Unexpected root query: ${path}`);
+		const limit = Number(params?.limit);
+		expect(limit).toBeLessThanOrEqual(300);
+		const filtered = params?.q ? candidates.filter(item => item.title!.includes(params.q!)) : candidates;
+		return filtered.slice(0, limit) as T;
+	};
+	const controller = createTracesFeature(ctx);
+	await controller.load("all");
+	controller.handleInput("+");
+	await settle();
+	controller.handleInput("/");
+	controller.handleInput("Rare recorded model");
+	controller.handleInput("\r");
+	await settle();
+	const text = stripTerminalSequences(controller.render(120, 40).join("\n"));
+	expect(text).toContain("Recorded 250");
+	expect(text).toContain("1 matching");
+	expect(text).toContain("at most 300");
+	controller.dispose();
+});
+
+test("request-origin back waits for child history and preserves the retained root selection", async () => {
+	let returns = 0;
+	const ctx = context();
+	ctx.backToOrigin = () => { returns++; return true; };
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT, "spawn");
+	controller.handleInput("\x1b");
+	controller.handleInput("O");
+	await settle();
+	controller.handleInput("b");
+	expect(returns).toBe(0);
+	expect(stripTerminalSequences(controller.render(110, 40).join("\n"))).toContain("Selected: main · subagent · Agent alpha");
+	controller.handleInput("b");
+	expect(returns).toBe(1);
+	expect(stripTerminalSequences(controller.render(110, 40).join("\n"))).toContain("Selected: main · subagent · Agent alpha");
+	controller.dispose();
+});
+
+test("request-linked external traces discard unrelated browser history but retain the linked view on return", async () => {
+	let returns = 0;
+	const ctx = context();
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT, "spawn");
+	controller.handleInput("\x1b");
+	controller.handleInput("O");
+	await settle();
+	ctx.backToOrigin = () => { returns++; return true; };
+	await controller.openTrace!(GRANDCHILD);
+	const linked = stripTerminalSequences(controller.render(110, 40).join("\n"));
+	controller.handleInput("b");
+	expect(returns).toBe(1);
+	expect(stripTerminalSequences(controller.render(110, 40).join("\n"))).toBe(linked);
+	controller.dispose();
+});
+
+test("request entries without assembled timing retain their own file identity and copy raw journal data", async () => {
+	const copies: string[] = [];
+	const ctx = context(async (file, id) => ({ id, file, message: { content: "Recorded unmapped entry" } }));
+	ctx.copy = async value => { copies.push(value); };
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT, "unassembled");
+	controller.handleInput("j");
+	controller.handleInput("y");
+	await settle();
+	expect(JSON.parse(copies[0]!)).toMatchObject({ id: "unassembled", file: ROOT });
+	controller.dispose();
+});
+
+test("failed trace reads can retry and older files cannot replace the current child trace", async () => {
+	let resolveRoot!: (trace: SessionTrace) => void;
+	const pending = new Promise<SessionTrace>(resolve => { resolveRoot = resolve; });
+	let failChild = true;
+	const ctx = context();
+	ctx.reader.api = async <T>(path: string, params?: Record<string, string>): Promise<T> => {
+		if (path === "/api/session/trace") {
+			if (params?.file === ROOT) return await pending as T;
+			if (failChild) throw new Error("Recorded child temporarily unreadable");
+			return childTrace(CHILD) as T;
+		}
+		throw new Error(`Unexpected query: ${path}`);
+	};
+	const controller = createTracesFeature(ctx);
+	const oldLoad = controller.openTrace!(ROOT);
+	await controller.openTrace!(CHILD);
+	expect(stripTerminalSequences(controller.render(100, 40).join("\n"))).toContain("Recorded child temporarily unreadable");
+	failChild = false;
+	controller.handleInput("u");
+	await settle();
+	resolveRoot(nestedTrace());
+	await oldLoad;
+	const text = stripTerminalSequences(controller.render(100, 40).join("\n"));
+	expect(text).toContain("Selected: main · model · Child response");
+	expect(text).not.toContain("Recorded nested trace");
+	expect(text).not.toContain("temporarily unreadable");
+	controller.dispose();
+});
+
+test("disposing a trace prevents pending journal responses from repainting or publishing data", async () => {
+	let resolveEntry!: (entry: unknown) => void;
+	const pending = new Promise<unknown>(resolve => { resolveEntry = resolve; });
+	let changes = 0;
+	const ctx = context(async () => pending);
+	ctx.changed = () => { changes++; };
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT, "shared");
+	controller.dispose();
+	const before = changes;
+	resolveEntry({ message: { content: "Disposed late journal data" } });
+	await settle();
+	expect(changes).toBe(before);
+	expect(stripTerminalSequences(controller.render(100, 40).join("\n"))).not.toContain("Disposed late journal data");
+});
+
+test("model detail retains recorded metrics when the span has no resolved model name", async () => {
+	const trace = nestedTrace();
+	const recorded = trace.tracks[0]!.spans.find(item => item.id === "main:shared")!;
+	delete recorded.model;
+	recorded.tokens = 321;
+	recorded.cost = 0.12;
+	const ctx = context();
+	const api = ctx.reader.api;
+	ctx.reader.api = async <T>(path: string, params?: Record<string, string>): Promise<T> => path === "/api/session/trace" ? trace as T : api<T>(path, params);
+	const controller = createTracesFeature(ctx);
+	await controller.openTrace!(ROOT, "shared");
+	await settle();
+	const text = stripTerminalSequences(controller.render(110, 40).join("\n"));
+	expect(text).toContain("Tokens: 321");
+	expect(text).toContain("$0.12");
 	controller.dispose();
 });

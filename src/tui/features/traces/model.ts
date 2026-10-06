@@ -75,6 +75,28 @@ export function zoomViewport(scale: TraceScale, viewport: Viewport, factor: numb
 	const window = (viewport.u1 - viewport.u0) * factor;
 	return clampViewport(scale, { u0: anchor - window * fraction, u1: anchor + window * (1 - fraction) });
 }
+
+/** Seek or brush the full overview without changing the selected event. */
+export function overviewViewport(scale: TraceScale, viewport: Viewport, cursor: number, anchor: number | null): Viewport {
+	const [d0, d1] = scale.domain;
+	const position = d0 + Math.max(0, Math.min(1, cursor)) * (d1 - d0);
+	if (anchor !== null) {
+		const start = d0 + Math.max(0, Math.min(1, anchor)) * (d1 - d0);
+		return clampViewport(scale, { u0: Math.min(start, position), u1: Math.max(start, position) });
+	}
+	const size = viewport.u1 - viewport.u0;
+	return clampViewport(scale, { u0: position - size / 2, u1: position + size / 2 });
+}
+
+/** Resize one brush edge while keeping its opposite edge fixed. */
+export function resizeOverview(scale: TraceScale, viewport: Viewport, cursor: number, edge: "start" | "end"): Viewport {
+	const [d0, d1] = scale.domain;
+	const position = d0 + Math.max(0, Math.min(1, cursor)) * (d1 - d0);
+	const minimum = Math.min(10, d1 - d0);
+	return edge === "start"
+		? { u0: Math.max(d0, Math.min(position, viewport.u1 - minimum)), u1: viewport.u1 }
+		: { u0: viewport.u0, u1: Math.min(d1, Math.max(position, viewport.u0 + minimum)) };
+}
 export function revealSpan(scale: TraceScale, viewport: Viewport, span: TraceSpan, focus = false): Viewport {
 	const start = scale.toU(span.start), end = scale.toU(span.end);
 	if (!focus && start >= viewport.u0 && end <= viewport.u1) return viewport;

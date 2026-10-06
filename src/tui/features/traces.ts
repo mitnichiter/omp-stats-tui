@@ -3,19 +3,20 @@ import { formatDurationMs, formatEstimatedCost, formatInteger } from "@oh-my-pi/
 import type { SessionSummary, SessionTrace, TraceToolStat } from "@oh-my-pi/omp-stats/shared-types";
 import type { Range } from "../../data/ranges";
 import type { FeatureContext, FeatureController } from "./types";
-import { ancestors, buildScale, clampViewport, fit, localWindow, remapViewport, revealSpan, rowForEntry, transcriptRows, zoomViewport, type AxisMode, type TraceRow, type TraceScale, type Viewport } from "./traces/model";
+import { ancestors, buildScale, clampViewport, fit, localWindow, overviewViewport, remapViewport, resizeOverview, revealSpan, rowForEntry, spanCells, transcriptRows, visibleTracks, zoomViewport, type AxisMode, type TraceRow, type TraceScale, type Viewport } from "./traces/model";
 import { bounded, clean, COLORS, renderEntry, renderTimeline, rowLabel } from "./traces/render";
 
-type Focus = "timeline" | "transcript" | "tools" | "children";
+type Focus = "timeline" | "transcript" | "tools" | "children" | "minimap";
 type SessionSort = "started" | "title" | "duration" | "requests" | "tools" | "agents" | "tokens" | "cost";
 type ToolSort = "total" | "tool" | "calls" | "errors" | "average" | "max";
 const SESSION_SORTS: readonly SessionSort[] = ["started", "title", "duration", "requests", "tools", "agents", "tokens", "cost"];
 const TOOL_SORTS: readonly ToolSort[] = ["total", "tool", "calls", "errors", "average", "max"];
-const FOCI: readonly Focus[] = ["timeline", "transcript", "tools", "children"];
+const FOCI: readonly Focus[] = ["timeline", "transcript", "tools", "children", "minimap"];
 interface ViewState {
 	file: string; trace: SessionTrace | null; scale: TraceScale; viewport: Viewport; mode: AxisMode;
 	compress: boolean; selected: string | null; collapsed: Set<string>; cursor: number; focus: Focus;
 	search: string; toolFilter: string | null; toolSelected: string | null; childSelected: string | null;
+	overviewCursor: number; overviewAnchor: number | null;
 }
 
 export function createTracesFeature(ctx: FeatureContext): FeatureController {
@@ -28,6 +29,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 	const history: ViewState[] = [];
 	let editing: "sessions" | "spans" | null = null, draft = "";
 	let detail = false, raw = false, entry: unknown = null, entryLoading = false, entryError: string | null = null;
+	let timelinePlotWidth = 1;
 	let unmappedTarget: { file: string; id: string } | null = null;
 
 	function changed(): void { if (!closed) ctx.changed(); }
@@ -177,17 +179,19 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 			if (!closed && id === generation && state === view) { loading = false; changed(); }
 		}
 	}
-	async function openTrace(file: string, entryId?: string): Promise<void> {
+	async function openTrace(file: string, entryId?: string, recordHistory = true): Promise<void> {
 		if (closed) return;
 		if (state?.file === file) { await loadTrace(state, entryId, file); return; }
-		if (state) history.push({ ...state, collapsed: new Set(state.collapsed) });
+		if (state && recordHistory) history.push({ ...state, collapsed: new Set(state.collapsed) });
 		resetEntry(); detail = false; notice = ""; editing = null; unmappedTarget = null;
 		const scale = buildScale([], "time", true);
 		state = { file, trace: null, scale, viewport: fit(scale), mode: "time", compress: true, selected: null,
-			collapsed: new Set(), cursor: 0.5, focus: "timeline", search: "", toolFilter: null, toolSelected: null, childSelected: null };
+			collapsed: new Set(), cursor: 0.5, focus: "timeline", search: "", toolFilter: null, toolSelected: null, childSelected: null,
+			overviewCursor: 0.5, overviewAnchor: null };
 		await loadTrace(state, entryId, file);
 	}
 	function back(): void {
+		if (!history.length && ctx.backToOrigin?.()) return;
 		generation++; loading = false; error = null; resetEntry(); detail = false; notice = ""; unmappedTarget = null;
 		state = history.pop() ?? null;
 		if (!state && !sessions.length) void loadSessions();
@@ -197,15 +201,22 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 		const matches = rows().filter(row => row.span);
 		if (!matches.length) { notice = "No matching spans."; changed(); return; }
 		const current = matches.findIndex(row => row.key === state?.selected);
-		select(matches[(current + direction + matches.length) % matches.length]!);
+		const next = current < 0 ? (direction > 0 ? 0 : matches.length - 1) : (current + direction + matches.length) % matches.length;
+		select(matches[next]!);
 	}
 	function changeAxis(mode: AxisMode, compress: boolean): void {
 		if (!state?.trace) return;
 		const next = buildScale(state.trace.tracks, mode, compress);
 		const cursorTime = state.scale.toT(state.viewport.u0 + state.cursor * (state.viewport.u1 - state.viewport.u0));
+		const [oldStart, oldEnd] = state.scale.domain;
+		const overviewTime = state.scale.toT(oldStart + state.overviewCursor * (oldEnd - oldStart));
+		const anchorTime = state.overviewAnchor === null ? null : state.scale.toT(oldStart + state.overviewAnchor * (oldEnd - oldStart));
 		state.viewport = remapViewport(state.scale, next, state.viewport);
 		state.scale = next; state.mode = mode; state.compress = compress;
 		state.cursor = Math.max(0, Math.min(1, (next.toU(cursorTime) - state.viewport.u0) / (state.viewport.u1 - state.viewport.u0)));
+		const [start, end] = next.domain;
+		state.overviewCursor = Math.max(0, Math.min(1, (next.toU(overviewTime) - start) / (end - start)));
+		state.overviewAnchor = anchorTime === null ? null : Math.max(0, Math.min(1, (next.toU(anchorTime) - start) / (end - start)));
 		changed();
 	}
 	function childAction(openFile: boolean): void {
@@ -215,6 +226,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 		const track = state.trace.tracks.find(item => item.id === id);
 		if (!track) { notice = "Select a child track or agent span first."; changed(); return; }
 		if (openFile) { void openTrace(track.file); return; }
+		for (const ancestor of ancestors(state.trace.tracks, track.id)) state.collapsed.delete(ancestor);
 		const first = transcriptRows([track])[0];
 		if (first) { state.toolFilter = null; state.search = ""; state.focus = "timeline"; select(first); }
 		else { notice = "This child has no recorded spans or markers."; changed(); }
@@ -223,8 +235,8 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 		const id = entryGeneration, view = state;
 		const row = selectedRow();
 		const value = detail ? entry ?? (unmappedTarget ? undefined : row?.span ?? row?.marker) : row?.span ?? row?.marker ?? state?.trace ?? sessions.find(item => item.file === sessionSelected);
-		if (!value) { notice = "Nothing selected to copy."; changed(); return; }
 		if (entryLoading) { notice = "Entry is still loading; wait before copying its JSON."; changed(); return; }
+		if (!value) { notice = "Nothing selected to copy."; changed(); return; }
 		try {
 			await ctx.copy(JSON.stringify(value, null, 2));
 			if (!closed && state === view && id === entryGeneration) notice = "Copied JSON.";
@@ -237,7 +249,11 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 	return {
 		async load(_range: Range) { if (closed) return; if (state) await loadTrace(state); else await loadSessions(); },
 		get inputMode() { return editing ? "text" as const : "navigation" as const; },
-		openTrace,
+		openTrace(file, entryId) {
+			// External request links start a new navigation chain, not browser history.
+			history.length = 0;
+			return openTrace(file, entryId, false);
+		},
 		dispose() { closed = true; generation++; entryGeneration++; history.length = 0; },
 		render(width, height) {
 			const w = Math.max(1, width), capacity = Math.max(3, height - 9);
@@ -285,9 +301,14 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 				lines.push(...renderEntry(unmappedTarget ? null : selected ?? null, entry, entryLoading, entryError, raw, w));
 				return bounded(lines, w);
 			}
-			if (state.focus === "timeline") {
-				lines.push(...wrapTextWithAnsi(`v axis ${state.mode} · i idle ${state.compress ? "compressed" : "real"} · +/- zoom · ←/→ or a/d pan · h/l cursor · Space pick · 0 fit · f focus · c track · C collapse all · E expand all · o child`, w));
-				lines.push(...renderTimeline({ trace, scale: state.scale, viewport: state.viewport, collapsed: state.collapsed, selected: state.selected, cursor: state.cursor, width: w, height: Math.max(8, height - lines.length), search: state.search, theme: ctx.theme }));
+			if (state.focus === "timeline" || state.focus === "minimap") {
+				timelinePlotWidth = Math.max(1, w - Math.min(22, Math.max(4, Math.floor(w * 0.27))) - 1);
+				lines.push(...wrapTextWithAnsi(state.focus === "minimap"
+					? "m timeline · ←/→ overview cursor · Home/End bounds · Enter seek/apply · Space range start · h/l set left/right edge · a/d move brush · +/- zoom · 0 fit"
+					: `v axis ${state.mode} · i idle ${state.compress ? "compressed" : "real"} · +/- zoom · ←/→ or a/d pan · h/l cursor · Space pick · 0 fit · f focus · m minimap · c track · C collapse all · E expand all · o child`, w));
+				if (state.focus === "minimap") lines.push(`Overview ${(state.overviewCursor * 100).toFixed(0)}%${state.overviewAnchor === null ? "" : ` · range starts ${(state.overviewAnchor * 100).toFixed(0)}%`}`);
+				lines.push(...renderTimeline({ trace, scale: state.scale, viewport: state.viewport, collapsed: state.collapsed, selected: state.selected, cursor: state.cursor, width: w, height: Math.max(8, height - lines.length), search: state.search, theme: ctx.theme,
+					overviewCursor: state.focus === "minimap" ? state.overviewCursor : null, overviewAnchor: state.overviewAnchor }));
 			} else if (state.focus === "transcript") {
 				const all = rows();
 				const index = all.findIndex(row => row.key === state?.selected);
@@ -357,6 +378,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 			}
 			if (matchesKey(data, "escape")) {
 				if (detail) { detail = false; resetEntry(); unmappedTarget = null; }
+				else if (state.focus === "minimap" && state.overviewAnchor !== null) state.overviewAnchor = null;
 				else if (state.search || state.toolFilter) { state.search = ""; state.toolFilter = null; }
 				else back();
 				changed(); return true;
@@ -373,6 +395,34 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 			if (matchesKey(data, "tab") || data === "\x1b[Z") {
 				const direction = data === "\x1b[Z" ? -1 : 1;
 				state.focus = FOCI[(FOCI.indexOf(state.focus) + direction + FOCI.length) % FOCI.length]!;
+				changed(); return true;
+			}
+			if (data === "m") {
+				if (state.focus === "minimap") { state.focus = "timeline"; state.overviewAnchor = null; }
+				else {
+					state.focus = "minimap";
+					const [start, end] = state.scale.domain;
+					state.overviewCursor = ((state.viewport.u0 + state.viewport.u1) / 2 - start) / (end - start);
+				}
+				changed(); return true;
+			}
+			if (state.focus === "minimap") {
+				if (matchesKey(data, "left") || matchesKey(data, "right")) state.overviewCursor = Math.max(0, Math.min(1, state.overviewCursor + (matchesKey(data, "left") ? -0.05 : 0.05)));
+				else if (matchesKey(data, "home") || matchesKey(data, "end")) state.overviewCursor = matchesKey(data, "home") ? 0 : 1;
+				else if (data === " ") state.overviewAnchor = state.overviewCursor;
+				else if (matchesKey(data, "enter")) {
+					state.viewport = overviewViewport(state.scale, state.viewport, state.overviewCursor, state.overviewAnchor);
+					state.overviewAnchor = null;
+				} else if (data === "h" || data === "l") state.viewport = resizeOverview(state.scale, state.viewport, state.overviewCursor, data === "h" ? "start" : "end");
+				else if (data === "a" || data === "d") {
+					const [start, end] = state.scale.domain;
+					const shift = (end - start) * (data === "a" ? -0.05 : 0.05);
+					state.viewport = clampViewport(state.scale, { u0: state.viewport.u0 + shift, u1: state.viewport.u1 + shift });
+				} else if (data === "+" || data === "=" || data === "-") state.viewport = zoomViewport(state.scale, state.viewport, data === "-" ? 1.5 : 1 / 1.5, 0.5);
+				else if (data === "0") { state.viewport = fit(state.scale); state.overviewAnchor = null; }
+				else if (data === "v") { const modes: readonly AxisMode[] = ["time", "turns", "calls"]; changeAxis(modes[(modes.indexOf(state.mode) + 1) % modes.length]!, state.compress); return true; }
+				else if (data === "i") { changeAxis(state.mode, !state.compress); return true; }
+				else return false;
 				changed(); return true;
 			}
 			if (data === "c" || data === "C" || data === "E") {
@@ -393,7 +443,7 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 					const tracks = state.trace?.tracks ?? [], index = tracks.findIndex(track => track.id === state?.childSelected);
 					state.childSelected = tracks[Math.max(0, Math.min(tracks.length - 1, index + direction))]?.id ?? null;
 				} else {
-					const all = rows().filter(row => state?.focus === "transcript" || row.span), index = all.findIndex(row => row.key === state?.selected);
+					const all = rows(), index = all.findIndex(row => row.key === state?.selected);
 					const next = all[Math.max(0, Math.min(all.length - 1, index + direction))];
 					if (next) select(next);
 				}
@@ -424,11 +474,21 @@ export function createTracesFeature(ctx: FeatureContext): FeatureController {
 			else if (data === "0") state.viewport = fit(state.scale);
 			else if (data === "f") { const selected = selectedRow(); if (selected?.span) state.viewport = revealSpan(state.scale, state.viewport, selected.span, true); }
 			else if (data === " ") {
-				const time = state.scale.toT(state.viewport.u0 + state.cursor * (state.viewport.u1 - state.viewport.u0));
+				const x = Math.min(timelinePlotWidth - 1, Math.floor(state.cursor * (timelinePlotWidth - 1)));
 				const track = selectedRow()?.track.id;
-				const candidates = rows().filter(row => row.span && row.span.start <= time && row.span.end >= time);
+				const visible = new Set(visibleTracks(state.trace?.tracks ?? [], state.collapsed).map(item => item.id));
+				const candidates = rows().filter(row => {
+					if (!visible.has(row.track.id)) return false;
+					if (row.span) {
+						const bounds = spanCells(state!.scale, state!.viewport, row.span, timelinePlotWidth);
+						return !!bounds && x >= bounds[0] && x < bounds[1];
+					}
+					const u = state!.scale.toU(row.time);
+					return u >= state!.viewport.u0 && u <= state!.viewport.u1 &&
+						Math.min(timelinePlotWidth - 1, Math.floor((u - state!.viewport.u0) / (state!.viewport.u1 - state!.viewport.u0) * timelinePlotWidth)) === x;
+				});
 				const selected = candidates.find(row => row.track.id === track) ?? candidates[0];
-				if (selected) select(selected); else { notice = "No span under the keyboard cursor; ↑/↓ selects neighbouring spans."; }
+				if (selected) select(selected); else { notice = "No event under the keyboard cursor; ↑/↓ selects neighbouring events."; }
 			} else return false;
 			changed(); return true;
 		},

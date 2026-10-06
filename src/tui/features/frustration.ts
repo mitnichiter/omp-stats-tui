@@ -3,7 +3,7 @@ import { truncateToWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
 import type { Range } from "../../data/ranges";
 import { formatCost, formatElapsed, formatInteger, formatPercent } from "../format";
 import { resolveSeries } from "../palette";
-import { activeModelClass, classTotals, familyKey, filterFrustrationRows, fraction, FRUSTRATION_SORTS, layerFraction, mostlyRegex, sortFrustrationRows, type FrustrationLayer, type FrustrationSort } from "./frustration-data";
+import { activeModelClass, classTotals, familyKey, filterFrustrationRows, fraction, FRUSTRATION_SORTS, layerFraction, MIN_MESSAGES, mostlyRegex, sortFrustrationRows, type FrustrationLayer, type FrustrationSort } from "./frustration-data";
 import type { FeatureContext, FeatureController } from "./types";
 
 // Upstream's server.ts and client/api.ts require this exact explicit-action header.
@@ -17,6 +17,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 	let range: Range = "24h";
 	let data: FrustrationDashboardStats | undefined;
 	let dataRange: Range | undefined;
+	let job: FrustrationJobStatus | undefined;
 	let error: string | undefined;
 	let actionError: string | undefined;
 	let copyNotice: string | undefined;
@@ -50,7 +51,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 	}
 	function schedulePoll(): void {
 		stopPoll();
-		if (!disposed && data?.job.state === "running") {
+		if (!disposed && job?.state === "running") {
 			timer = setTimeout(() => { timer = undefined; void readStats(); }, 1_000);
 		}
 	}
@@ -65,6 +66,11 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			if (disposed || generation !== readGeneration) return;
 			data = result;
 			dataRange = requestedRange;
+			job = result.job;
+			if (job.state === "running" && !starting && quote.state !== "closed") {
+				quote = { state: "closed" };
+				++quoteGeneration;
+			}
 			error = undefined;
 		} catch (err) {
 			if (disposed || generation !== readGeneration) return;
@@ -78,7 +84,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 		}
 	}
 	async function openQuote(): Promise<void> {
-		if (disposed || starting || data?.job.state === "running") return;
+		if (disposed || starting || cancelling || job?.state === "running") return;
 		const generation = ++quoteGeneration;
 		const quotedRange = range;
 		quote = { state: "loading", range: quotedRange };
@@ -95,23 +101,25 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 		if (!disposed) ctx.changed();
 	}
 	async function startRun(): Promise<void> {
-		if (disposed || starting || quote.state !== "ready" || !quote.estimate.available || quote.estimate.messages === 0 || data?.job.state === "running") return;
+		if (disposed || starting || cancelling || quote.state !== "ready" || !quote.estimate.available || quote.estimate.messages === 0 || job?.state === "running") return;
 		const quotedRange = quote.range;
 		const generation = ++actionGeneration;
 		starting = true;
 		actionError = undefined;
 		++readGeneration;
+		loading = false;
 		stopPoll();
 		ctx.changed();
 		try {
-			const job = await ctx.reader.api<FrustrationJobStatus>("/api/frustration/judge", { range: quotedRange }, ACTION_OPTIONS);
+			const startedJob = await ctx.reader.api<FrustrationJobStatus>("/api/frustration/judge", { range: quotedRange }, ACTION_OPTIONS);
 			if (disposed) {
 				// Closing while the server resolves the judge must not leave a newly started paid run behind.
-				if (job.state === "running") await ctx.reader.api("/api/frustration/cancel", undefined, ACTION_OPTIONS).catch(() => undefined);
+				if (startedJob.state === "running") await ctx.reader.api("/api/frustration/cancel", undefined, ACTION_OPTIONS).catch(() => undefined);
 				return;
 			}
 			if (generation !== actionGeneration) return;
-			if (data) data = { ...data, job };
+			job = startedJob;
+			starting = false;
 			quote = { state: "closed" };
 			++quoteGeneration;
 			await readStats();
@@ -126,17 +134,18 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 		}
 	}
 	async function cancelRun(): Promise<void> {
-		if (disposed || cancelling || data?.job.state !== "running") return;
+		if (disposed || starting || cancelling || job?.state !== "running") return;
 		const generation = ++actionGeneration;
 		cancelling = true;
 		actionError = undefined;
 		++readGeneration;
+		loading = false;
 		stopPoll();
 		ctx.changed();
 		try {
-			const job = await ctx.reader.api<FrustrationJobStatus>("/api/frustration/cancel", undefined, ACTION_OPTIONS);
+			const cancelledJob = await ctx.reader.api<FrustrationJobStatus>("/api/frustration/cancel", undefined, ACTION_OPTIONS);
 			if (disposed || generation !== actionGeneration) return;
-			if (data) data = { ...data, job };
+			job = cancelledJob;
 			await readStats();
 		} catch (err) {
 			if (!disposed && generation === actionGeneration) actionError = err instanceof Error ? err.message : String(err);
@@ -151,7 +160,13 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 	function population() {
 		const models = data?.byModel ?? [];
 		const active = activeModelClass(models, modelClass);
-		const families = [...new Set(models.filter(row => active === "*" || row.modelClass === active).map(familyKey))];
+		const inClass = models.filter(row => active === "*" || row.modelClass === active);
+		const familyMessages = new Map<string, number>();
+		for (const row of inClass) familyMessages.set(familyKey(row), (familyMessages.get(familyKey(row)) ?? 0) + row.messages);
+		const families = [...familyMessages.keys()];
+		const visibleFamilies = inClass.filter(row => !hiddenFamilies.has(familyKey(row)));
+		const smallCount = visibleFamilies.filter(row => row.messages < MIN_MESSAGES).length;
+		const regexCount = visibleFamilies.filter(mostlyRegex).length;
 		const chartRows = filterFrustrationRows(models, { modelClass, hiddenFamilies, showSmall, hideRegex });
 		const rows = sortFrustrationRows(chartRows, sort, descending);
 		const rememberedIndex = rows.findIndex(row => row.key === selectedKey);
@@ -159,7 +174,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 		selectedKey = rows[selectedIndex]?.key;
 		revealed = Math.max(revealed, selectedIndex + 1);
 		familyCursor = Math.min(familyCursor, Math.max(0, families.length - 1));
-		return { active, families, chartRows, rows };
+		return { active, families, familyMessages, smallCount, regexCount, chartRows, rows };
 	}
 
 	return {
@@ -178,6 +193,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			const lines: string[] = [];
 			const add = (text: string) => { lines.push(...wrapTextWithAnsi(text, w)); };
 			const fg = ctx.theme.fg.bind(ctx.theme);
+			const rate = (part: number, whole: number) => whole > 0 ? formatPercent(fraction(part, whole)) : "–";
 			// Confirmation is rendered first and captures input before every filter/control.
 			if (quote.state !== "closed") {
 				add(fg("warning", `CLASSIFY WITH JUDGE · quoted range ${quote.range}`));
@@ -200,27 +216,29 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			add(fg("text", "FRUSTRATION · cached judge verdicts + regex fallback"));
 			if (loading) add(fg("dim", data ? "Refreshing cached metrics…" : "Loading cached metrics…"));
 			if (error) add(fg("error", `${data ? "Cached data retained; refresh failed: " : "Unable to read metrics: "}${error}`));
-			if (dataRange && dataRange !== range) add(fg("warning", `Showing stale ${dataRange} metrics while ${range} loads.`));
-			if (!data) { add("j quote prerequisites · no paid calls occur on load"); return lines; }
-			const overall = data.overall;
-			const rate = (part: number, whole: number) => whole > 0 ? formatPercent(fraction(part, whole)) : "–";
-			add(`${formatInteger(overall.messages)} user messages · judged ${rate(overall.judged, overall.messages)} (${formatInteger(overall.judged)}) · regex ${formatInteger(overall.messages - overall.judged)}`);
-			add(`Annoyed ${rate(overall.annoyed, overall.messages)} · at assistant ${rate(overall.atAssistant, overall.messages)} · angry ${rate(overall.angry, overall.messages)}`);
-			const job = data.job;
-			const elapsed = job.startedAt === null ? "" : ` · ${formatElapsed((job.finishedAt ?? ctx.now()) - job.startedAt)}`;
-			add(fg(job.state === "failed" ? "error" : job.state === "running" ? "success" : "muted", `Judge ${job.state} · ${job.done}/${job.total} judged · ${job.failed} failed · cost ${formatCost(job.cost)}${elapsed}`));
-			if (job.judge) add(`Judge model ${job.judge}`);
-			if (job.state === "running") {
-				const completed = Math.min(1, fraction(job.done + job.failed, job.total));
-				const cells = Math.max(1, Math.min(30, w - 10));
-				add(Array.from({ length: cells }, (_, i) => fg(i < completed * cells ? "success" : "dim", i < completed * cells ? "#" : ".")).join("") + ` ${formatPercent(completed)}`);
-				add(`${job.concurrency} in flight${job.startedAt !== null && job.done > 0 ? ` · ${(job.done / Math.max(1, (ctx.now() - job.startedAt) / 1000)).toFixed(1)}/s` : ""} · x ${cancelling ? "cancelling…" : "cancel run"}`);
-			} else add("j quote/confirm classification (never starts on load)");
-			if (!data.judgeAvailable) add(fg("warning", "Regex + cached results only: judge is not registered. j shows the actual prerequisite."));
-			if (job.error) add(fg("error", job.error));
+			if (dataRange && dataRange !== range) add(fg("warning", `Showing stale ${dataRange} metrics ${loading ? `while ${range} loads` : `for requested ${range} range`}.`));
+			if (data) {
+				const overall = data.overall;
+				add(`${formatInteger(overall.messages)} user messages · judged ${rate(overall.judged, overall.messages)} (${formatInteger(overall.judged)}) · regex ${formatInteger(overall.messages - overall.judged)}`);
+				add(`Annoyed ${rate(overall.annoyed, overall.messages)} (${formatInteger(overall.annoyed)}) · at assistant ${rate(overall.atAssistant, overall.messages)} (${formatInteger(overall.atAssistant)}) · angry ${rate(overall.angry, overall.messages)} (${formatInteger(overall.angry)})`);
+			}
+			if (job) {
+				const elapsed = job.startedAt === null ? "" : ` · ${formatElapsed((job.finishedAt ?? ctx.now()) - job.startedAt)}`;
+				add(fg(job.state === "failed" ? "error" : job.state === "running" ? "success" : "muted", `Judge ${job.state} · ${job.done}/${job.total} judged · ${job.failed} failed · cost ${formatCost(job.cost)}${elapsed}`));
+				if (job.judge) add(`Judge model ${job.judge}`);
+				if (job.state === "running") {
+					const completed = Math.min(1, fraction(job.done + job.failed, job.total));
+					const cells = Math.max(1, Math.min(30, w - 10));
+					add(Array.from({ length: cells }, (_, i) => fg(i < completed * cells ? "success" : "dim", i < completed * cells ? "#" : ".")).join("") + ` ${formatPercent(completed)}`);
+					add(`${job.concurrency} in flight${job.startedAt !== null && job.done > 0 ? ` · ${(job.done / Math.max(1, (ctx.now() - job.startedAt) / 1000)).toFixed(1)}/s` : ""} · x ${cancelling ? "cancelling…" : "cancel run"}`);
+				} else add("j quote/confirm classification (never starts on load)");
+				if (job.error) add(fg("error", job.error));
+			} else add("j quote prerequisites · no paid calls occur on load");
+			if (data && !data.judgeAvailable) add(fg("warning", "Regex + cached results only: judge is not registered. j shows the actual prerequisite."));
 			if (actionError) add(fg("error", actionError));
 			if (copyNotice) add(fg("success", copyNotice));
-			const { active, families, chartRows, rows } = population();
+			if (!data) return lines;
+			const { active, families, familyMessages, smallCount, regexCount, chartRows, rows } = population();
 			const selected = rows[selectedIndex];
 			// Selected point is before the plot/table so moving selection is visible without parent scroll bookkeeping.
 			if (selected) {
@@ -234,14 +252,16 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 					add(`First seen ${new Date(selected.firstSeen).toISOString()} · p copy this row JSON`);
 				}
 			}
-			add(`Class ${active} [c] · ${showSmall ? "including" : "excluding"} <50 messages [m] · mostly regex ${hideRegex ? "hidden" : "shown"} [h]`);
+			add(`Class ${active} [c] · ${showSmall ? "including" : "excluding"} <50 messages (${smallCount} versions) [m] · mostly regex ${hideRegex ? "hidden" : "shown"} (${regexCount} versions) [h]`);
+			add(`Class messages: ${[...classTotals(data.byModel)].map(([key, messages]) => `${key} ${formatInteger(messages)}`).join(" · ")}`);
 			add(`Focus ${focus} [Tab] · versions ↑/↓ · family ↑/↓ + Space · sort ${sort} ${descending ? "↓" : "↑"} [o/O] · reveal [v] · raw IDs [Enter]`);
 			add("Layers 1 angry · 2 assistant-not-angry · 3 other · 4 assistant trend (toggle)");
 			const colors = resolveSeries(Math.max(1, families.length), ctx.theme);
 			const familyStart = Math.max(0, familyCursor - 2);
 			add(`Families ${families.length ? familyStart + 1 : 0}–${Math.min(families.length, familyStart + 5)}/${families.length} · Tab + ↑/↓ reaches every family`);
-			for (let i = familyStart; i < Math.min(families.length, familyStart + 5); i++) add(`${focus === "families" && i === familyCursor ? ">" : " "} ${hiddenFamilies.has(families[i]) ? "[ ]" : "[x]"} ${fg(colors[i % colors.length], families[i])}`);
+			for (let i = familyStart; i < Math.min(families.length, familyStart + 5); i++) add(`${focus === "families" && i === familyCursor ? ">" : " "} ${hiddenFamilies.has(families[i]) ? "[ ]" : "[x]"} ${fg(colors[i % colors.length], families[i])} · ${formatInteger(familyMessages.get(families[i]) ?? 0)} messages`);
 			if (!rows.length) { add(data.byModel.length ? "No model versions match the filters. c/m/h and family Space change filters." : "No user messages with prose in this range. Try a longer range."); return lines; }
+			if (chartRows.every(row => row.annoyed === 0)) add("No frustrated messages for these models; all annoyance rates are zero.");
 			add(fg("dim", "Rates by version (upstream catalog order), NOT time. # angry; + assistant; . other; / mostly regex; * assistant trend."));
 			const chartIndex = Math.max(0, chartRows.findIndex(row => row.key === selectedKey));
 			const slots = Math.max(1, Math.min(chartRows.length, Math.floor(Math.max(2, w - 7) / 2)));
@@ -295,7 +315,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			}
 			const { families, rows } = population();
 			if (input === "j") { void openQuote(); return true; }
-			if (input === "x" && data?.job.state === "running") { void cancelRun(); return true; }
+			if (input === "x" && job?.state === "running") { void cancelRun(); return true; }
 			if (input === "\t") focus = focus === "versions" ? "families" : "versions";
 			else if (input === "c") {
 				const options = ["*", ...classTotals(data?.byModel ?? []).keys()];
@@ -335,7 +355,7 @@ export function createFrustrationFeature(ctx: FeatureContext): FeatureController
 			disposed = true;
 			++readGeneration; ++quoteGeneration; ++actionGeneration;
 			stopPoll();
-			if (data?.job.state === "running" || starting) void ctx.reader.api("/api/frustration/cancel", undefined, ACTION_OPTIONS).catch(() => undefined);
+			if (job?.state === "running" || starting) void ctx.reader.api("/api/frustration/cancel", undefined, ACTION_OPTIONS).catch(() => undefined);
 		},
 	};
 }

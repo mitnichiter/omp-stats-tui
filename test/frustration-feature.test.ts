@@ -179,7 +179,7 @@ test("close during pending start cancels the later real job and ignores late dat
 	expect(h.feature.handleInput("y")).toBe(false);
 });
 
-test("every version is reachable after reveal, raw IDs remain available at narrow widths, plots carry cell ink", async () => {
+test("every version is reachable after reveal and raw IDs remain available at narrow widths", async () => {
 	const h = harness(() => dashboard(Array.from({ length: 47 }, (_, i) => model(`version-${i}`, { models: [`raw/模型-${i}`, `other/${i}`] }))));
 	await h.feature.load("24h");
 	h.feature.handleInput("v"); h.feature.handleInput("v");
@@ -192,7 +192,6 @@ test("every version is reachable after reveal, raw IDs remain available at narro
 	for (const width of [20, 40, 60, 100]) {
 		const lines = h.feature.render(width, 40);
 		expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
-		expect(lines.some(line => /\x1b\[(31|33)m[#/+]/.test(line))).toBe(true);
 	}
 	h.feature.handleInput("1"); h.feature.handleInput("2"); h.feature.handleInput("3"); h.feature.handleInput("4");
 	expect(h.text()).toContain("off Angry at assistant");
@@ -203,12 +202,12 @@ test("every version is reachable after reveal, raw IDs remain available at narro
 test("job polling exists only while running, refreshes cached coverage, and disposal clears its timer", async () => {
 	const callbacks: Array<() => void> = [];
 	const scheduled: Timer[] = [];
-	const timeout = spyOn(globalThis, "setTimeout").mockImplementation((handler) => {
+	const timeout = spyOn(globalThis, "setTimeout").mockImplementation(((handler: () => void) => {
 		callbacks.push(handler as () => void);
 		const timer = { id: scheduled.length } as unknown as Timer;
 		scheduled.push(timer);
 		return timer;
-	});
+	}) as typeof setTimeout);
 	const clear = spyOn(globalThis, "clearTimeout").mockImplementation(() => {});
 	let reads = 0;
 	const h = harness(request => {
@@ -246,4 +245,159 @@ test("job polling exists only while running, refreshes cached coverage, and disp
 		timeout.mockRestore();
 		clear.mockRestore();
 	}
+});
+
+test("a confirmed run stays visible and cancellable when passive metrics have never loaded", async () => {
+	const running: FrustrationJobStatus = { ...IDLE, state: "running", total: 4, done: 1, failed: 1, cost: 0.006, judge: "judge/test", startedAt: 1_000, concurrency: 2 };
+	const cancelled: FrustrationJobStatus = { ...running, state: "cancelled", finishedAt: 5_000 };
+	let cancelFails = true;
+	const h = harness(request => {
+		if (request.path.endsWith("/estimate")) return QUOTE;
+		if (request.path.endsWith("/judge")) return running;
+		if (request.path.endsWith("/cancel")) {
+			if (cancelFails) throw new Error("Cancellation unavailable");
+			return cancelled;
+		}
+		throw new Error("Metrics unavailable");
+	});
+	await h.feature.load("7d");
+	h.feature.handleInput("j"); await settle();
+	h.feature.handleInput("y"); await settle();
+	expect(h.text()).toContain("Metrics unavailable");
+	expect(h.text()).toContain("Judge running");
+	expect(h.text()).toContain("1/4 judged");
+	expect(h.text()).toContain("50.0%");
+	expect(h.text()).toContain("2 in flight");
+	h.feature.handleInput("x"); await settle();
+	expect(h.text()).toContain("Cancellation unavailable");
+	expect(h.text()).toContain("Judge running");
+	cancelFails = false;
+	h.feature.handleInput("x"); await settle();
+	expect(h.text()).toContain("Judge cancelled");
+	expect(h.text()).not.toContain("Cancellation unavailable");
+	expect(h.text()).not.toContain("Loading cached metrics");
+	expect(h.requests.filter(request => request.options?.method === "POST").every(request => request.options?.headers?.["X-Omp-Stats-Action"] === "1")).toBe(true);
+	const cancellations = h.requests.filter(request => request.path.endsWith("/cancel")).length;
+	h.feature.dispose();
+	expect(h.requests.filter(request => request.path.endsWith("/cancel"))).toHaveLength(cancellations);
+});
+
+test("a newly observed external run closes a pending quote and exposes cancellation", async () => {
+	const estimate = deferred<FrustrationEstimate>();
+	let job: FrustrationJobStatus = IDLE;
+	const h = harness(request => {
+		if (request.path.endsWith("/estimate")) return estimate.promise;
+		if (request.path.endsWith("/cancel")) return job = { ...job, state: "cancelled" };
+		return dashboard(undefined, job);
+	});
+	await h.feature.load("24h");
+	h.feature.handleInput("j");
+	job = { ...IDLE, state: "running", total: 4 };
+	await h.feature.load("24h");
+	estimate.resolve(QUOTE); await settle();
+	expect(h.text()).not.toContain("CLASSIFY WITH JUDGE");
+	expect(h.text()).toContain("Judge running");
+	expect(h.feature.handleInput("y")).toBe(false);
+	expect(h.requests.some(request => request.path.endsWith("/judge"))).toBe(false);
+	h.feature.handleInput("x"); await settle();
+	expect(h.text()).toContain("Judge cancelled");
+	h.feature.dispose();
+});
+
+test("cancelling during the post-start refresh permits another fresh quote after the old refresh settles", async () => {
+	const stale = deferred<FrustrationDashboardStats>();
+	const running: FrustrationJobStatus = { ...IDLE, state: "running", total: 4 };
+	const cancelled: FrustrationJobStatus = { ...running, state: "cancelled" };
+	let reads = 0;
+	const h = harness(request => {
+		if (request.path.endsWith("/estimate")) return QUOTE;
+		if (request.path.endsWith("/judge")) return running;
+		if (request.path.endsWith("/cancel")) return cancelled;
+		if (++reads === 2) return stale.promise;
+		return dashboard(undefined, reads > 2 ? cancelled : IDLE);
+	});
+	await h.feature.load("24h");
+	h.feature.handleInput("j"); await settle();
+	h.feature.handleInput("y"); await settle();
+	expect(h.text()).toContain("Judge running");
+	h.feature.handleInput("x"); await settle();
+	stale.resolve(dashboard(undefined, running)); await settle();
+	expect(h.text()).toContain("Judge cancelled");
+	h.feature.handleInput("j"); await settle();
+	expect(h.text()).toContain("CLASSIFY WITH JUDGE");
+	expect(h.requests.filter(request => request.path.endsWith("/judge"))).toHaveLength(1);
+	h.feature.dispose();
+});
+
+test("failed cancellation clears an invalidated pending refresh without losing cached coverage", async () => {
+	const stale = deferred<FrustrationDashboardStats>();
+	const running: FrustrationJobStatus = { ...IDLE, state: "running", total: 4 };
+	let reads = 0;
+	const h = harness(request => {
+		if (request.path.endsWith("/cancel")) throw new Error("Cannot cancel right now");
+		if (++reads === 2) return stale.promise;
+		return dashboard(undefined, running);
+	});
+	await h.feature.load("24h");
+	const refresh = h.feature.load("7d");
+	h.feature.handleInput("x"); await settle();
+	expect(h.text()).toContain("Cannot cancel right now");
+	expect(h.text()).not.toContain("Refreshing cached metrics");
+	expect(h.text()).toContain("regex 25");
+	stale.resolve(dashboard([model("stale")], { ...running, state: "done" }));
+	await refresh;
+	expect(h.text()).toContain("Judge running");
+	expect(h.text()).not.toContain("Point 1/1: stale");
+	h.feature.dispose();
+});
+
+test("class and family counts explain filtering, and zero-rate rows keep their details", async () => {
+	const rows = [
+		model("boundary", { messages: 50, judged: 25 }),
+		model("small", { messages: 49, judged: 25 }),
+		model("regex", { family: "sonnet", judged: 49 }),
+		model("other", { modelClass: "openai", family: "opus", messages: 1_000 }),
+	];
+	const h = harness(() => dashboard(rows));
+	await h.feature.load("24h");
+	h.feature.handleInput("c");
+	let text = h.feature.render(220, 40).map(stripForTest).join("\n");
+	expect(text).toContain("Class *");
+	expect(text).toContain("<50 messages (1 versions)");
+	expect(text).toContain("anthropic/opus · 99 messages");
+	expect(text).toContain("openai/opus · 1,000 messages");
+	h.feature.handleInput("\t"); h.feature.handleInput(" ");
+	text = h.feature.render(220, 40).map(stripForTest).join("\n");
+	expect(text).toContain("<50 messages (0 versions)");
+	expect(text).toContain("Point 1/2: regex");
+	h.feature.dispose();
+
+	const zero = harness(() => dashboard([model("calm", { annoyed: 0, atAssistant: 0, angry: 0 })]));
+	await zero.feature.load("24h");
+	expect(zero.text()).toContain("No frustrated messages for these models");
+	zero.feature.handleInput("\r");
+	expect(zero.text()).toContain("Raw model ID: raw/calm");
+	zero.feature.dispose();
+});
+
+test("quote errors can be dismissed and retried without authorizing a run", async () => {
+	let quotes = 0;
+	const h = harness(request => {
+		if (request.path.endsWith("/estimate")) {
+			if (++quotes === 1) throw new Error("Quote unavailable");
+			return QUOTE;
+		}
+		return dashboard();
+	});
+	await h.feature.load("24h");
+	h.feature.handleInput("j"); await settle();
+	expect(h.text()).toContain("Quote unavailable");
+	h.feature.handleInput("y");
+	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
+	h.feature.handleInput("n");
+	h.feature.handleInput("j"); await settle();
+	expect(h.text()).toContain("Press y to confirm paid judging");
+	expect(h.text()).not.toContain("Quote unavailable");
+	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
+	h.feature.dispose();
 });

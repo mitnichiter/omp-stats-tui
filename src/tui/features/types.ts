@@ -17,6 +17,8 @@ export interface FeatureContext {
 	copy(text: string): Promise<void>;
 	openTrace(file: string, entryId?: string): void;
 	openScreen(id: string): void;
+	/** Return from a request-linked trace; false when navigation has no origin. */
+	backToOrigin?(): boolean;
 	now(): number;
 }
 /** Controllers retain per-screen controls; the parent owns scroll and mount lifetime. */
