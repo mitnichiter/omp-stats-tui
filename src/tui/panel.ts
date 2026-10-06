@@ -614,7 +614,9 @@ export class StatsPanel implements Component {
 		// topbar), plus the thin progress line while a sync streams — the bar the
 		// web paints under that topbar. The tab strip is NOT gone: below the
 		// sidebar's width it becomes the nav row (see below).
-		const chip = chipFor(this.#theme, this.#chromeSync());
+		const chip = this.#phase() === "error"
+			? this.#theme.fg("error", `${this.#theme.symbol("status.error")} Read failed`)
+			: chipFor(this.#theme, this.#chromeSync());
 		const top = topbar(this.#theme, { range: state.range, chip, freshness, innerWidth });
 		const progress = progressLineFor(state.syncEvent, innerWidth);
 		const topLines = progress === "" ? [top] : [top, progress];
@@ -634,8 +636,14 @@ export class StatsPanel implements Component {
 		let strip: readonly string[] = NO_ROWS;
 		if (!column && spec !== undefined && rows > MIN_PANEL_ROWS) {
 			const tabs = buildTabs(preset, this.#theme, spec.id);
-			this.#tabBar.setTabs(tabs, spec.id);
-			strip = this.#tabBar.render(Math.max(1, width - TAB_BAR_INDENT));
+			const stripWidth = Math.max(1, width - TAB_BAR_INDENT);
+			// A narrow viewport shows the active route and its neighbours, not two
+			// rows of twelve anonymous icons. Keyboard jumps/cycling retain all routes.
+			const count = stripWidth < 16 ? 1 : stripWidth < 32 ? 3 : stripWidth < 60 ? 5 : tabs.length;
+			const active = tabs.findIndex(tab => tab.id === spec.id);
+			const start = Math.max(0, Math.min(tabs.length - count, active - Math.floor(count / 2)));
+			this.#tabBar.setTabs(count === tabs.length ? tabs : tabs.slice(start, start + count), spec.id);
+			strip = this.#tabBar.render(stripWidth);
 		}
 		const nav = column ? sidebar(this.#theme, preset, state.screenId, state.hoveredSidebarId) : null;
 		const sidebarWidth = nav?.width ?? 0;
@@ -1069,18 +1077,14 @@ function loadingLines(theme: Theme, stage: ReadStage): readonly string[] {
 
 function errorLines(theme: Theme, preset: SymbolPreset, error: string, syncError: string | null): readonly string[] {
 	const lines = [
-		`${statsIcon(preset, "warning", theme)} Usage could not be read`,
+		`${statsIcon(preset, "warning", theme)} ${theme.fg("warning", theme.bold("Usage could not be read"))}`,
 		"",
-		`  ${error}`,
+		error,
 		"",
-		// The distinction the whole data seam exists for. An unreadable answer
-		// is not a zero, and a panel that painted zeros here would be lying
-		// about spend rather than merely silent about it.
-		theme.fg("dim", "  This is not a zero. An uninitialised database answers every read with"),
-		theme.fg("dim", "  empty rows, so the panel refuses to paint a number it could not measure."),
+		// An unreadable source must never masquerade as measured zero usage.
+		theme.fg("dim", "No observations loaded. Usage and cost are unavailable, not zero."),
 	];
-	if (syncError) lines.push("", `  background sync: ${syncError}`);
-	lines.push("", theme.fg("dim", "  s retry a background sync · esc close"));
+	if (syncError) lines.push("", `Background sync: ${syncError}`);
 	return lines;
 }
 

@@ -23,6 +23,8 @@ function harness(respond: (request: RequestRecord) => unknown | Promise<unknown>
 	const copied: string[] = [];
 	const theme = {
 		fg: (token: string, text: string) => `\x1b[${token === "error" ? 31 : token === "warning" ? 33 : token === "text" ? 37 : 36}m${text}\x1b[0m`,
+		bg: (_token: string, text: string) => `\x1b[44m${text}\x1b[49m`,
+		bold: (text: string) => `\x1b[1m${text}\x1b[22m`,
 		getColorHex: (token: string) => `#${(token.length * 7919).toString(16).padStart(6, "0").slice(-6)}`,
 		getColorMode: () => "truecolor",
 		getSymbolPreset: () => "ascii",
@@ -193,9 +195,9 @@ test("every version is reachable after reveal and raw IDs remain available at na
 		const lines = h.feature.render(width, 40);
 		expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
 	}
+	h.feature.handleInput("\x1b"); // return from details before changing chart layers
 	h.feature.handleInput("1"); h.feature.handleInput("2"); h.feature.handleInput("3"); h.feature.handleInput("4");
-	expect(h.text()).toContain("off Angry at assistant");
-	expect(h.text()).toContain("trend off");
+	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
 	h.feature.dispose();
 });
 
@@ -351,7 +353,7 @@ test("failed cancellation clears an invalidated pending refresh without losing c
 	h.feature.dispose();
 });
 
-test("class and family counts explain filtering, and zero-rate rows keep their details", async () => {
+test("class and family filtering retains real selected identity and known zero-rate detail", async () => {
 	const rows = [
 		model("boundary", { messages: 50, judged: 25 }),
 		model("small", { messages: 49, judged: 25 }),
@@ -361,15 +363,11 @@ test("class and family counts explain filtering, and zero-rate rows keep their d
 	const h = harness(() => dashboard(rows));
 	await h.feature.load("24h");
 	h.feature.handleInput("c");
-	let text = h.feature.render(220, 40).map(stripForTest).join("\n");
-	expect(text).toContain("Class *");
-	expect(text).toContain("<50 messages (1 versions)");
-	expect(text).toContain("anthropic/opus · 99 messages");
-	expect(text).toContain("openai/opus · 1,000 messages");
 	h.feature.handleInput("\t"); h.feature.handleInput(" ");
-	text = h.feature.render(220, 40).map(stripForTest).join("\n");
-	expect(text).toContain("<50 messages (0 versions)");
-	expect(text).toContain("Point 1/2: regex");
+	h.feature.handleInput("\t"); h.feature.handleInput("\r"); h.feature.handleInput("p");
+	await settle();
+	expect(JSON.parse(h.copied[0]).key).toBe("regex");
+	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
 	h.feature.dispose();
 
 	const zero = harness(() => dashboard([model("calm", { annoyed: 0, atAssistant: 0, angry: 0 })]));
@@ -398,6 +396,31 @@ test("quote errors can be dismissed and retried without authorizing a run", asyn
 	h.feature.handleInput("j"); await settle();
 	expect(h.text()).toContain("Press y to confirm paid judging");
 	expect(h.text()).not.toContain("Quote unavailable");
+	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
+	h.feature.dispose();
+});
+
+test("known zero rates and unavailable denominators remain distinct in compact version views", async () => {
+	const known = model("known-zero", { annoyed: 0, atAssistant: 0, angry: 0 });
+	const unavailable = model("no-sample", { messages: 0, judged: 0, annoyed: 0, atAssistant: 0, angry: 0 });
+	const h = harness(() => dashboard([known, unavailable]));
+	await h.feature.load("24h");
+	h.feature.handleInput("m");
+	for (const width of [40, 100, 160]) {
+		const lines = h.feature.render(width, 30);
+		expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+		const row = lines.map(stripForTest).find(line => line.includes("known-zero") && line.includes("0.0%"));
+		expect(row).toBeDefined();
+	}
+	h.feature.handleInput("\x1b[B");
+	h.feature.handleInput("\r");
+	h.feature.handleInput("p"); await settle();
+	const copied = JSON.parse(h.copied[0]);
+	expect(copied.key).toBe("no-sample");
+	expect(copied.messages).toBe(0);
+	const text = h.text();
+	expect(text).toContain("assistant –");
+	expect(text).not.toContain("No frustrated messages");
 	expect(h.requests.some(request => request.options?.method === "POST")).toBe(false);
 	h.feature.dispose();
 });

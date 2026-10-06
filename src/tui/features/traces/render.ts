@@ -1,16 +1,24 @@
 import { stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@oh-my-pi/pi-tui";
-import type { Theme, ThemeColor } from "@oh-my-pi/pi-tui/theme";
+import type { Theme } from "@oh-my-pi/pi-tui/theme";
 import { formatDurationMs, formatInteger, formatEstimatedCost } from "@oh-my-pi/omp-stats/client/data/formatters";
-import type { SessionTrace, TraceSpanKind, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
+import type { SessionTrace, TraceTrack } from "@oh-my-pi/omp-stats/shared-types";
 import { ancestors, buildLanes, KINDS, localWindow, MARKS, spanCells, visibleTracks, type Lane, type TraceRow, type TraceScale, type Viewport } from "./model";
 
-import { SPAN_COLORS } from "../../palette";
+import { SPAN_COLORS, SELECTION_BG } from "../../palette";
 import { glyph } from "../../glyphs";
 export function clean(value: unknown): string {
 	return stripTerminalSequences(String(value ?? "")).replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, "");
 }
 export function bounded(lines: readonly string[], width: number): string[] {
 	return lines.map(line => truncateToWidth(line, Math.max(1, width)));
+}
+/** Empty transcript titles retain their recorded project and file identity. */
+export function sessionIdentity(title: string | null | undefined, file: string, project?: string | null): string {
+	const recorded = clean(title).trim();
+	if (recorded) return recorded;
+	const name = clean(file).split("/").filter(Boolean).pop()?.replace(/\.jsonl$/i, "") || clean(file);
+	const folder = clean(project).split("/").filter(Boolean).pop();
+	return folder ? `${folder} · ${name}` : name;
 }
 export function rowLabel(row: TraceRow, startedAt: number): string {
 	const span = row.span;
@@ -84,9 +92,12 @@ export function renderTimeline(options: {
 				const u = scale.toU(marker.time);
 				if (u < viewport.u0 || u > viewport.u1) return;
 				const x = Math.min(plotWidth - 1, Math.floor((u - viewport.u0) / (viewport.u1 - viewport.u0) * plotWidth));
-				cells[x] = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", glyph(preset, "trackMarker"));
+				const ink = theme.fg(selected === `${row.track.id}:marker:${index}` ? "accent" : "muted", glyph(preset, "trackMarker"));
+				cells[x] = selected === `${row.track.id}:marker:${index}` ? theme.bg(SELECTION_BG.band, theme.bold(ink)) : ink;
 			});
-			lines.push(`${"Markers".padEnd(labelWidth)} ${cells.join("")}`);
+			const active = row.track.markers.some((_marker, index) => selected === `${row.track.id}:marker:${index}`);
+			const label = truncateToWidth(`${active ? glyph(preset, "rowCursor") : " "} Markers`, labelWidth, "");
+			lines.push(`${active ? theme.bg(SELECTION_BG.band, theme.fg("accent", label.padEnd(labelWidth))) : label.padEnd(labelWidth)} ${cells.join("")}`);
 			continue;
 		}
 		const lane = row.lane!;
@@ -101,23 +112,20 @@ export function renderTimeline(options: {
 			// Labels retain identity in the selected-span line; narrow bars use category glyphs.
 			const label = end - start >= 7 ? Array.from(text).filter(char => visibleWidth(char) === 1) : [];
 			for (let x = start; x < end; x++) {
-				// Named `mark`, not `glyph`: the imported resolver is called
-				// `glyph`, and a local of the same name would shadow it.
 				let mark = label[x - start - 1] ?? MARKS[span.kind];
 				if (x === start && span.id === selected) mark = glyph(preset, "rowCursor");
 				else if (x === start && match) mark = "*";
 				const ink = theme.fg(span.isError ? "error" : SPAN_COLORS[span.kind], mark);
-				cells[x] = span.id === selected ? theme.bold(ink) : ink;
+				cells[x] = span.id === selected ? theme.bg(SELECTION_BG.band, theme.bold(ink)) : ink;
 			}
 		}
-		const label = truncateToWidth(`${MARKS[lane.kind]} ${lane.track.id} ${lane.kind}${lane.ordinal ? ` #${lane.ordinal + 1}` : ""}`, labelWidth, "");
-		lines.push(`${label}${" ".repeat(Math.max(0, labelWidth - visibleWidth(label)))} ${cells.join("")}`);
+		const active = lane.spans.some(span => span.id === selected);
+		const label = truncateToWidth(`${active ? glyph(preset, "rowCursor") : MARKS[lane.kind]} ${lane.track.id} ${lane.kind}${lane.ordinal ? ` #${lane.ordinal + 1}` : ""}`, labelWidth, "");
+		const padded = `${label}${" ".repeat(Math.max(0, labelWidth - visibleWidth(label)))}`;
+		lines.push(`${active ? theme.bg(SELECTION_BG.band, theme.bold(theme.fg("accent", padded))) : padded} ${cells.join("")}`);
 	}
 	if (!trace.tracks.some(track => track.spans.length || track.markers.length)) lines.push("No recorded spans or markers in this trace.");
-	if (visible.rows.length < timelineRows.length) lines.push(theme.fg("dim", `Rows ${visible.offset + 1}–${visible.offset + visible.rows.length}/${timelineRows.length}; ↑/↓ selection reveals its row, Tab opens the track tree.`));
-	// The legend NAMES the marker the timeline draws, so it interpolates the same
-	// role rather than repeating `◆` — otherwise the legend would promise one
-	// glyph under unicode and a different one under ascii.
+	if (visible.rows.length < timelineRows.length) lines.push(theme.fg("dim", `Rows ${visible.offset + 1}–${visible.offset + visible.rows.length}/${timelineRows.length} · ↑/↓ reveal · Tab panes`));
 	lines.push(...wrapTextWithAnsi(`I input · M model · T tool · A agent · B background · ${glyph(preset, "trackMarker")} marker · ~ compressed idle`, width));
 	return bounded(lines, width);
 }

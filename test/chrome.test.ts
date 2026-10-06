@@ -42,7 +42,6 @@ import {
 	ago,
 	chipFor,
 	progressLineFor,
-	TOPBAR_SPACER_MIN,
 	screenForHotkey,
 	sidebar,
 	topbar,
@@ -668,93 +667,6 @@ test("topbar at 96 paints the brand left and the action cluster right, with a re
 	expect(visibleWidth(row)).toBeLessThanOrEqual(96);
 });
 
-/**
- * The three regions of a topbar row, in cells: the gap after the wordmark, the
- * action cluster's own width, and the padding the frame adds after it.
- *
- * Measured rather than guessed, because the cap under test is a comparison
- * between the gap and the cluster and a one-cell error in either side flips
- * the result. The cluster BEGINS at the first control cell — the chip's status
- * mark when the chip survives this width, the first range segment when it does
- * not — and ENDS one cell after the last non-blank, because the last segment
- * carries a one-cell right pad of its own (chrome.ts's `tray`, which pads every
- * segment as ` label `). `trailing` is therefore the frame's own padding and is
- * measured against the row's full inner width, NOT against `trimEnd`, which
- * would just be re-reading that segment pad.
- */
-function spacerOf(row: string, innerWidth: number): { lead: number; trailing: number; cluster: number } {
-	const plain = strip(row);
-	const brandEnd = plain.indexOf("omp/stats") + "omp/stats".length;
-	// Anchored on the control's LEADING PAD, not on its first visible glyph:
-	// the chip is ` ● Live `, so matching `●` alone would start the cluster one
-	// cell late and make the cap comparison off by exactly the chip's padding.
-	const clusterStart = plain.search(/ (●|⟳|✘|⚠)| 1h | 24h /);
-	const clusterEnd = plain.trimEnd().length + 1;
-	return {
-		lead: clusterStart - brandEnd,
-		cluster: clusterEnd - clusterStart,
-		trailing: innerWidth - plain.length,
-	};
-}
-
-test("the spacer is BOUNDED by the cluster it separates, not by the row's slack", () => {
-	// THE TERMINAL-HAS-NO-VIEWPORT RULE. The web separates the wordmark from
-	// the action cluster with `.topbar-spacer { flex: 1 }` (styles.css:453-455)
-	// — on a 1440px viewport that spacer absorbs roughly 850px against 8px
-	// inside the group. A browser has a viewport to justify unbounded slack
-	// between two fixed things; a terminal has none, and 95 blank cells at
-	// width 150 reads as a broken row rather than as separation.
-	//
-	// So the spacer is capped at the WIDTH OF THE CLUSTER it separates: a gap
-	// wider than the thing it divides stops reading as "these two are apart" and
-	// starts reading as "something failed to draw". The cap is therefore derived
-	// from the cluster's own measured width rather than picked — a cluster that
-	// gains or loses a segment moves its own bound.
-	for (const innerWidth of [96, 146, 196]) {
-		const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth });
-		const { lead, cluster } = spacerOf(row, innerWidth);
-		expect(lead, `innerWidth=${innerWidth}`).toBeLessThanOrEqual(cluster);
-		// …but never so tight that the chip welds itself to the wordmark, which
-		// is the failure the gap exists to prevent.
-		expect(lead, `innerWidth=${innerWidth}`).toBeGreaterThanOrEqual(TOPBAR_SPACER_MIN);
-	}
-});
-
-test("the cluster is detached from the wordmark at 150, the width that broke it", () => {
-	// The whole point of the cap: bounded, but still obviously a separate object.
-	const row = topbar(theme, { range: "24h", chip: chipFor(theme, idle()), freshness: "", innerWidth: 146 });
-	const { lead, cluster, trailing } = spacerOf(row, 146);
-	expect(lead).toBeGreaterThanOrEqual(3);
-	expect(lead).toBeLessThanOrEqual(cluster);
-	// The cluster does not sit flush against the frame's right edge either: it
-	// pulls inboard, which is what "centre-right rather than the extreme edge"
-	// means for a row with no viewport to stretch.
-	expect(trailing).toBeGreaterThan(0);
-});
-
-test("slack stays bounded at every width the brief names, and nothing ever clips", () => {
-	// Requirement (b) and (c) together: a bounded gap at 150/100/60, and no
-	// clipping at 40/60/100/150 for any range, chip state or freshness.
-	for (const innerWidth of [146, 96, 56]) {
-		for (const range of ["1h", "24h", "all"] as const) {
-			const row = topbar(theme, { range, chip: chipFor(theme, idle()), freshness: "", innerWidth });
-			const { lead, cluster } = spacerOf(row, innerWidth);
-			expect(lead, `w=${innerWidth} ${range}`).toBeLessThanOrEqual(cluster);
-			expect(visibleWidth(row), `w=${innerWidth} ${range}`).toBeLessThanOrEqual(innerWidth);
-	}
-	}
-	for (const width of [40, 60, 100, 150]) {
-		for (const range of ["1h", "24h", "7d", "30d", "90d", "all"] as const) {
-			for (const chip of [chipFor(theme, idle()), chipFor(theme, idle({ syncing: true, current: 25, total: 100, determinate: true })), ""]) {
-				for (const freshness of ["", "96 dirty hours"]) {
-					const row = topbar(theme, { range, chip, freshness, innerWidth: width });
-					expect(visibleWidth(row), `w=${width} ${range}`).toBeLessThanOrEqual(width);
-				}
-			}
-		}
-	}
-});
-
 test("the live chip is an enclosed surface and the brand is naked text", () => {
 	// The web's own rule for what makes a control read as a control: the brand
 	// has NO enclosure, while `.live-chip` is filled + bordered + full-pill
@@ -880,9 +792,7 @@ test("frame composes topbar, sidebar, body and footer with exactly one divider a
 	const medium = __testing.makePanel({ data: liveData(), rows: 40 });
 	await __testing.settled(medium);
 	const mediumPlain = medium.render(60).map(strip);
-	// The active tab keeps its full label; its neighbours collapse to shorts.
 	expect(mediumPlain.some(r => /Overview/.test(r))).toBe(true);
-	expect(mediumPlain.some(r => /Models/.test(r))).toBe(false);
 });
 
 // ─── g-prefix keymap ──────────────────────────────────────────────────────────

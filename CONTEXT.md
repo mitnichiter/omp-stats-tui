@@ -155,6 +155,12 @@ The production route contract: `load(range)`, `render(width, height)`, `handleIn
 Controllers retain focus, search, sort, selection and chart controls across screen changes. The panel
 owns global navigation, scrolling and mount lifetime, and updates the mutable injected theme per render.
 
+**Production presentation**:
+`src/tui/features/presentation.ts` bridges retained controllers to shared band metric grids and
+measured tables, adding current-theme selection, compact focus tabs and section headings.
+`src/tui/charts/time-series.ts` renders production native-bucket plots for core analytics, Providers
+and Gain with formatted units, real null gaps, stable series identity and selected-point legends.
+It does not fabricate observations or replace domain-specific calendars, version-rate plots or traces.
 **Stats read client**:
 One persistent isolated child per mounted panel, with request/reply and unsolicited live NDJSON over pipes
 (`src/data/client.ts`, `scripts/data-worker.ts`). The worker owns DB initialization, queries/transcript reads
@@ -205,7 +211,7 @@ expose — and changes nothing a user sees in `/stats-tui`.
 | `src/layout/spec.ts` | `/stats-test` band declarations; `tabs.ts`/`chrome.ts`/`panel.ts` read `SCREEN_SPECS` and `isDrawableScreen` for the real nav |
 | `src/layout/resolve.ts` | the showcase and `probe-render.ts` resolve every `MetricRef` through it |
 | `src/layout/host-derived.ts` | `resolve.ts`'s named figures — 18 `HOST_DERIVED` entries (three `agentTokens:*` variants and 15 metrics) — imported by `resolve.ts` alone |
-| `src/tui/band.ts` | renders one band kind; its only importer is `render/screen.ts` |
+| `src/tui/band.ts` | draws band primitives for `render/screen.ts`; production `features/presentation.ts` also reuses metric-grid/table drawing, without adopting static screen specs or metric-ref resolution |
 | `src/tui/render/screen.ts` | the showcase's and `probe-render.ts`'s renderer, plus one **fixture-only** branch in `panel.ts:772` — reachable only when `options.fetch` is injected, because `#feature()` returns `undefined` in that case. The real worker path always has a controller |
 | `src/tui/charts/*` | **both** paths — `features/core/*` import them directly on `/stats-tui`, so these are production chart code, not IR |
 | `src/tui/screens/*.ts` | registry METADATA only (`id`/`label`/`short`/`status`/`needs`) for `SELECTABLE_SCREENS` and the digit row; the `render` bodies are unreachable in production and only `errors-screen.test.ts`/`activity.test.ts` still call them |

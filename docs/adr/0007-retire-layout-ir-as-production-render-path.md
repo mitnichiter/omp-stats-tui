@@ -8,9 +8,9 @@ nobody had established that by reachability, only by assertion.
 
 ## The evidence
 
-Established by `rg` over `src/`, `scripts/` and `test/` before editing anything. A
+Established by a source scan at the PR #1 baseline, before the UI refinement. A
 production screen is a `FeatureController` (`src/tui/features/types.ts`) whose
-`render(width, height)` returns `readonly string[]`. `renderBands` is not in that path.
+`render(width, height)` returns `readonly string[]`; it does not render a static `ScreenSpec`.
 `src/tui/panel.ts` reaches `renderScreenWith` only at `:772`, *after* the
 `if (feature)` branch at `:765` returns, and `#feature()` returns `undefined` only when
 `options.fetch` is injected — the fixture path, not the worker path.
@@ -46,7 +46,11 @@ after `7c55cf3` the only surviving direct callers are `test/activity.test.ts` an
 A `Band[]` in `src/layout/spec.ts` changes what `/stats-test` draws and which ids
 `tabs.ts`/`chrome.ts` expose. It changes **nothing** a user sees in `/stats-tui`. A
 contributor adding a production screen writes a `FeatureController` under
-`src/tui/features/`, never bands.
+`src/tui/features/`, not a static screen spec. The UI refinement's `features/presentation.ts`
+reuses `renderBands` locally for metric-grid/table drawing, with already formatted values,
+current theme and selection styling. It does not restore the `MetricRef` resolution pipeline
+as a production interaction model: focus, search, sort, staged loading and retained state
+remain controller-owned.
 
 `src/tui/charts/*` is the deliberate exception and is **not** IR: `features/core/*` imports
 `compose.ts`, `sparkline.ts`, `heatmap.ts` and `calendar.ts` directly, so those are

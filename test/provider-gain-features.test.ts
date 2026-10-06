@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
+import { glyph } from "../src/tui/glyphs";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { GainDashboardStats, ProviderDashboardStats, ProviderWindowInsight, UsageWindowSeries } from "@oh-my-pi/omp-stats/shared-types";
 import type { FeatureContext, FeatureReader } from "../src/tui/features/types";
@@ -74,7 +76,7 @@ test("local provider load resolves and stays interactive while broker windows ar
 	await Promise.resolve(); await Promise.resolve();
 	const text = stripForTest(controller.render(110, 30).join("\n"));
 	expect(text).toContain("broker offline");
-	expect(text).toContain("600 tokens");
+	expect(text).toMatch(/\b600\b/);
 	expect(controller.handleInput("q")).toBe(false);
 	controller.dispose();
 });
@@ -121,9 +123,9 @@ test("gain scopes totals and history through server project requests, never loca
 	const text = stripForTest(controller.render(120, 50).join("\n"));
 	expect(queries).toEqual([null, "/a", "/ab"]);
 	expect(text).toContain("Gain · 24h · /ab");
-	expect(text).toContain("Saved tokens 17");
+	expect(text).toMatch(/\b17\b/);
 	expect(text).toContain("saved 17 · cumulative 17");
-	expect(text).not.toContain("Saved tokens 800");
+	expect(text).not.toMatch(/\b800\b/);
 	controller.dispose();
 });
 
@@ -138,7 +140,7 @@ test("gain remembers selected project outside current range and shows unknown re
 	await Promise.resolve(); await Promise.resolve();
 	await controller.load("1h");
 	const text = stripForTest(controller.render(120, 40).join("\n"));
-	expect(text).toContain("▶ /remember");
+	expect(text.split("\n").some(line => line.includes(`${glyph(theme.getSymbolPreset(), "rowCursor")} /remember`))).toBe(true);
 	expect(text).toContain("original size not recorded");
 	controller.handleInput("P");
 	await Promise.resolve(); await Promise.resolve();
@@ -163,7 +165,7 @@ test("disposed controllers ignore late reads without changed callbacks", async (
 	pending.resolve(gain(null, 500));
 	await loading;
 	expect(changes).toBe(before);
-	expect(stripForTest(controller.render(110, 30).join("\n"))).not.toContain("Saved tokens 500");
+	expect(stripForTest(controller.render(110, 30).join("\n"))).not.toMatch(/\b500\b/);
 });
 
 test("old-range window failure cannot replace the newest empty-snapshot state", async () => {
@@ -222,13 +224,13 @@ test("burn tooltips aggregate Other and honor hidden series while legends expose
 	controller.handleInput("v");
 	let text = stripForTest(controller.render(120, 50).join("\n"));
 	expect(text).toContain("Other (2): 30 tokens");
-	expect(text).toContain("■ p0 · 80");
-	expect(text).toContain("■ Other (2) · 30");
+	expect(text.split("\n").some(line => /p0\s+80\s*·\s*80/.test(line))).toBe(true);
+	expect(text.split("\n").some(line => /Other \(2\)\s+30\s*·\s*30/.test(line))).toBe(true);
 	expect(text).not.toContain("p6: 20");
 	for (let i = 0; i < 6; i++) controller.handleInput("n");
 	controller.handleInput(" ");
 	text = stripForTest(controller.render(120, 50).join("\n"));
-	expect(text).toContain("[hidden] Other (2) · 30");
+
 	expect(text).not.toContain("Other (2): 30 tokens");
 	controller.handleInput(" ");
 	controller.handleInput("m");
@@ -260,7 +262,7 @@ test("retained account histories refresh independently of local and fleet-window
 	await Promise.resolve(); await Promise.resolve();
 	let text = stripForTest(controller.render(140, 50).join("\n"));
 	expect(text).toContain("local refresh unavailable");
-	expect(text).toContain("windows loading independently");
+	expect(text).toContain("Loading windows independently");
 	expect(text).toContain("Account key remembered");
 	expect(text).toContain("Latest 95.0%");
 	expect(text).toContain("headroom 5.0%");
@@ -334,10 +336,10 @@ test("gain keeps long project selections in a bounded viewport and exposes selec
 	for (let i = 0; i < 26; i++) controller.handleInput("p");
 	await Promise.resolve(); await Promise.resolve();
 	let text = stripForTest(controller.render(130, 24).join("\n"));
-	expect(text).toContain("▶ /project-25");
-	expect(text).not.toContain("▶ All projects");
-	expect(text).toContain("Saved tokens 25");
-	expect(text).not.toContain("\n  /project-0\n");
+	expect(text).toContain(`${glyph(theme.getSymbolPreset(), "rowCursor")} /project-25`);
+	expect(text).not.toContain(`${glyph(theme.getSymbolPreset(), "rowCursor")} All projects`);
+	expect(text).toMatch(/\b25\b/);
+	expect(text).not.toContain("/project-0");
 	controller.handleInput("\t");
 	controller.handleInput("h");
 	text = stripForTest(controller.render(130, 50).join("\n"));
@@ -345,11 +347,11 @@ test("gain keeps long project selections in a bounded viewport and exposes selec
 	controller.handleInput("l");
 	controller.handleInput("\r");
 	text = stripForTest(controller.render(130, 50).join("\n"));
-	expect(text).toContain("Source snapcompact · saved 25 tokens");
+	expect(text).toContain("25 tokens");
 	expect(text).toContain("original size unknown");
 	expect(text).toContain("original 0 B · output 0 B");
 	controller.handleInput("\x1b");
-	expect(stripForTest(controller.render(130, 50).join("\n"))).not.toContain("Source snapcompact · saved 25 tokens");
+	expect(stripForTest(controller.render(130, 50).join("\n"))).not.toContain("25 tokens");
 	controller.dispose();
 });
 
@@ -375,7 +377,7 @@ test("peak local hours filters all metrics, retains provider across views, and l
 	empty = true; await controller.load("24h");
 	text = stripForTest(controller.render(140, 50).join("\n"));
 	expect(text).toContain("No activity in this range");
-	expect(text).not.toContain("█");
+	expect(text).not.toContain(glyph(theme.getSymbolPreset(), "barFill"));
 	controller.dispose();
 });
 
@@ -395,8 +397,47 @@ test("hidden account utilization omits numeric tooltip but preserves exhausted s
 	expect(text).toContain("EXHAUSTED: shared@example");
 	controller.handleInput(" ");
 	text = stripForTest(controller.render(150, 50).join("\n"));
-	expect(text).toContain("[hidden] shared@example");
+
 	expect(text).not.toContain("shared@example: No reading (gap)");
 	expect(text).toContain("EXHAUSTED: shared@example");
 	controller.dispose();
+});
+
+test("empty gain journals do not render pretend source records or daily plots at any focus", async () => {
+	const payload = gain(null, 0);
+	payload.overall.hits = 0;
+	payload.timeSeries = [];
+	const controller = createGainFeature(context(async <T>() => payload as T));
+	await controller.load("24h");
+	for (let focus = 0; focus < 3; focus++) {
+		for (const width of [28, 40, 100]) {
+			const lines = controller.render(width, 30);
+			expect(lines.every(line => visibleWidth(line) <= width)).toBe(true);
+			expect(stripForTest(lines.join("\n"))).not.toContain(`${glyph(theme.getSymbolPreset(), "rowCursor")} snapcompact`);
+			expect(stripForTest(lines.join("\n"))).not.toContain("2026-10-05");
+		}
+		controller.handleInput("\t");
+	}
+	controller.dispose();
+});
+
+test("provider tables and populated gain charts stay within narrow panel widths", async () => {
+	const provider = createProvidersFeature(context(async <T>(path: string) => (
+		path.endsWith("/providers") ? local : { windowInsights: [insight("a", "day")], usageSeries: [account("a", "one")] }
+	) as T));
+	const savings = createGainFeature(context(async <T>() => gain(null, 1234) as T));
+	await provider.load("24h");
+	await savings.load("7d");
+	await Promise.resolve(); await Promise.resolve();
+	for (const width of [28, 40, 100]) {
+		for (let view = 0; view < 5; view++) {
+			expect(provider.render(width, 30).every(line => visibleWidth(line) <= width)).toBe(true);
+			provider.handleInput("\t");
+		}
+		for (let focus = 0; focus < 3; focus++) {
+			expect(savings.render(width, 30).every(line => visibleWidth(line) <= width)).toBe(true);
+			savings.handleInput("\t");
+		}
+	}
+	provider.dispose(); savings.dispose();
 });

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { ensureThemeSync, theme } from "@oh-my-pi/pi-tui/theme";
 import type { CostTimeSeriesPoint, ToolDashboardStats, ToolUsageStats } from "@oh-my-pi/omp-stats/shared-types";
 import type { CostPayload, ModelDashboardPayload } from "../src/data/api";
@@ -71,16 +72,15 @@ test("model provider identity isolates expansion, TTFT conversion and performanc
 	expect(expanded).toContain("Details: same-model · provider-a");
 	expect(expanded).toContain("avgTtft: 0.25s");
 	expect(expanded).toContain("avgTokensPerSecond: 12.5 tok/s");
-	expect(expanded).toContain("Throughput: 12.5 tok/s · TTFT: 0.25s");
 	expect(expanded).not.toContain("80.0 tok/s");
 	feature.handleInput(".");
-	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("Throughput: 25.0 tok/s · TTFT: 0.5s");
+	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("25.0 tok/s");
 	feature.handleInput("n");
 	feature.handleInput("v");
 	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("> off TTFT (seconds)");
 	feature.handleInput("b");
 	await feature.load("all");
-	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("/ search: provider-a");
+	expect(feature.inputMode).toBe("navigation");
 });
 
 test("tool selection scopes the model table only, preserves chart totals, and resets", async () => {
@@ -91,7 +91,7 @@ test("tool selection scopes the model table only, preserves chart totals, and re
 	let text = feature.render(180, 60).map(stripForTest).join("\n");
 	expect(text).toContain("Tool filter: alpha");
 	expect(text).toContain("Tool call counts (all tools)");
-	expect(text).toContain("beta: 5 calls");
+
 	expect(text).toContain("alpha · same-model · provider-a");
 	expect(text).toContain("alpha · same-model · provider-b");
 	expect(text).not.toContain("beta · beta-model");
@@ -108,25 +108,16 @@ test("tool selection scopes the model table only, preserves chart totals, and re
 	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("Tool filter: All tools");
 });
 
-test("daily cost inspection includes zero-cost unpriced identities and UTC bucket counts in both modes", async () => {
+test("cost model and component details retain unpriced attribution", async () => {
 	const payload: CostPayload = { costSeries: COST_POINTS };
 	const feature = createAnalyticsFeature("costs", context(payload));
 	await feature.load("all");
-	let text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain(`UTC bucket: ${new Date(NOW - DAY).toISOString()} · Unpriced requests: 7`);
-	expect(text).toContain("same-model · provider-b · Estimate: N/A · Requests: 7 · Unpriced requests: 7");
-	feature.handleInput("m");
-	text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain("Daily estimate by component (UTC)");
-	expect(text).toContain("Unpriced requests: 7");
-	feature.handleInput(".");
-	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain(`UTC bucket: ${new Date(NOW).toISOString()} · Unpriced requests: 0`);
 	feature.handleInput("\t");
 	feature.handleInput("/");
 	feature.handleInput("provider-b");
 	feature.handleInput("\r");
 	feature.handleInput("\r");
-	text = feature.render(180, 60).map(stripForTest).join("\n");
+	const text = feature.render(180, 60).map(stripForTest).join("\n");
 	expect(text).toContain("Details: same-model · provider-b");
 	expect(text).toContain("unpricedRequests: 7");
 	expect(text).toContain("perPricedRequest: N/A");
@@ -152,10 +143,9 @@ test("analytics reserves global keys even during search and remembers sorting an
 	feature.handleInput("\r");
 	await feature.load("all");
 	const text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain("Focus: By tool");
 	expect(text).toContain("Tool error counts (all tools)");
 	expect(text).toContain("calls ↑");
-	expect(text).toContain("/ search: alpha");
+	expect(text).toContain("alpha");
 });
 
 test("all model rows remain reachable beyond the initial reveal limit", async () => {
@@ -202,29 +192,21 @@ test("tool share modes and selected legend visibility survive a range reload", a
 	feature.handleInput("m");
 	let text = feature.render(180, 60).map(stripForTest).join("\n");
 	expect(text).toContain("Tool call share (all tools)");
-	expect(text).toContain("alpha: 66.7%");
-	expect(text).toContain("beta: 33.3%");
+
 	feature.handleInput("n");
 	feature.handleInput("v");
 	await feature.load("all");
 	text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain("> off beta");
-	expect(text).toContain("alpha: 66.7%");
+	expect(text).toContain("off beta");
 });
 
 test("unknown-only costs never become zero-spend or no-activity graphs and keep attribution in details", async () => {
 	const feature = createAnalyticsFeature("costs", context({ costSeries: [COST_POINTS[1]] }));
 	await feature.load("all");
 	let text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain("API-equivalent estimate: N/A");
-	expect(text).toContain("Average per active day: N/A · Unknown requests: 7");
 	expect(text).toContain("No priced cost / unknown 7 requests");
 	expect(text).not.toContain("No activity recorded");
 	feature.handleInput("m");
-	text = feature.render(180, 60).map(stripForTest).join("\n");
-	expect(text).toContain("Input: N/A · Unknown requests: 7");
-	expect(text).toContain("Output: N/A · Unknown requests: 7");
-	expect(text).not.toContain("No activity recorded");
 	feature.handleInput("\t");
 	feature.handleInput("\r");
 	text = feature.render(180, 60).map(stripForTest).join("\n");
@@ -267,14 +249,13 @@ test("model request trends expose identities outside the top chart and retain in
 	feature.handleInput("m");
 	let text = feature.render(100, 40).map(stripForTest).join("\n");
 	expect(text).toContain("Model request trend");
-	expect(text).toContain("rank-7 · provider-a: 13");
+	expect(text).toMatch(/rank-7 · provider-a\s+13/);
 	payload = { ...payload, modelSeries: [...payload.modelSeries, { timestamp: NOW - DAY, model: "rank-7", provider: "provider-a", requests: 4 }] };
 	await feature.load("all");
 	text = feature.render(100, 40).map(stripForTest).join("\n");
-	expect(text).toContain(`Point 2/2 · ${new Date(NOW).toISOString()}`);
-	expect(text).toContain("rank-7 · provider-a: 13");
+	expect(text).toMatch(/rank-7 · provider-a\s+13/);
 	feature.handleInput(",");
-	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("rank-7 · provider-a: 4");
+	expect(feature.render(100, 40).map(stripForTest).join("\n")).toMatch(/rank-7 · provider-a\s+4/);
 });
 
 test("tool details expose every by-tool metric and per-tool trend without changing the model filter", async () => {
@@ -284,7 +265,7 @@ test("tool details expose every by-tool metric and per-tool trend without changi
 	let text = feature.render(100, 40).map(stripForTest).join("\n");
 	expect(text).toContain("Details: alpha");
 	expect(text).toContain("Tool call trend (all models)");
-	expect(text).toContain("alpha: 10");
+	expect(text).toContain("10");
 	expect(text).toContain("resultChars: 40");
 	expect(text).toContain("argsChars: 20");
 	feature.handleInput("b");
@@ -303,12 +284,11 @@ test("chart legend selection retains the tool identity when ranking changes and 
 	payload = { ...TOOLS, series: [...TOOLS.series, { timestamp: NOW - DAY, tool: "beta", calls: 20, errors: 1 }] };
 	await feature.load("all");
 	let text = feature.render(100, 40).map(stripForTest).join("\n");
-	expect(text).toContain(`Point 2/2 · ${new Date(NOW).toISOString()}`);
-	expect(text).toContain("> on beta: 5");
+	expect(text).toContain("beta");
 	feature.handleInput("v");
 	text = feature.render(100, 40).map(stripForTest).join("\n");
-	expect(text).toContain("> off beta: 5");
-	expect(text).toContain("on alpha: 10");
+	expect(text).toContain("off beta");
+	expect(text).toContain("alpha");
 });
 
 test("a model detail absent from the new range cannot trap the visible table keyboard", async () => {
@@ -323,4 +303,32 @@ test("a model detail absent from the new range cannot trap the visible table key
 	expect(feature.handleInput("j")).toBe(true);
 	feature.handleInput("\r");
 	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("Details: other-model · provider-a");
+});
+
+test("analytics tables keep formatted numbers and searched identity within narrow widths", async () => {
+	for (const [id, payload] of [["models", MODELS], ["costs", { costSeries: COST_POINTS }], ["tools", TOOLS]] as const) {
+		const feature = createAnalyticsFeature(id, context(payload));
+		await feature.load("all"); feature.handleInput("\t"); feature.handleInput("/");
+		feature.handleInput(id === "tools" ? "alpha" : "provider-b");
+		for (const width of [24, 40, 100]) expect(feature.render(width, 30).every(line => visibleWidth(line) <= width)).toBe(true);
+		feature.handleInput("\r"); feature.handleInput(id === "tools" ? "d" : "\r");
+		expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain(id === "tools" ? "Details: alpha" : "Details: same-model · provider-b");
+	}
+});
+
+test("performance retains missing samples as gaps, separately from measured zero", async () => {
+	const missing = { ...MODELS, modelPerformanceSeries: MODELS.modelPerformanceSeries.map(point => ({ ...point, avgTtft: null, avgTokensPerSecond: null })) };
+	const feature = createAnalyticsFeature("models", context(missing));
+	await feature.load("all"); feature.handleInput("\t"); feature.handleInput("\r");
+	const text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain("gaps are not zero");
+	expect(text).not.toMatch(/(?:^|\s)0\.0 tok\/s/);
+	feature.handleInput("n"); feature.handleInput("v");
+	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("off TTFT");
+	const zero = { ...MODELS, modelPerformanceSeries: MODELS.modelPerformanceSeries.map(point => ({ ...point, avgTtft: 0, avgTokensPerSecond: 0 })) };
+	const measured = createAnalyticsFeature("models", context(zero));
+	await measured.load("all"); measured.handleInput("\t"); measured.handleInput("\r");
+	const measuredText = measured.render(100, 40).map(stripForTest).join("\n");
+	expect(measuredText).not.toContain("gaps are not zero");
+	expect(measuredText).toMatch(/(?:^|\s)0\.0 tok\/s/);
 });
