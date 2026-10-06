@@ -10,9 +10,9 @@
  * KEYMAP DECISION (the brief asks for it stated once):
  * - Web binds `1`-`6` to RANGES and `g then letter` to sections (Shell.tsx
  *   useShortcuts). We mirror `g then letter` for screens, but we do NOT mirror
- *   digits-as-range: our digits already select screens (`1`-`9`/`0`, pinned by
- *   test/panel.test.ts "every selectable screen is on the number row"), and a
- *   digit cannot pick both a range and a screen. Range stays on `r`/`R` cycle.
+ *   digits-as-range: our digits already select screens (`1`-`9`/`0`, enforced by
+ *   the number-row block at the end of this file), and a digit cannot pick both
+ *   a range and a screen. Range stays on `r`/`R` cycle.
  * - So digits and `g`-letters are ALIASES for the same target (screen): `1`
  *   and `g o` both land on overview. No collision is possible because the two
  *   sequences share no prefix key: digits act immediately, letters act only
@@ -23,9 +23,13 @@
  *   A stale prefix (>1200 ms) falls through to the normal keymap, exactly as
  *   the web's timestamp check does (no timer, no visual indicator, same as web).
  * - Hotkeys are the web's verbatim (nav.ts) except `activity`, which has no web
- *   section (OURS: `a`). Deferred/excluded screens (`providers`, `gain`,
- *   `traces`, `frustration`) have no sidebar row and no hotkey: a jump that
- *   paints a page the panel cannot honestly fill wastes the keystroke.
+ *   section (OURS: `a`). `NAV_GROUPS` keeps a row only when `specForScreen` and
+ *   `isDrawableScreen` agree there is a body to draw, so a deferred or
+ *   spec-less screen gets neither a sidebar row nor a letter — a jump that
+ *   paints a page the panel cannot honestly fill wastes the keystroke. Today
+ *   every entry of `SELECTABLE_SCREENS` clears that filter, so all twelve have
+ *   a row and a letter; `traces` and `frustration` (`g t`, `g f`) are the two
+ *   screens PAST THE NUMBER ROW, not jump exceptions.
  */
 import { expect, test } from "bun:test";
 import { ensureThemeSync, setSymbolPreset, theme } from "@oh-my-pi/pi-tui/theme";
@@ -805,20 +809,40 @@ test("a stale g prefix falls through to the normal keymap", async () => {
 // ─── the number row ───────────────────────────────────────────────────────────
 
 /**
- * Ported from the base branch's `test/panel.test.ts` ("every selectable screen
- * is on the number row, so no digit is a dead key" / "digits index the
- * SELECTABLE screens"). PR #1 took the panel from eleven routes to twelve and
- * rewrote `chrome.ts`'s hotkey map; both base assertions went with it and
- * nothing replaced them.
+ * The number row is TEN keys against TWELVE drawable screens, so the row cannot
+ * name every screen and no eleventh digit exists. The contract that actually
+ * matters is therefore not "every screen has a digit" — that is unsatisfiable,
+ * and encoding it only produces a permanently red build, which is how a team
+ * learns to ignore red. The contract is:
  *
- * The digits are written out rather than imported because `panel.ts` keeps
- * `DIGITS` module-private, and this is the whole point of the guard: the list
- * has to be observable from outside. Everything else here is DERIVED — from
- * `panelAction`, which is the real keymap, and from `SELECTABLE_SCREENS`, which
- * is the real registry. Nothing is a restatement, so nothing can go stale the
- * way a literal eight-id list did when `providers` and `gain` arrived.
+ *   1. every digit is LIVE and indexes a DISTINCT selectable screen;
+ *   2. every screen WITHOUT a digit is reachable by every other affordance —
+ *      the arrows, `tab`/`shift+tab`, and its `g` jump letter;
+ *   3. the number of digitless screens is stated, not implied.
+ *
+ * `DIGIT_KEYS` is the one restatement here, and it is deliberate: `panel.ts`
+ * keeps `DIGITS` module-private, and observing the row from outside IS the
+ * guard. Everything else is DERIVED — `panelAction` is the real keymap,
+ * `SELECTABLE_SCREENS` the real registry, `NAV_GROUPS` the real jump map — so
+ * nothing here can go stale the way a literal eight-id list did when
+ * `providers` and `gain` arrived.
  */
 const DIGIT_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"] as const;
+
+/**
+ * How many drawable screens the row may leave without a digit: twelve minus
+ * ten, today.
+ *
+ * This is a TRIPWIRE, not a restatement — the tests below derive the digitless
+ * set and prove each member reachable, so a thirteenth screen would still pass
+ * on those counts. Pinning the number is what makes the gap a DECISION. When
+ * this fails, someone added a screen and must choose, in the same change:
+ * re-declare the row so it can name thirteen (`panel.ts`'s `DIGITS` plus the
+ * `DIGIT_KEYS` mirror here, which is why both must move together), drop a
+ * screen, or accept a larger tab-only tail and raise this number on purpose.
+ * Silently letting it grow is the one option this exists to prevent.
+ */
+const DIGITLESS_SCREENS = 2;
 
 test("every digit on the number row is live and indexes a distinct selectable screen", () => {
 	// The base asserted the panel's own `DIGIT_KEYS` list, which is gone; this
@@ -836,23 +860,71 @@ test("every digit on the number row is live and indexes a distinct selectable sc
 	expect(new Set(landed).size, `two digits select the same screen: ${landed.join(" ")}`).toBe(landed.length);
 });
 
-test("every selectable screen is on the number row, so no digit is a dead key", () => {
-	// Direction matters. `DIGITS` is `1`-`9` then `0` — ten keys, and there is
-	// no eleventh digit — so the row's length is a hard ceiling on how many
-	// routes can carry one. `panel.ts` says as much ("An eleventh screen is
-	// simply not on the number row and is reached with `tab`; test/panel.test.ts
-	// asserts `SELECTABLE_SCREENS.length` against this list, so the gap becomes a
-	// test failure rather than a silently dead key") — and that test is what PR
-	// #1 deleted. The message names the orphans, because "12 > 10" on its own
-	// does not tell a reader which two screens are the unreachable ones.
-	const onRow = DIGIT_KEYS.slice(0, Math.min(DIGIT_KEYS.length, SELECTABLE_SCREENS.length)).map(
-		(_, index) => SELECTABLE_SCREENS[index]!.id,
-	);
-	const orphans = SELECTABLE_SCREENS.map(screen => screen.id).filter(id => !onRow.includes(id));
+test("a screen past the number row is still reachable: arrows, tab, and its jump letter", async () => {
+	// Which screens the row cannot name, DERIVED — the row is positional, so
+	// "past the row" is `SELECTABLE_SCREENS` past `DIGIT_KEYS`. Nothing here
+	// hardcodes `traces` or `frustration`; those ids fall out of the registries
+	// and the assertion names them in its failure message if one is orphaned.
+	const onRow = DIGIT_KEYS.map((_, index) => SELECTABLE_SCREENS[index]?.id);
+	const digitless = SELECTABLE_SCREENS.map(screen => screen.id).filter(id => !onRow.includes(id));
+
 	expect(
-		SELECTABLE_SCREENS.length,
-		`${orphans.length} selectable screen(s) are reachable but have no digit: ${orphans.join(", ") || "none"} — the number row holds ${DIGIT_KEYS.length}`,
-	).toBeLessThanOrEqual(DIGIT_KEYS.length);
+		digitless.length,
+		`digitless screens are now [${digitless.join(", ") || "none"}] — the row holds ${DIGIT_KEYS.length} keys for ${SELECTABLE_SCREENS.length} screens; re-declare the row, drop a screen, or raise DIGITLESS_SCREENS deliberately`,
+	).toBe(DIGITLESS_SCREENS);
+
+	// Raw key bytes, because `panelAction` takes what the terminal sends, not
+	// the name `matchesKey` matches on — `panelAction("left")` is null.
+	const ARROW_RIGHT = "\x1b[C";
+	const ARROW_LEFT = "\x1b[D";
+	const TAB = "\t";
+	const SHIFT_TAB = "\x1b[Z";
+
+	// The arrows and tab are the same verb: `tab` is an ALIAS for the arrow,
+	// not a second one, so the alias is asserted as an identity rather than two
+	// literals that could drift apart.
+	expect(panelAction(ARROW_RIGHT), "the right arrow no longer changes screen").toEqual({ type: "screen", by: 1 });
+	expect(panelAction(ARROW_LEFT), "the left arrow no longer changes screen").toEqual({ type: "screen", by: -1 });
+	expect(panelAction(TAB), "tab is not an alias for the right arrow").toEqual(panelAction(ARROW_RIGHT));
+	expect(panelAction(SHIFT_TAB), "shift+tab is not an alias for the left arrow").toEqual(panelAction(ARROW_LEFT));
+
+	// Then drive the REAL panel — not an index formula — and collect the ids it
+	// actually lands on. `#selectScreen` wraps modulo `SELECTABLE_SCREENS`, so
+	// `length` steps from one start is one full lap; if a screen were skipped
+	// the visited set would be short and the diff below would name it.
+	const everyId = SELECTABLE_SCREENS.map(screen => screen.id);
+	for (const [label, key] of [["right", ARROW_RIGHT], ["left", ARROW_LEFT], ["tab", TAB], ["shift+tab", SHIFT_TAB]] as const) {
+		const panel = __testing.makePanel({ data: liveData(), rows: 40, screenId: SELECTABLE_SCREENS[0]!.id });
+		await __testing.settled(panel);
+		const visited = new Set<string>([__testing.debugScreenId(panel)]);
+		for (let step = 0; step < everyId.length; step++) {
+			panel.handleInput(key);
+			await __testing.settled(panel);
+			visited.add(__testing.debugScreenId(panel));
+		}
+		expect(
+			[...visited].sort(),
+			`${label} never reaches: ${everyId.filter(id => !visited.has(id)).join(", ")}`,
+		).toEqual([...everyId].sort());
+	}
+
+	// Finally the jump letter, resolved from the nav rows themselves rather than
+	// a letter list: a digitless screen with no row has no letter, and this is
+	// the affordance that can silently go missing when a screen is added.
+	const rows = NAV_GROUPS.flatMap(group => group.items);
+	for (const id of digitless) {
+		const row = rows.find(item => item.id === id);
+		expect(row, `${id} has no nav row, so it has no jump letter either`).toBeDefined();
+		expect(screenForHotkey(row!.hotkey), `${id} claims ${row!.hotkey}, which resolves elsewhere`).toBe(id);
+
+		// Press the keys, not the resolver: `g` arms, the letter jumps.
+		const panel = __testing.makePanel({ data: liveData(), rows: 40, screenId: SELECTABLE_SCREENS[0]!.id });
+		await __testing.settled(panel);
+		panel.handleInput("g");
+		panel.handleInput(row!.hotkey);
+		await __testing.settled(panel);
+		expect(__testing.debugScreenId(panel), `g ${row!.hotkey} does not reach ${id}`).toBe(id);
+	}
 });
 
 test("digits index the SELECTABLE screens, so a number never lands on an excluded one", () => {

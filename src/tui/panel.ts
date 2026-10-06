@@ -186,27 +186,29 @@ export function specById(id: ScreenId) {
  * disagree about which screens exist. That duplication is what
  * `test/screens.test.ts` now pins shut.
  *
- * KNOWN CONFLICT WITH THE NUMBER ROW — twelve screens, ten digits. PR #1 added
- * `traces` and `frustration`, taking this registry to twelve while the digit row
- * is fixed at ten keys, and the two guards that describe that row now DISAGREE:
+ * TWELVE SCREENS, TEN DIGITS — and that is the design, not a conflict. PR #1
+ * added `traces` and `frustration`, taking this registry to twelve while the
+ * digit row stays at ten keys, because there is no eleventh digit. The row is
+ * therefore positional and covers the FIRST TEN entries of this list; the last
+ * two are digitless by construction.
  *
- *   - `test/chrome.test.ts:839` requires `SELECTABLE_SCREENS.length` to be at
- *     most the row's length — every selectable screen must get a digit. It
- *     reads the row from its OWN ten-element `DIGIT_KEYS`, so no change to the
- *     `DIGITS` below can satisfy it; only this registry's length can.
- *   - The old note beside `DIGITS` asserted the opposite rule (that an eleventh
- *     screen simply is not on the row) and cited a `test/panel.test.ts`
- *     assertion PR #1 deleted. That note is corrected above.
+ * What holds for every screen here, and is enforced in
+ * `test/chrome.test.ts`'s number-row block, is three things — not "every screen
+ * has a digit", which is unsatisfiable at twelve and only ever yields a red
+ * build:
  *
- * With twelve drawable screens, satisfying the first guard means dropping two
- * screens from the registry — which would ALSO remove them from the tab strip,
- * the sidebar and `[`/`]`/arrow cycling, because every one of those reads this
- * same list. That is a product decision (drop two screens, or re-decide the row
- * so it can name twelve), not a code cleanup, so it is left to the owner rather
- * than decided here. What IS true today, and asserted by
- * `test/chrome.test.ts:823`, is the half that matters most: all ten digits are
- * live and index ten distinct screens, and the two beyond the row are reachable
- * by `tab`, the arrows, `g t` / `g f`, the sidebar and the mouse.
+ *   - every digit is live and indexes a DISTINCT screen in this order;
+ *   - every screen PAST the row is reachable by the arrows, by `tab` /
+ *     `shift+tab`, and by its `g` jump letter;
+ *   - the count of digitless screens is pinned, so a thirteenth screen fails
+ *     deliberately instead of quietly lengthening the tab-only tail.
+ *
+ * Adding a screen to this registry therefore forces one of three decisions:
+ * extend the row (move `DIGITS` here AND the `DIGIT_KEYS` mirror in that test,
+ * which must move together), drop a screen, or raise the pinned count on
+ * purpose. Dropping is not a silent option — every affordance above reads this
+ * same list, so removing an entry also removes the screen from the tab strip,
+ * the sidebar and arrow cycling.
  */
 export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
 	screen => isDrawableScreen(screen.id) && screen.status !== "excluded",
@@ -230,25 +232,30 @@ export const SELECTABLE_SCREENS: readonly Screen[] = SCREENS.filter(
 /**
  * Screen shortcuts. `1`-`9` for the first nine, `0` for the tenth — the
  * convention every numbered overlay uses, because there is no eleventh digit.
+ * `screenIndex` resolves through `SELECTABLE_SCREENS` in this order, so digit
+ * N is `SELECTABLE_SCREENS[N]` and nothing else.
  *
- * WHAT THIS LIST DOES AND DOES NOT PROMISE, restated because the old comment
- * here claimed a guard that no longer existed. It used to say "an eleventh
- * screen is simply not on the number row and is reached with `tab`; test/
- * panel.test.ts asserts `SELECTABLE_SCREENS.length` against this list, so the
- * gap becomes a test failure rather than a silently dead key". PR #1 DELETED
- * that test, and `test/chrome.test.ts:839` asserts the OPPOSITE rule — that
- * `SELECTABLE_SCREENS.length` may never exceed the row, i.e. that every
- * selectable screen DOES get a digit.
+ * WHAT THIS LIST PROMISES. Ten keys against twelve drawable screens, so the row
+ * is a deliberate SHORT row, not a gap. `SELECTABLE_SCREENS[10]` and `[11]` —
+ * `traces` and `frustration` — have no digit and none is invented. Every
+ * affordance except the number row reaches them: `←`/`→`, `tab`/`shift+tab`,
+ * `[`/`]`, `g t`/`g f`, the sidebar, and the mouse.
  *
- * The two cannot both hold, and the registry has since grown to twelve, so the
- * honest statement of what this list actually guarantees is the narrow one:
- * every digit here indexes a DISTINCT selectable screen, and `screenIndex`
- * resolves through the same `SELECTABLE_SCREENS` order. Past the tenth screen
- * there is no digit and none is invented — `traces` and `frustration` are
- * reached with `tab`, the arrows, `g t` / `g f`, and the sidebar.
+ * WHERE THAT IS ENFORCED. `test/chrome.test.ts`'s number-row block is the one
+ * place, and it asserts the three properties that actually hold:
  *
- * See the handover note on `SELECTABLE_SCREENS` for why the twelfth screen is a
- * real conflict rather than an oversight.
+ *   - each digit here is live and indexes a DISTINCT `SELECTABLE_SCREENS`
+ *     entry (it reads this row from its own ten-key mirror, since `DIGITS` is
+ *     module-private — the two lists must change together);
+ *   - each digitless screen is reachable by the arrows, by `tab`, and by
+ *     pressing `g` then its jump letter, driven through a real panel;
+ *   - the COUNT of digitless screens is pinned, so growing the registry past
+ *     twelve fails on purpose rather than quietly extending the tab-only tail.
+ *
+ * It deliberately does NOT assert `SELECTABLE_SCREENS.length <= 10`: that
+ * invariant is unsatisfiable here, and a permanently red assertion trains
+ * everyone to ignore red. See the handover note on `SELECTABLE_SCREENS` for
+ * what a thirteenth screen forces someone to decide.
  */
 const DIGITS: readonly string[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"];
 
