@@ -159,3 +159,54 @@ test("overview unknown-only cost mode is not zero spend or an empty activity cha
 	expect(text).not.toContain("No activity recorded");
 	feature.dispose();
 });
+
+test("calendar focus navigates quiet local days, historical windows, boundaries and retained selection", async () => {
+	const today = new Date(FIXTURE_NOW);
+	const day = (offset: number): string => {
+		const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset);
+		return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+	};
+	const f = fixture(liveData({ dailyActivity: [{ day: day(-140), requests: 17, cost: 2, totalTokens: 900 }] }));
+	const feature = createSummaryFeature("activity", f.ctx);
+	await feature.load("24h");
+	feature.handleInput("\t");
+	expect(feature.handleInput("j")).toBe(true);
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(0)}`);
+	feature.handleInput("k"); feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`day: ${day(-1)}`);
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("requests: 0");
+	feature.handleInput("b"); feature.handleInput("t");
+	for (let index = 0; index < 20; index++) feature.handleInput("h");
+	let text = stripForTest(feature.render(24, 24).join("\n")).replace(/\n/g, "");
+	expect(text).toContain(`Selected ${day(-140)}`);
+	feature.handleInput("\r");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain("requests: 17");
+	feature.handleInput("b");
+	await feature.load("all");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(-140)}`);
+	for (let index = 0; index < 100; index++) feature.handleInput("h");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(-370)}`);
+	feature.handleInput("t");
+	expect(stripForTest(feature.render(100, 24).join("\n"))).toContain(`Selected ${day(0)}`);
+	expect(feature.handleInput("\x1b[C")).toBe(false);
+	feature.dispose();
+});
+
+test("the initially displayed request retains identity when a newer row arrives, even without movement", async () => {
+	const f = fixture(liveData({ recent: [messageRow({ id: 1, timestamp: FIXTURE_NOW - 1000 })] }));
+	const feature = createSummaryFeature("overview", f.ctx);
+	await feature.load("24h"); feature.render(100, 24);
+	f.set(liveData({ recent: [messageRow({ id: 2, timestamp: FIXTURE_NOW }), messageRow({ id: 1, timestamp: FIXTURE_NOW - 1000 })] }));
+	await feature.load("7d");
+	feature.handleInput("\r");
+	expect(f.detailIds).toEqual(["/api/request/1"]);
+	feature.dispose();
+});
+
+test("narrow list search keeps its full input and sort state visible when no observations match", () => {
+	const f = fixture(liveData());
+	const list = new ListState<{ id: number }>(row => String(row.id), "id");
+	list.input("/", [{ id: 1 }]); list.input("long-project-name", [{ id: 1 }]);
+	const text = stripForTest(list.render([], 12, 12, row => String(row.id), f.ctx).join("\n")).replace(/\n/g, "");
+	expect(text).toContain("long-project-name");
+});

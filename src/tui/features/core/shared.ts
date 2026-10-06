@@ -37,7 +37,11 @@ export class ListState<T> {
 			return (this.descending ? -order : order) || this.key(a).localeCompare(this.key(b));
 		});
 	}
-	current(rows: readonly T[]): T | undefined { return rows.find(row => this.key(row) === this.selected) ?? rows[0]; }
+	current(rows: readonly T[]): T | undefined {
+		const current = rows.find(row => this.key(row) === this.selected) ?? rows[0];
+		if (this.selected === null && current) this.selected = this.key(current);
+		return current;
+	}
 	move(rows: readonly T[], delta: number): void {
 		if (!rows.length) return;
 		const current = rows.findIndex(row => this.key(row) === this.selected);
@@ -66,8 +70,7 @@ export class ListState<T> {
 	}
 	render(rows: readonly T[], width: number, height: number, label: (row: T) => string, ctx: FeatureContext): string[] {
 		const searchLine = `${this.editing ? "Search input" : "/ search"}: ${this.search || "—"}${this.editing ? " ▏ (Enter finish, Esc cancel)" : ""}`;
-		if (!rows.length) return [ctx.theme.fg("dim", "No rows match. Clear filters or change the range."), searchLine]
-			.map(line => truncateToWidth(line, Math.max(1, width)));
+		if (!rows.length) return wrap([searchLine, ctx.theme.fg("dim", "No rows match. Clear filters or change the range.")], width);
 		const current = this.current(rows)!;
 		const index = rows.indexOf(current);
 		this.reveal = Math.max(this.reveal, index + 1);
@@ -78,9 +81,8 @@ export class ListState<T> {
 			const line = truncateToWidth(`${selected ? ">" : " "} ${label(row)}`, Math.max(1, width));
 			return selected ? ctx.theme.fg("accent", line) : line;
 		});
-		return [`Rows ${start + 1}–${start + count} / ${rows.length} · selected ${index + 1} · ${this.sort} ${this.descending ? "↓" : "↑"}`, ...result,
-			"j/k move (all rows reachable) · + reveal more · a reveal all · Enter details · o/O sort/reverse",
-			searchLine].map(line => truncateToWidth(line, Math.max(1, width)));
+		return [...wrap([searchLine, `Rows ${start + 1}–${start + count} / ${rows.length} · selected ${index + 1} · ${this.sort} ${this.descending ? "↓" : "↑"}`], width), ...result,
+			...wrap(["j/k move (all rows reachable) · + reveal more · a reveal all · Enter details · o/O sort/reverse"], width)];
 	}
 }
 
@@ -89,22 +91,31 @@ export class ChartState {
 	mode = 0;
 	seriesIndex = 0;
 	point = 0;
+	private timestamp: number | null = null;
+	private selectedSeries: string | null = null;
 	readonly hidden = new Set<string>();
 	input(data: string, keys: readonly string[]): boolean {
-		if (data === "n") { this.seriesIndex = (this.seriesIndex + 1) % Math.max(1, keys.length); return true; }
+		if (data === "n") { this.seriesIndex = (this.seriesIndex + 1) % Math.max(1, keys.length); this.selectedSeries = keys[this.seriesIndex] ?? null; return true; }
 		if (data === "v") {
 			const key = keys[this.seriesIndex % Math.max(1, keys.length)];
 			if (key) this.hidden.has(key) ? this.hidden.delete(key) : this.hidden.add(key);
 			return true;
 		}
-		if (data === ",") { this.point = Math.max(0, this.point - 1); return true; }
-		if (data === ".") { this.point++; return true; }
+		if (data === ",") { this.point = Math.max(0, this.point - 1); this.timestamp = null; return true; }
+		if (data === ".") { this.point++; this.timestamp = null; return true; }
 		return false;
+	}
+	reconcile(buckets: readonly number[], keys: readonly string[]): void {
+		const point = this.timestamp === null ? -1 : buckets.indexOf(this.timestamp);
+		this.point = point >= 0 ? point : Math.max(0, Math.min(this.point, buckets.length - 1));
+		if (this.timestamp === null && buckets.length) this.timestamp = buckets[this.point];
+		const series = this.selectedSeries === null ? -1 : keys.indexOf(this.selectedSeries);
+		this.seriesIndex = series >= 0 ? series : this.seriesIndex % Math.max(1, keys.length);
+		if (this.selectedSeries === null && keys.length) this.selectedSeries = keys[this.seriesIndex];
 	}
 	render(ctx: FeatureContext, width: number, buckets: readonly number[], series: readonly CoreSeries[]): string[] {
 		if (!buckets.length || !series.length) return ["No chart observations in this range."];
-		this.point = Math.max(0, Math.min(this.point, buckets.length - 1));
-		this.seriesIndex %= Math.max(1, series.length);
+		this.reconcile(buckets, series.map(row => row.key));
 		const active = series.filter(row => !this.hidden.has(row.key));
 		const selected = series[this.seriesIndex];
 		const inspection = [`Point ${this.point + 1}/${buckets.length} · ${new Date(buckets[this.point]).toISOString()}`,

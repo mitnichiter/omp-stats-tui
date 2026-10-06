@@ -68,7 +68,9 @@ test("inspector displays copy result and routes trace identity", async () => {
 	expect(inspector.render(160)?.join("\n")).toContain("JSON copied successfully");
 	ctx.copy = async () => { throw new Error("clipboard denied"); }; inspector.handleInput("c"); await Promise.resolve();
 	expect(inspector.render(160)?.join("\n")).toContain("Copy failed: Error: clipboard denied");
-	inspector.handleInput("t"); expect(traces).toEqual(["session-7:entry-7"]); expect(inspector.active).toBe(false);
+	inspector.handleInput("t"); expect(traces).toEqual(["session-7:entry-7"]); expect(inspector.active).toBe(true);
+	expect(inspector.render(160)?.join("\n")).toContain("output-7");
+	inspector.handleInput("b"); expect(inspector.active).toBe(false);
 });
 
 test("log ignores stale range and disposed reads; global navigation survives search", async () => {
@@ -117,4 +119,63 @@ test("active list precedes secondary metrics and expanded signature contains rea
 	expect(text.indexOf("Affected models")).toBeLessThan(text.indexOf("Error signatures"));
 	errors.handleInput("\t"); text = errors.render(180, 30).join("\n");
 	expect(text.indexOf("\nFailures\n")).toBeLessThan(text.indexOf("Error signatures"));
+});
+
+test("request JSON sections collapse independently, copy the selected payload, and retry failed reads", async () => {
+	let attempts = 0;
+	const ctx = context(async <T>() => { if (++attempts === 1) throw new Error("read denied"); return payload(7) as T; });
+	const copies: string[] = [];
+	ctx.copy = async text => { copies.push(text); };
+	const inspector = new RequestDetails(ctx);
+	await inspector.open(row(7));
+	expect(inspector.render(100)?.join("\n")).toContain("read denied");
+	expect(inspector.handleInput("e")).toBe(true);
+	await Promise.resolve(); await Promise.resolve();
+	expect(inspector.render(100)?.join("\n")).toContain("output-7");
+	inspector.handleInput("C"); await Promise.resolve();
+	expect(JSON.parse(copies[0])).toEqual({ text: "output-7" });
+	inspector.handleInput("v");
+	expect(inspector.render(100)?.join("\n")).not.toContain("output-7");
+	inspector.handleInput("n"); inspector.handleInput("v");
+	expect(inspector.render(100)?.join("\n")).toContain('"entry": 7');
+	inspector.handleInput("C"); await Promise.resolve();
+	expect(JSON.parse(copies[1])).toEqual([{ entry: 7 }]);
+	inspector.handleInput("c"); await Promise.resolve();
+	expect(JSON.parse(copies[2])).toEqual(payload(7));
+});
+
+test("error panels sort independently and clearing one filter preserves the other", async () => {
+	const failures = [
+		row(1, { model: "alpha", stopReason: "error", errorMessage: "zeta failure" }),
+		row(2, { model: "beta", stopReason: "error", errorMessage: "alpha failure" }),
+		row(3, { model: "alpha", stopReason: "error", errorMessage: "alpha failure" }),
+	];
+	const feature = createRequestsFeature("errors", context(async <T>() => failures as T));
+	await feature.load("24h");
+	feature.handleInput("o"); feature.handleInput("O");
+	const sorted = feature.render(180, 40).join("\n");
+	expect(sorted).toContain("signature ↑");
+	expect(sorted.indexOf("2 · alpha failure")).toBeLessThan(sorted.indexOf("1 · zeta failure"));
+	feature.handleInput("\r");
+	feature.handleInput("\t"); feature.handleInput("\r");
+	expect(feature.render(180, 40).join("\n")).toContain("matching 1");
+	feature.handleInput("x");
+	expect(feature.render(180, 40).join("\n")).toContain("matching 2");
+	feature.handleInput("X");
+	expect(feature.render(180, 40).join("\n")).toContain("matching 3");
+	feature.handleInput("/"); feature.handleInput("beta");
+	const narrow = feature.render(24, 24).join("\n").replace(/\n/g, "");
+	expect(narrow).toContain("Search input: beta");
+	expect(feature.render(180, 40).join("\n")).toContain("Tab focus: failures");
+});
+
+test("requests without a stored id still expose fetched columns in the narrow inspector", async () => {
+	let calls = 0;
+	const inspector = new RequestDetails(context(async <T>() => { calls++; return payload(1) as T; }));
+	await inspector.open(row(1, { id: undefined, model: "unstored-model", duration: 678, ttft: 54 }));
+	const text = inspector.render(24)!.join("\n").replace(/\n/g, "");
+	expect(text).toContain("unstored-model");
+	expect(text).toContain("duration: 678");
+	expect(text).toContain("usage.cacheWrite: 4");
+	expect(calls).toBe(0);
 });

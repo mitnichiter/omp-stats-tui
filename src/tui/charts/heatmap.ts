@@ -43,6 +43,10 @@ export interface HeatmapOptions {
 	dim: (text: string) => string;
 	/** Injectable so tests are independent of the wall clock. */
 	today?: Date;
+	/** Local calendar day selected by keyboard; future cells remain absent. */
+	selectedDay?: string;
+	/** Selected-cell styling is injected from the active theme. */
+	selected?: (text: string) => string;
 }
 
 /**
@@ -74,6 +78,13 @@ export function renderHeatmap(
 ): readonly string[] {
 	const weeks = Math.max(1, opts.weeks);
 	const layout = calendarLayout(points, weeks, opts.today);
+	const selectedDate = opts.selectedDay ? new Date(`${opts.selectedDay}T12:00:00`) : undefined;
+	const selectedOffset = selectedDate
+		? Math.round((Date.UTC(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate()) -
+			Date.UTC(layout.start.getFullYear(), layout.start.getMonth(), layout.start.getDate())) / 86_400_000)
+		: -1;
+	const selectedWeek = Math.floor(selectedOffset / 7);
+	const selectedRow = selectedOffset % 7;
 
 	// Fixed at 2: the host's own gutter (usage-dashboard.ts:833), one label
 	// cell plus one space. Callers pass it through; anything else is clamped.
@@ -105,7 +116,9 @@ export function renderHeatmap(
 			if (cell === null) line += "  ";
 			// Present but no activity — drawn, so a quiet day still occupies its
 			// slot in the calendar rather than vanishing from the axis.
-			else if (cell === 0) line += `${opts.dim(emptyCell(opts.glyphs))} `;
+			else if (week === selectedWeek && dayIndex === selectedRow && opts.selected) {
+				line += `${opts.selected(cell === 0 ? emptyCell(opts.glyphs) : heatCell(opts.glyphs, cell))} `;
+			} else if (cell === 0) line += `${opts.dim(emptyCell(opts.glyphs))} `;
 			else line += `${opts.ramp[cell - 1] ?? ""}${heatCell(opts.glyphs, cell)}${FG_RESET} `;
 		}
 		return line.trimEnd();

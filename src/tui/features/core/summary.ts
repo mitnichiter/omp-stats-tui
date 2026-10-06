@@ -1,7 +1,7 @@
 import { buildAgentTokenShare, buildFolderRows, sumConversationTokens, requestStatus, type FolderRowView, type FolderTableView } from "@oh-my-pi/omp-stats/client/data/view-models";
 import { bucketAxis } from "@oh-my-pi/omp-stats/client/data/range";
 import { densify } from "@oh-my-pi/omp-stats/client/data/series";
-import { formatCompact, formatEstimatedCost, formatDurationMs, formatPercent, formatTokensPerSecond, formatMessageCost } from "@oh-my-pi/omp-stats/client/data/formatters";
+import { formatCompact, formatEstimatedCost, formatDurationMs, formatPercent, formatTokensPerSecond, formatMessageCost, formatTimestamp } from "@oh-my-pi/omp-stats/client/data/formatters";
 import type { DailyActivityPoint } from "@oh-my-pi/omp-stats/shared-types";
 import type { PanelData, RecentRequest as MessageStats } from "../../../data/api";
 import type { Range } from "../../../data/ranges";
@@ -16,7 +16,7 @@ import { RequestDetails } from "./requests";
 type SummaryId = "overview" | "projects" | "activity";
 const PROJECT_SORT: Sorters<FolderRowView> = {
 	folder: row => row.folder, cost: row => row.totalCost, requests: row => row.totalRequests,
-	tokens: row => row.conversationTokens, cacheRate: row => row.cacheRate, errorRate: row => row.errorRate,
+	tokens: row => row.conversationTokens, cacheRate: row => row.cacheRate, cacheSavings: row => row.cacheSavings, errorRate: row => row.errorRate,
 	duration: row => row.avgDuration, ttft: row => row.avgTtft, last: row => row.lastTimestamp,
 };
 const REQUEST_SORT: Sorters<MessageStats> = {
@@ -25,6 +25,13 @@ const REQUEST_SORT: Sorters<MessageStats> = {
 	cost: row => row.usage.cost.total, duration: row => row.duration, ttft: row => row.ttft, status: requestStatus,
 };
 const DAY_SORT: Sorters<DailyActivityPoint> = { day: row => row.day, requests: row => row.requests, cost: row => row.cost, tokens: row => row.totalTokens };
+function localDay(date: Date): string {
+	return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function dayDate(day: string): Date {
+	const [year, month, date] = day.split("-").map(Number);
+	return new Date(year, month - 1, date);
+}
 
 export function createSummaryFeature(id: SummaryId, ctx: FeatureContext): FeatureController {
 	return new SummaryFeature(id, ctx);
@@ -46,6 +53,8 @@ class SummaryFeature implements FeatureController {
 	private readonly costRanking = new ListState<FolderRowView>(row => row.folder, "cost", 8);
 	private readonly requestRanking = new ListState<FolderRowView>(row => row.folder, "requests", 8);
 	private readonly days = new ListState<DailyActivityPoint>(row => row.day, "day", 30);
+	private calendarDay: string | null = null;
+	private calendarEnd: string | null = null;
 	private readonly details: RequestDetails;
 	constructor(private readonly id: SummaryId, private readonly ctx: FeatureContext) { this.details = new RequestDetails(ctx); }
 	async load(range: Range): Promise<void> {
@@ -90,6 +99,17 @@ class SummaryFeature implements FeatureController {
 		const matching = this.projects.rows(scoped.filter(row => !needle || row.folder.toLowerCase().includes(needle)), PROJECT_SORT);
 		return { view, scoped, matching };
 	}
+	private selectedDay(): DailyActivityPoint {
+		const day = this.calendarDay ?? localDay(new Date(this.ctx.now()));
+		return this.data?.dailyActivity?.find(point => point.day === day) ?? { day, requests: 0, cost: 0, totalTokens: 0 };
+	}
+	private moveCalendar(delta: number): void {
+		const today = new Date(this.ctx.now());
+		const earliest = localDay(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 370));
+		const date = dayDate(this.selectedDay().day);
+		const next = localDay(new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta));
+		this.calendarDay = next < earliest ? earliest : next > localDay(today) ? localDay(today) : next;
+	}
 	render(width: number, height: number): readonly string[] {
 		const detail = this.details.render(width);
 		if (detail) return detail;
@@ -105,7 +125,7 @@ class SummaryFeature implements FeatureController {
 			const chart = this.overviewChart();
 			const needle = this.requests.search.trim().toLowerCase();
 			const rows = this.requests.rows((this.data.recent ?? []).filter(row => !needle || `${row.model} ${row.provider} ${row.folder}`.toLowerCase().includes(needle)), REQUEST_SORT);
-			const list = [this.ctx.theme.bold("Latest requests · A all requests"), ...this.requests.render(rows, width, height, row => `${row.model} · ${row.provider} · ${requestStatus(row)} · ${formatMessageCost(row, 4)} · ${formatCompact(row.usage.totalTokens)} tok`, this.ctx)];
+			const list = [this.ctx.theme.bold("Latest requests · A all requests"), ...this.requests.render(rows, width, height, row => `${row.model} · ${row.provider} · ${requestStatus(row)} · ${formatMessageCost(row, 4)} · ${formatCompact(row.usage.totalTokens)} tok · ${formatTimestamp(row.timestamp)} · ${formatDurationMs(row.duration)}`, this.ctx)];
 			const graph = [this.ctx.theme.bold(`Activity · ${chart.mode}`),
 				...(chart.mode === "cost" ? [
 					`Range cost: ${formatEstimatedCost(overall.totalCost, overall.unpricedRequests)} · unknown ${overall.unpricedRequests} requests`,
@@ -140,25 +160,38 @@ class SummaryFeature implements FeatureController {
 				[this.ctx.theme.bold("Top by requests · Enter filters folders"), ...this.requestRanking.render(requests, width, Math.min(height, 16), row => `${row.folder} · ${row.totalRequests} req · ${formatPercent(row.requestShare)}`, this.ctx)],
 			];
 			return wrap([...prefix, `Tab focus: ${["folders", "cost ranking", "request ranking"][this.focus]} · t ${this.hideTemporary ? "show" : "hide"} temporary folders`,
+				...sections[this.focus],
 				`Unfiltered totals: ${view.rows.length} folders (${view.temporaryCount} temporary) · ${view.totalRequests} requests · ${view.failedRequests} failed`,
 				`Unfiltered cost ${formatEstimatedCost(view.totalCost, view.unpricedRequests)} · ${view.unpricedRequests} unpriced · ${formatCompact(view.conversationTokens)} tokens · cache ${formatPercent(view.cacheRate)}`,
-				...sections[this.focus], ...sections.filter((_, index) => index !== this.focus).flatMap(section => ["", ...section])], width);
+				...sections.filter((_, index) => index !== this.focus).flatMap(section => ["", ...section])], width);
 		}
 		const points = this.data.dailyActivity ?? [];
 		const weeks = weeksForWidth(2, width);
-		const today = new Date(this.ctx.now());
+		const actualToday = new Date(this.ctx.now());
+		const selected = this.selectedDay();
+		let today = this.calendarEnd ? dayDate(this.calendarEnd) : actualToday;
+		const visibleStart = localDay(calendarLayout(points, weeks, today).start);
+		if (selected.day < visibleStart || selected.day > localDay(today)) {
+			const date = dayDate(selected.day);
+			const end = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 6 - (date.getDay() + 6) % 7);
+			today = end > actualToday ? actualToday : end;
+			this.calendarEnd = localDay(today);
+		}
 		const layout = calendarLayout(points, weeks, today);
 		const needle = this.days.search.trim().toLowerCase();
 		const rows = this.days.rows(points.filter(point => !needle || point.day.includes(needle)), DAY_SORT);
 		const list = [this.ctx.theme.bold("Recorded calendar days"), ...this.days.render(rows, width, height, point => `${point.day} · ${point.requests} req · ${formatEstimatedCost(point.cost, 0)} · ${formatCompact(point.totalTokens)} tok`, this.ctx)];
 		const calendar = [this.ctx.theme.bold("Local-day activity calendar"),
-			...renderHeatmap(points, { innerWidth: width, labelWidth: 2, weeks, glyphs: glyphsFor(this.ctx.theme.getSymbolPreset()), ramp: [1, 2, 3, 4].map(level => heatRamp(this.ctx.theme, level)), dim: text => this.ctx.theme.fg("dim", text), today }),
-			`Visible ${weeks} weeks: ${layout.totalRequests} requests · ${formatEstimatedCost(layout.totalCost, 0)}`];
-		return wrap([...prefix, "Calendar reads the latest 371 local days, independently of the stats range selector.",
+			`Selected ${selected.day} · ${selected.requests} requests · ${formatEstimatedCost(selected.cost, 0)} · ${formatCompact(selected.totalTokens)} tokens`,
+			"j/k day · h/l week · t today · Enter day details",
+			...renderHeatmap(points, { innerWidth: width, labelWidth: 2, weeks, glyphs: glyphsFor(this.ctx.theme.getSymbolPreset()), ramp: [1, 2, 3, 4].map(level => heatRamp(this.ctx.theme, level)), dim: text => this.ctx.theme.fg("dim", text), today, selectedDay: selected.day, selected: text => this.ctx.theme.fg("accent", text) }),
+			`Visible ${weeks} weeks: ${localDay(layout.start)}–${localDay(today)} · ${layout.totalRequests} requests · ${formatEstimatedCost(layout.totalCost, 0)}`];
+		return wrap([...prefix, `Tab focus: ${this.focus === 0 ? "recorded days" : "calendar"}`,
+			...(this.focus === 0 ? list : calendar),
+			"Calendar reads the latest 371 local days, independently of the stats range selector.",
 			"Narrow calendars show fewer weeks; every fetched recorded day remains reachable below.",
-			`Tab focus: ${this.focus === 0 ? "recorded days" : "calendar"}`,
 			...(points.length === 0 ? ["No recorded daily activity in the calendar lookback."] : []),
-			...(this.focus === 0 ? list : calendar), "", ...(this.focus === 0 ? calendar : list)], width);
+			"", ...(this.focus === 0 ? calendar : list)], width);
 	}
 	get inputMode(): "text" | "navigation" {
 		return (this.id === "overview" ? this.requests.editing : this.id === "projects" ? this.projects.editing : this.days.editing)
@@ -211,6 +244,10 @@ class SummaryFeature implements FeatureController {
 			else if (data === "\t") { this.focus = (this.focus + 1) % 2; handled = true; }
 			else if (data === "/") { this.focus = 0; handled = this.days.input(data, rows); }
 			else if (this.focus === 0 && (data === "\r" || data === "\n")) { this.expanded = this.days.current(rows) ?? null; handled = true; }
+			else if (this.focus === 1 && (data === "j" || data === "k" || data === "\x1b[B" || data === "\x1b[A" || data === "h" || data === "l")) {
+				this.moveCalendar(data === "h" ? -7 : data === "l" ? 7 : data === "k" || data === "\x1b[A" ? -1 : 1); handled = true;
+			} else if (this.focus === 1 && data === "t") { this.calendarDay = localDay(new Date(this.ctx.now())); this.calendarEnd = null; handled = true; }
+			else if (this.focus === 1 && (data === "\r" || data === "\n")) { this.expanded = this.selectedDay(); handled = true; }
 			else if (this.focus === 0 && (data === "o" || data === "O")) {
 				if (data === "O") this.days.descending = !this.days.descending;
 				else { const sorts = Object.keys(DAY_SORT); this.days.sort = sorts[(sorts.indexOf(this.days.sort) + 1) % sorts.length]; }

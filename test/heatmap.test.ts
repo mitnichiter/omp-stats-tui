@@ -93,6 +93,43 @@ test("calendar advances local dates across a daylight-saving transition", () => 
 	}
 });
 
+test("calendar selection identifies active and quiet local days without selecting future or hidden dates", () => {
+	const selection = (cell: string) => `\x1b[7m${cell}\x1b[27m`;
+	for (const [day, row, column] of [
+		["2026-10-02", 5, 6],
+		["2026-10-03", 6, 6],
+	] as const) {
+		const rows = renderHeatmap([point("2026-10-02", 100)], {
+			...opts(4), today: TODAY, selectedDay: day, selected: selection,
+		});
+		const selected = rows[row].indexOf("\x1b[7m");
+		expect(Bun.stringWidth(rows[row].slice(0, selected))).toBe(column);
+		expect(rows.filter(line => line.includes("\x1b[7m"))).toHaveLength(1);
+		expect(Bun.stringWidth(rows[row])).toBeLessThanOrEqual(10);
+	}
+	for (const day of ["2026-10-06", "2026-09-01"]) {
+		expect(renderHeatmap([], {
+			...opts(4), today: TODAY, selectedDay: day, selected: selection,
+		}).join("\n")).not.toContain("\x1b[7m");
+	}
+});
+
+test("calendar selection uses local dates across daylight saving changes", () => {
+	const previous = process.env.TZ;
+	process.env.TZ = "America/New_York";
+	try {
+		const rows = renderHeatmap([], {
+			...opts(2), today: new Date(2026, 2, 9, 0, 30),
+			selectedDay: "2026-03-09", selected: cell => `\x1b[7m${cell}\x1b[27m`,
+		});
+		expect(Bun.stringWidth(rows[1].slice(0, rows[1].indexOf("\x1b[7m")))).toBe(4);
+		expect(rows.slice(2).join("\n")).not.toContain("\x1b[7m");
+	} finally {
+		if (previous === undefined) delete process.env.TZ;
+		else process.env.TZ = previous;
+	}
+});
+
 test("day rows label all seven days, Monday first", () => {
 	// usage-dashboard.ts:293 + :862 — HEATMAP_DAY_LABELS is all seven days;
 	// the M/W/F-only set is the native-chart rows (L368), not the ANSI grid.

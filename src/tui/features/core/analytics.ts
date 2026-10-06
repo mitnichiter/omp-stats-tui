@@ -3,10 +3,11 @@ import { formatCost, formatDurationMs, formatEstimatedCost, formatInteger, forma
 import { bucketAxis, rangeMeta } from "@oh-my-pi/omp-stats/client/data/range";
 import { densify, pivotSeries } from "@oh-my-pi/omp-stats/client/data/series";
 import { buildCostSummary, buildModelPerformanceLookup, buildToolRows, sumConversationTokens, type ModelPerformanceDataPoint, type ToolRowView } from "@oh-my-pi/omp-stats/client/data/view-models";
-import type { ToolDashboardStats } from "@oh-my-pi/omp-stats/shared-types";
+import type { ModelStats, ToolDashboardStats } from "@oh-my-pi/omp-stats/shared-types";
 import type { CostPayload, ModelDashboardPayload } from "../../../data/api";
 import type { Range } from "../../../data/ranges";
 import { renderSeriesChart } from "../../charts/compose";
+import { renderSparkline } from "../../charts/sparkline";
 import type { FeatureContext, FeatureController } from "../types";
 import { ChartState, ListState, fields, wrap, type CoreSeries, type Sorters } from "./shared";
 
@@ -53,6 +54,9 @@ class AnalyticsFeature implements FeatureController {
 	private expanded: { table: number; key: string } | null = null;
 	private readonly chart = new ChartState();
 	private readonly performanceChart = new ChartState();
+	private readonly trendChart = new ChartState();
+	private detailMode: "performance" | "trend" = "performance";
+	private trends = new Map<string, CoreSeries>();
 	private readonly tables: Table[];
 	private buckets: number[] = [];
 	private modes: { label: string; series: CoreSeries[]; unit: string }[] = [];
@@ -90,6 +94,7 @@ class AnalyticsFeature implements FeatureController {
 				if (this.closed || generation !== this.generation) return;
 				this.setTools(data, range);
 			}
+			this.chart.reconcile(this.buckets, this.mode()?.series.map(series => series.key) ?? []);
 			for (let i = 0; i < this.tables.length; i++) {
 				const t = this.tables[i];
 				if (t.state.selected === null) t.state.selected = this.rows(i)[0]?.key ?? null;
@@ -117,12 +122,18 @@ class AnalyticsFeature implements FeatureController {
 		const totals = densify(data.modelSeries, this.buckets, p => p.requests);
 		this.modes = [{ label: "Request share", series: shares(counts, totals), unit: "share" }, { label: "Request counts", series: counts, unit: "requests" }];
 		this.performance = buildModelPerformanceLookup(data.modelPerformanceSeries);
+		this.trends = new Map(denseSeries(pivotSeries(data.modelSeries, { buckets: this.buckets, key: p => modelKey(p.model, p.provider), label: key => {
+			const model = data.byModel.find(model => modelKey(model.model, model.provider) === key);
+			return model ? identity(model.model, model.provider) : key;
+		}, value: p => p.requests })).map(series => [series.key, series]));
 		this.tables[0].rows = data.byModel.map(m => row(modelKey(m.model, m.provider), identity(m.model, m.provider), { ...m, conversationTokens: sumConversationTokens(m) }, {
 			...m, totalCost: formatEstimatedCost(m.totalCost, m.unpricedRequests), errorRate: formatPercent(m.errorRate), cacheRate: formatPercent(m.cacheRate), cacheSavings: formatPercent(m.cacheSavings),
 			avgDuration: formatDurationMs(m.avgDuration), avgTtft: formatDurationMs(m.avgTtft), avgTokensPerSecond: `${formatTokensPerSecond(m.avgTokensPerSecond)} tok/s`, conversationTokens: sumConversationTokens(m),
 		}));
 		const sum = (key: "totalRequests" | "failedRequests" | "totalCost" | "unpricedRequests") => data.byModel.reduce((total, m) => total + m[key], 0);
+		const top = data.byModel.reduce<ModelStats | undefined>((best, model) => !best || model.totalRequests > best.totalRequests ? model : best, undefined);
 		this.summary = [`Models: ${data.byModel.length} · Providers: ${new Set(data.byModel.map(m => m.provider)).size} · Requests: ${formatInteger(sum("totalRequests"))} · Failed: ${formatInteger(sum("failedRequests"))}`, `API-equivalent estimate: ${formatEstimatedCost(sum("totalCost"), sum("unpricedRequests"))} · Unpriced requests: ${formatInteger(sum("unpricedRequests"))}`];
+		this.summary.push(`Most used: ${top ? `${identity(top.model, top.provider)} · ${formatPercent(top.totalRequests / Math.max(1, sum("totalRequests")))} of requests` : "—"}`);
 	}
 
 	private setCosts(data: CostPayload, range: Range): void {
@@ -151,6 +162,7 @@ class AnalyticsFeature implements FeatureController {
 		});
 		const priced = summary.requests - summary.unpricedRequests;
 		this.summary = [`API-equivalent estimate: ${formatEstimatedCost(summary.totalCost, summary.unpricedRequests)} · Requests: ${formatInteger(summary.requests)} · Unpriced requests: ${formatInteger(summary.unpricedRequests)}`, `Average per active day: ${formatEstimatedCost(summary.avgDailyCost, summary.unpricedRequests)} · Unknown requests: ${formatInteger(summary.unpricedRequests)} · Active days: ${summary.activeDays} · Per priced request: ${priced > 0 ? formatCost(summary.totalCost / priced) : "N/A"} · Unknown requests excluded: ${formatInteger(summary.unpricedRequests)}`, "Unpriced subscription usage is excluded, not free. Estimates use public API rates."];
+		this.summary.push(`Top model: ${summary.topModel ? `${identity(summary.topModel.model, summary.topModel.provider)} · ${formatEstimatedCost(summary.topModel.cost, summary.topModel.unpricedRequests)} · ${formatPercent(summary.topModel.share)} of priced estimate` : "Nothing priced yet"}`);
 	}
 
 	private setTools(data: ToolDashboardStats, range: Range): void {
@@ -158,6 +170,7 @@ class AnalyticsFeature implements FeatureController {
 		const calls = denseSeries(pivotSeries(data.series, { buckets: this.buckets, key: p => p.tool, value: p => p.calls, limit: 6 }));
 		const errors = denseSeries(pivotSeries(data.series, { buckets: this.buckets, key: p => p.tool, value: p => p.errors, limit: 6 }));
 		this.modes = [{ label: "Tool call counts (all tools)", series: calls, unit: "calls" }, { label: "Tool error counts (all tools)", series: errors, unit: "errors" }, { label: "Tool call share (all tools)", series: shares(calls, densify(data.series, this.buckets, p => p.calls)), unit: "share" }, { label: "Tool error share (all tools)", series: shares(errors, densify(data.series, this.buckets, p => p.errors)), unit: "share" }];
+		this.trends = new Map(denseSeries(pivotSeries(data.series, { buckets: this.buckets, key: p => p.tool, value: p => p.calls })).map(series => [series.key, series]));
 		const display = (t: ToolRowView): Record<string, unknown> => ({ ...t, costShare: formatEstimatedCost(t.costShare, t.unpricedRequestsShare), errorRate: formatPercent(t.errorRate), callFraction: formatPercent(t.callFraction), tokenFraction: formatPercent(t.tokenFraction), costFraction: formatPercent(t.costFraction) });
 		this.tables[0].rows = buildToolRows(data.byTool).map(t => row(t.tool, t.tool, { ...t }, display(t), t.tool));
 		// Reuse upstream rates/shares, retaining each tool/provider/model identity.
@@ -181,23 +194,30 @@ class AnalyticsFeature implements FeatureController {
 	private mode() { return this.modes[this.chart.mode % Math.max(1, this.modes.length)]; }
 
 	render(width: number, height: number): readonly string[] {
-		const lines = [`${this.id.toUpperCase()} · ${this.range} · Focus: ${this.focus === 0 ? "chart" : this.tables[this.focus - 1].title}`, ...this.summary];
+		const lines = [`${this.id.toUpperCase()} · ${this.range} · Focus: ${this.focus === 0 ? "chart" : this.tables[this.focus - 1].title}`];
 		const filter = this.toolFilter !== null && this.toolNames.includes(this.toolFilter) ? this.toolFilter : null;
 		if (this.loading) lines.push(this.ctx.theme.fg("dim", "Loading… Previous observations remain visible."));
 		if (this.error) lines.push(this.ctx.theme.fg("error", this.error));
 		if (this.expanded) {
 			const selected = this.rows(this.expanded.table).find(r => r.key === this.expanded?.key);
 			if (selected) {
-				lines.push(`Details: ${selected.label}`, ...fields(selected.display));
-				if (this.id === "models") lines.push(...this.renderPerformance(selected.key, width));
+				lines.push(`Details: ${selected.label}`);
+				if (this.id === "models" && this.detailMode === "performance") lines.push(...this.renderPerformance(selected.key, width), "m requests trend");
+				else if (this.id === "models" || this.id === "tools") {
+					const trend = this.trends.get(this.id === "tools" ? selected.tool ?? selected.key : selected.key);
+					lines.push(this.id === "tools" ? "Tool call trend (all models)" : "Model request trend", ...this.trendChart.render(this.ctx, width, this.buckets, trend ? [trend] : []), ...(this.id === "models" ? ["m performance chart"] : []));
+				}
+				lines.push(...fields(selected.display));
 				lines.push("b/Esc back · Tab focus · q close");
 				return wrap(lines, width);
 			}
 		}
 		// Focused controls precede charts so selection/search stays visible in short terminals.
 		if (this.focus > 0) lines.push(...this.renderTable(this.focus - 1, width, height, filter));
+		if (this.focus > 0) lines.push(...this.summary);
 		const mode = this.mode();
 		if (mode) {
+			this.chart.reconcile(this.buckets, mode.series.map(series => series.key));
 			lines.push(mode.label);
 			const unknown = this.unpriced.reduce((total, count) => total + count, 0);
 			if (this.id === "costs" && unknown > 0 && mode.series.every(s => s.values.every(value => value === 0))) {
@@ -217,23 +237,28 @@ class AnalyticsFeature implements FeatureController {
 				for (const p of this.costs?.costSeries ?? []) if (p.timestamp === timestamp) lines.push(`${identity(p.model, p.provider)} · Estimate: ${formatEstimatedCost(p.cost, p.unpricedRequests)} · Requests: ${formatInteger(p.requests)} · Unpriced requests: ${formatInteger(p.unpricedRequests)}`);
 			}
 		}
+		if (this.focus === 0) lines.push(...this.summary);
 		for (let i = 0; i < this.tables.length; i++) {
 			if (i !== this.focus - 1) lines.push(...this.renderTable(i, width, height, filter));
 		}
-		lines.push(`Tab focus · m mode · n/v legend · ,/. point · Enter ${this.id === "tools" ? "select tool/details" : "details"}${this.id === "tools" ? " · f cycle tool filter · x reset" : ""} · b/Esc back/clear · q close`);
+		lines.push(`Tab focus · m mode · n/v legend · ,/. point · Enter ${this.id === "tools" ? "select tool/details · d tool details" : "details"}${this.id === "tools" ? " · f cycle tool filter · x reset" : ""} · b/Esc back/clear · q close`);
 		return wrap(lines, width);
 	}
 
 	private renderTable(index: number, width: number, height: number, filter: string | null): string[] {
 		const table = this.tables[index];
-		return [`${this.focus === index + 1 ? "> " : ""}${table.title}${this.id === "tools" && index === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : ""}`,
-			...table.state.render(this.rows(index), width, Math.max(12, Math.floor(height / this.tables.length)), row => `${row.label} · ${Object.entries(row.display).filter(([key]) => !["model", "provider", "tool", "key"].includes(key)).map(([key, value]) => `${key}: ${value}`).join(" · ")}`, this.ctx)];
+		return [`${this.focus === index + 1 ? "> " : ""}${table.title}${this.id === "tools" ? ` · d details${index === 1 ? ` · Tool filter: ${filter ?? "All tools"}` : " · Enter filters model table"}` : ""}`,
+			...table.state.render(this.rows(index), width, Math.max(12, Math.floor(height / this.tables.length)), row => {
+				const trend = this.trends.get(this.id === "tools" ? row.tool ?? row.key : row.key);
+				const spark = trend ? ` · trend ${renderSparkline(trend.values, { width: Math.min(12, Math.max(1, width)), preset: this.ctx.theme.getSymbolPreset(), accent: text => this.ctx.theme.fg("accent", text) })}` : "";
+				return `${row.label}${spark} · ${Object.entries(row.display).filter(([key]) => !["model", "provider", "tool", "key"].includes(key)).map(([key, value]) => `${key}: ${value}`).join(" · ")}`;
+			}, this.ctx)];
 	}
 
 	private renderPerformance(key: string, width: number): string[] {
 		const points = this.performance.get(key) ?? [];
 		if (!points.length) return ["No performance samples. Timing is recorded for streamed responses."];
-		this.performanceChart.point = Math.min(this.performanceChart.point, points.length - 1);
+		this.performanceChart.reconcile(points.map(point => point.timestamp), ["tps", "ttft"]);
 		const p = points[this.performanceChart.point];
 		const series = [{ key: "tps", label: "Throughput (tok/s)", values: points.map(p => p.avgTokensPerSecond ?? 0) }, { key: "ttft", label: "TTFT (seconds)", values: points.map(p => p.avgTtftSeconds ?? 0) }];
 		const lines = [`Performance point ${this.performanceChart.point + 1}/${points.length} · ${new Date(p.timestamp).toISOString()} · Requests: ${formatInteger(p.requests)}`, `Throughput: ${formatTokensPerSecond(p.avgTokensPerSecond)} tok/s · TTFT: ${p.avgTtftSeconds === null ? "—" : `${p.avgTtftSeconds}s`}`, ...series.map((s, i) => `${i === this.performanceChart.seriesIndex % series.length ? ">" : " "} ${this.performanceChart.hidden.has(s.key) ? "off" : "on"} ${s.label}`)];
@@ -266,8 +291,12 @@ class AnalyticsFeature implements FeatureController {
 			else this.toolFilter = this.toolNames[this.toolFilter === null ? 0 : this.toolNames.indexOf(this.toolFilter) + 1] ?? null;
 			this.expanded = null;
 			consumed = true;
-		} else if (this.expanded && this.id === "models" && this.performanceChart.input(data, ["tps", "ttft"])) consumed = true;
-		else if (data === "m") { this.chart.mode = (this.chart.mode + 1) % Math.max(1, this.modes.length); consumed = true; }
+		} else if (this.expanded && this.rows(this.expanded.table).some(row => row.key === this.expanded?.key) && (this.id === "models" || this.id === "tools")) {
+			const selected = this.rows(this.expanded.table).find(row => row.key === this.expanded?.key);
+			if (this.id === "models" && data === "m") { this.detailMode = this.detailMode === "performance" ? "trend" : "performance"; consumed = true; }
+			else if (this.id === "models" && this.detailMode === "performance") consumed = this.performanceChart.input(data, ["tps", "ttft"]);
+			else consumed = this.trendChart.input(data, selected ? [this.id === "tools" ? selected.tool ?? selected.key : selected.key] : []);
+		} else if (data === "m") { this.chart.mode = (this.chart.mode + 1) % Math.max(1, this.modes.length); consumed = true; }
 		else if (this.focus === 0) consumed = this.chart.input(data, this.mode()?.series.map(s => s.key) ?? []);
 		else if (active) {
 			const rows = this.rows(this.focus - 1);
@@ -275,11 +304,11 @@ class AnalyticsFeature implements FeatureController {
 				if (data === "O") active.state.descending = !active.state.descending;
 				else { const keys = Object.keys(sorters(active.rows)); active.state.sort = keys[(keys.indexOf(active.state.sort) + 1) % Math.max(1, keys.length)] ?? active.state.sort; }
 				consumed = true;
-			} else if (data === "\r" || data === "\n") {
+			} else if (data === "\r" || data === "\n" || this.id === "tools" && data === "d") {
 				const selected = active.state.current(rows);
 				if (selected) {
 					active.state.selected = selected.key;
-					if (this.id === "tools" && this.focus === 1) { this.toolFilter = this.toolFilter === selected.tool ? null : selected.tool ?? null; this.expanded = null; }
+					if (this.id === "tools" && this.focus === 1 && data !== "d") { this.toolFilter = this.toolFilter === selected.tool ? null : selected.tool ?? null; this.expanded = null; }
 					else this.expanded = this.expanded?.table === this.focus - 1 && this.expanded.key === selected.key ? null : { table: this.focus - 1, key: selected.key };
 				}
 				consumed = true;

@@ -252,3 +252,75 @@ test("a remembered tool pick is temporarily inactive, not erased, when absent fr
 	await feature.load("all");
 	expect(feature.render(180, 60).map(stripForTest).join("\n")).toContain("Tool filter: alpha");
 });
+
+test("model request trends expose identities outside the top chart and retain inspected timestamps across refresh", async () => {
+	let payload: ModelDashboardPayload = {
+		byModel: Array.from({ length: 8 }, (_, index) => ({ ...MODELS.byModel[0], model: `rank-${index}`, totalRequests: 20 - index })),
+		modelSeries: Array.from({ length: 8 }, (_, index) => ({ timestamp: NOW, model: `rank-${index}`, provider: "provider-a", requests: 20 - index })),
+		modelPerformanceSeries: [],
+	};
+	const ctx = context(payload);
+	ctx.reader.api = async <T>() => payload as T;
+	const feature = createAnalyticsFeature("models", ctx);
+	await feature.load("all");
+	feature.handleInput("\t"); feature.handleInput("/"); feature.handleInput("rank-7"); feature.handleInput("\r"); feature.handleInput("\r");
+	feature.handleInput("m");
+	let text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain("Model request trend");
+	expect(text).toContain("rank-7 · provider-a: 13");
+	payload = { ...payload, modelSeries: [...payload.modelSeries, { timestamp: NOW - DAY, model: "rank-7", provider: "provider-a", requests: 4 }] };
+	await feature.load("all");
+	text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain(`Point 2/2 · ${new Date(NOW).toISOString()}`);
+	expect(text).toContain("rank-7 · provider-a: 13");
+	feature.handleInput(",");
+	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("rank-7 · provider-a: 4");
+});
+
+test("tool details expose every by-tool metric and per-tool trend without changing the model filter", async () => {
+	const feature = createAnalyticsFeature("tools", context(TOOLS));
+	await feature.load("all");
+	feature.handleInput("\t"); feature.handleInput("d");
+	let text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain("Details: alpha");
+	expect(text).toContain("Tool call trend (all models)");
+	expect(text).toContain("alpha: 10");
+	expect(text).toContain("resultChars: 40");
+	expect(text).toContain("argsChars: 20");
+	feature.handleInput("b");
+	text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain("Tool filter: All tools");
+	feature.handleInput("\r");
+	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("Tool filter: alpha");
+});
+
+test("chart legend selection retains the tool identity when ranking changes and earlier buckets arrive", async () => {
+	let payload = TOOLS;
+	const ctx = context(payload);
+	ctx.reader.api = async <T>() => payload as T;
+	const feature = createAnalyticsFeature("tools", ctx);
+	await feature.load("all"); feature.handleInput("n"); feature.render(100, 40);
+	payload = { ...TOOLS, series: [...TOOLS.series, { timestamp: NOW - DAY, tool: "beta", calls: 20, errors: 1 }] };
+	await feature.load("all");
+	let text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain(`Point 2/2 · ${new Date(NOW).toISOString()}`);
+	expect(text).toContain("> on beta: 5");
+	feature.handleInput("v");
+	text = feature.render(100, 40).map(stripForTest).join("\n");
+	expect(text).toContain("> off beta: 5");
+	expect(text).toContain("on alpha: 10");
+});
+
+test("a model detail absent from the new range cannot trap the visible table keyboard", async () => {
+	let payload = MODELS;
+	const ctx = context(payload);
+	ctx.reader.api = async <T>() => payload as T;
+	const feature = createAnalyticsFeature("models", ctx);
+	await feature.load("all");
+	feature.handleInput("\t"); feature.handleInput("\r");
+	payload = { ...MODELS, byModel: [{ ...MODELS.byModel[0], model: "new-model" }, { ...MODELS.byModel[0], model: "other-model", totalRequests: 1 }] };
+	await feature.load("7d");
+	expect(feature.handleInput("j")).toBe(true);
+	feature.handleInput("\r");
+	expect(feature.render(100, 40).map(stripForTest).join("\n")).toContain("Details: other-model · provider-a");
+});
