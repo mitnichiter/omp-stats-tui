@@ -66,6 +66,21 @@ jobs:
       - name: Assert the dependency patch is applied
         run: bun run verify:patch
 
+      # NO `env:` HERE, DELIBERATELY. `COLORTERM`/a TTY decide whether the host
+      # resolves colour as truecolor (`38;2;R;G;B`) or 8-bit (`38;5;N`), and this
+      # suite used to fail on the 8-bit reading of three sidebar ink assertions
+      # — the ones in `test/chrome.test.ts` that compare what a run was painted
+      # with. They now compare the TOKEN the renderer asked for, which is the
+      # same on the wire in either encoding, so the runner's terminal is not a
+      # test input. Adding `COLORTERM: truecolor` here would put that back to
+      # green without putting the 8-bit terminal back under test.
+      #
+      # The 8-bit reading is pinned by "the ink ladder reads the same tokens out
+      # of an 8-bit rendering", which builds the `38;5;N` form itself from
+      # `getColorHex` + Bun's quantiser, so it runs the same on this runner and on
+      # a developer's truecolor terminal. The weight cue is the same story:
+      # `theme.bold` is a no-op with no TTY, so the assertion is made against
+      # `theme.bold`'s own escape and only when the host can emit one.
       - name: Test
         run: bun test
 

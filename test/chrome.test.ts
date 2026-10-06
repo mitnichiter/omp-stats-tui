@@ -47,7 +47,7 @@ import {
 	sidebar,
 	topbar,
 } from "../src/tui/chrome";
-import { SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
+import { SELECTION_BG, SIDEBAR_INK, TAB_INK } from "../src/tui/palette";
 import { __testing, SELECTABLE_SCREENS, panelAction } from "../src/tui/panel";
 import type { SyncEvent } from "../src/sync/client";
 import { liveData } from "./fixtures/panel";
@@ -55,69 +55,117 @@ import { liveData } from "./fixtures/panel";
 ensureThemeSync();
 
 const strip = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
-/** The selectedBg escape prefix, without regex: strip the trailing bg reset. */
-const _bg = theme.bg("selectedBg", "").split("x")[0] ?? "";
 const ESC = String.fromCharCode(27);
-const ACTIVE_BG = _bg.endsWith(ESC + "[49m") ? _bg.slice(0, -(ESC + "[49m").length) : _bg;
-
+const FG_RESET = `${ESC}[39m`;
+const BG_RESET = `${ESC}[49m`;
 const SGR = /\x1b\[([0-9;]*)m/g;
-const DEFAULT_FG = theme.getColorHex("text").toLowerCase();
+
+type ThemeColor = Parameters<typeof theme.fg>[0];
+type ThemeBg = Parameters<typeof theme.bg>[0];
 
 /**
- * The EFFECTIVE foreground colour of every visible run in `line`, in order,
- * resolved the way a terminal resolves it rather than by scanning for the
- * escapes we happened to write.
+ * The SGR the host writes to put `token` on the wire, with no payload between it
+ * and the trailing reset.
  *
- * This exists because the escape-based approach cannot see the `text` token at
- * all: `text` IS the terminal's default foreground, so `theme.fg("text", …)`
- * emits NO colour SGR at all. A test looking for `\x1b[38;2;…` would therefore
- * report the ink-1 heading as "has no colour", which is exactly backwards — and
- * it is why `SIDEBAR_INK.headingActive` is `text`: the web's `--ink-1` IS the
- * default text colour, so the faithful terminal rendering of it is no escape.
+ * `theme.fg(token, "")` is already exactly that — a zero-length payload between
+ * the same two escapes the renderer writes around real text — so splitting on
+ * the reset leaves the select sequence alone.
  *
- * Each SGR is applied to a running foreground state; the gaps between SGRs that
- * contain visible characters become entries. Background and weight sequences
- * leave the foreground alone.
+ * `text` selects NOTHING. It IS the terminal's default foreground, which is why
+ * `SIDEBAR_INK.headingActive` and `.rowActive` are `text` (the web's `--ink-1`
+ * IS the default text colour), and so its escape is the empty string.
+ *
+ * WHY A PREFIX AND NOT A COLOUR. Under `256color` the host quantises on the way
+ * out, so the wire carries `38;5;N` where a truecolor host carries
+ * `38;2;R;G;B` for the SAME token — `getColorHex("dim")` says `#5f6673` while an
+ * 8-bit host writes index 242. Decoding those parameters would turn every
+ * assertion below into a claim about the host's quantiser, which is a property
+ * of the runner's TTY rather than of this repo: the tests then go red on CI for
+ * saying nothing about the palette, and go green again on a maintainer's laptop
+ * for the same reason. Nothing here decodes a parameter. Both sides of every
+ * comparison come from the same encoder in the same process, so the answer is
+ * the same in either encoding.
  */
-const inksIn = (line: string): string[] => {
+const inkEscape = (token: ThemeColor): string => theme.fg(token, "").split(FG_RESET)[0] ?? "";
+
+/** The `--selected` band prefix, {@link inkEscape} on the background axis. */
+const ACTIVE_BG = theme.bg(SELECTION_BG.band, "").split(BG_RESET)[0] ?? "";
+
+/**
+ * The tokens the sidebar can paint with, deduplicated. Several ROLES share one
+ * token (`headingActive`, `rowActive` and `rowHover` are all the default
+ * foreground) and a role is not an identity — the theme token is, so that is
+ * what every assertion in this file compares.
+ */
+const INK_TOKENS: readonly ThemeColor[] = [...new Set(Object.values(SIDEBAR_INK))];
+
+/** The inverse map every ink assertion in this file reads through: from the
+ * escape on the wire back to the token that asked for it, for the live
+ * rendering in whatever colour mode this process resolved. */
+const INK_BY_ESCAPE: ReadonlyMap<string, ThemeColor> = new Map(
+	INK_TOKENS.map(token => [inkEscape(token), token]),
+);
+
+/**
+ * The TOKEN every visible run of `line` was painted with, in order.
+ *
+ * Each SGR is applied to a running foreground state exactly as a terminal would
+ * apply it, and the gaps between SGRs that contain visible characters become
+ * entries. Background and weight sequences leave the foreground alone.
+ *
+ * `\x1b[39m` and a bare full reset both put the foreground back to the terminal
+ * default, which is the `text` token — it emits no select escape at all, only a
+ * trailing reset — and "unset" is not a state the wire can express.
+ *
+ * An escape that no declared token asked for is reported AS ITSELF rather than
+ * dropped, so a run wearing an undeclared colour fails the assertion that names
+ * its position instead of quietly vanishing from the array.
+ */
+const resolveInks = (line: string, lookup: ReadonlyMap<string, ThemeColor>): string[] => {
 	const runs: string[] = [];
-	let current = DEFAULT_FG;
+	let current: string = "text";
 	let cursor = 0;
 	for (const match of line.matchAll(SGR)) {
 		if (line.slice(cursor, match.index).trim() !== "") runs.push(current);
 		const params = match[1] ?? "";
-		if (params === "39") current = DEFAULT_FG;
-		else if (params.startsWith("38;2;")) {
-			// `"38;2;"` is FIVE characters — slice(6) silently drops the red
-			// channel's first digit and every colour comes back wrong.
-			const [r, g, b] = params.slice(5).split(";").map(Number);
-			current = `#${[r, g, b].map(v => (v ?? 0).toString(16).padStart(2, "0")).join("")}`;
-		}
+		if (params === "" || params === "0" || params === "39") current = "text";
+		else if (params.startsWith("38;")) current = lookup.get(match[0]) ?? match[0];
 		cursor = match.index + match[0].length;
 	}
 	if (line.slice(cursor).trim() !== "") runs.push(current);
 	return runs;
 };
 
+/** {@link resolveInks} over the live rendering. */
+const inksIn = (line: string): string[] => resolveInks(line, INK_BY_ESCAPE);
 
 /**
- * The hex a run of `colour` ACTUALLY renders as on this terminal.
- *
- * Not `getColorHex`. Under `256color` the host quantises on the way out, so
- * `getColorHex("dim")` says `#5f6673` while the escape on the wire carries
- * `#056673` — and a test comparing the two fails on every level at once while
- * saying nothing about the palette. This reads the quantised value back out of
- * a real escape, which is the only number a reader's terminal ever sees.
- *
- * `text` emits NO colour SGR at all, because it IS the default foreground, so
- * it resolves to the same default {@link inksIn} starts from.
+ * `token` as an 8-bit terminal receives it: the index the host's quantiser
+ * picks out of the 256-colour palette. Derived from `getColorHex` plus Bun's own
+ * quantiser rather than from `theme.fg`, so it is `38;5;N` whether or not the
+ * runner happens to have a truecolor terminal. That is what lets the test below
+ * pin the 8-bit path WITHOUT asking the environment for it.
  */
-const hexOf = (colour: Parameters<typeof theme.fg>[0]): string => {
-	const sgr = /\x1b\[38;2;(\d+);(\d+);(\d+)m/.exec(theme.fg(colour, ""));
-	if (!sgr) return DEFAULT_FG;
-	const [, r, g, b] = sgr;
-	return `#${[r, g, b].map(v => Number(v).toString(16).padStart(2, "0")).join("")}`;
-};
+const eightBitInkEscape = (token: ThemeColor): string =>
+	token === "text" ? "" : Bun.color(theme.getColorHex(token), "ansi-256") ?? "";
+
+const EIGHT_BIT_BY_ESCAPE: ReadonlyMap<string, ThemeColor> = new Map(
+	INK_TOKENS.map(token => [eightBitInkEscape(token), token]),
+);
+
+/**
+ * Every SELECTING foreground on `line`, re-emitted the way an 8-bit terminal
+ * reads it. `\x1b[39m` is deliberately left alone: the default foreground is not
+ * a colour, so quantising it would be inventing something, and deleting it
+ * would drop the reset that ends the run before it.
+ */
+const asEightBit = (line: string): string =>
+	line.replace(
+		SGR,
+		(esc, params: string) =>
+			params.startsWith("38;") ? eightBitInkEscape(INK_BY_ESCAPE.get(esc) ?? "text") : esc,
+	);
+
 
 /** Frame row index of a nav GROUP HEADING, derived from NAV_GROUPS. These used
  * to be the literals 4 and 8, which shifted the moment `providers` joined Usage
@@ -251,9 +299,9 @@ test("the active sidebar row wears the web's selected fill, with the accent ONLY
 	expect(active!).toContain(ACTIVE_BG);
 	// Exactly ONE accent run on the row: the icon. Label and cursor are ink-1,
 	// and the jump hint is ink-4 — the web's own three rungs for that row.
-	expect(inksIn(active!).filter(hex => hex === hexOf(SIDEBAR_INK.iconActive))).toHaveLength(1);
-	expect(inksIn(active!)).toContain(hexOf(SIDEBAR_INK.rowActive));
-	expect(inksIn(active!).at(-1)).toBe(hexOf(SIDEBAR_INK.jumpKey));
+	expect(inksIn(active!).filter(ink => ink === SIDEBAR_INK.iconActive)).toHaveLength(1);
+	expect(inksIn(active!)).toContain(SIDEBAR_INK.rowActive);
+	expect(inksIn(active!).at(-1)).toBe(SIDEBAR_INK.jumpKey);
 	// No other row gets the fill: one selected row per panel.
 	for (const line of lines) {
 		if (line === active) continue;
@@ -276,10 +324,12 @@ test("the group headings are two different levels, not one colour repeated three
 	const { lines } = sidebar(theme, "unicode", "overview");
 	expect(strip(lines[0]!).trim()).toBe("Usage");
 	expect(strip(lines[headingRowOf("Activity")]!).trim()).toBe("Activity");
-	expect(inksIn(lines[0]!)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
-	expect(inksIn(lines[headingRowOf("Activity")]!)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
-	// Two different colours, not merely different weights.
-	expect(hexOf(SIDEBAR_INK.headingActive)).not.toBe(hexOf(SIDEBAR_INK.headingInactive));
+	expect(inksIn(lines[0]!)).toEqual([SIDEBAR_INK.headingActive]);
+	expect(inksIn(lines[headingRowOf("Activity")]!)).toEqual([SIDEBAR_INK.headingInactive]);
+	// Two different colours, not merely different weights — asserted on the
+	// RENDER, so a theme that ever merged the two inks fails HERE, naming the
+	// level, rather than satisfying a comparison of two constants.
+	expect(inksIn(lines[0]!)).not.toEqual(inksIn(lines[headingRowOf("Activity")]!));
 	expect(lines[0]!).not.toBe(lines[4]!);
 	// A heading is never a row: no cursor, no jump key.
 	expect(lines[headingRowOf("Activity")]!).not.toContain(theme.nav.cursor);
@@ -298,22 +348,22 @@ test("the four sidebar levels are four different renderings, each tied to its ow
 	const four = [headingActive, headingInactive, rowActive, rowInactive];
 	expect(new Set(four).size, "two sidebar levels rendered byte-identically").toBe(4);
 
-	expect(inksIn(headingActive)).toEqual([hexOf(SIDEBAR_INK.headingActive)]);
-	expect(inksIn(headingInactive)).toEqual([hexOf(SIDEBAR_INK.headingInactive)]);
+	expect(inksIn(headingActive)).toEqual([SIDEBAR_INK.headingActive]);
+	expect(inksIn(headingInactive)).toEqual([SIDEBAR_INK.headingInactive]);
 	// An inactive row is exactly three runs: icon, label, jump hint — one level
 	// each, which is the whole claim that a row is not a flat line of text.
 	expect(inksIn(rowInactive)).toEqual([
-		hexOf(SIDEBAR_INK.iconInactive),
-		hexOf(SIDEBAR_INK.rowInactive),
-		hexOf(SIDEBAR_INK.jumpKey),
+		SIDEBAR_INK.iconInactive,
+		SIDEBAR_INK.rowInactive,
+		SIDEBAR_INK.jumpKey,
 	]);
 	// The active row is the same three runs with the icon stepped to the accent,
 	// plus the cursor in the label's ink — so no heading level leaks into it.
 	expect(inksIn(rowActive)).toEqual([
-		hexOf(SIDEBAR_INK.rowActive),
-		hexOf(SIDEBAR_INK.iconActive),
-		hexOf(SIDEBAR_INK.rowActive),
-		hexOf(SIDEBAR_INK.jumpKey),
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.iconActive,
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.jumpKey,
 	]);
 });
 
@@ -327,7 +377,7 @@ test("a row's jump hint is the faintest run on that row", () => {
 		const rows = lines.filter(l => /G [A-Z]$/.test(strip(l)));
 		expect(rows.length).toBe(NAV_GROUPS.reduce((n, g) => n + g.items.length, 0));
 		for (const line of rows) {
-			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(hexOf(SIDEBAR_INK.jumpKey));
+			expect(inksIn(line).at(-1), "the jump hint is the last run").toBe(SIDEBAR_INK.jumpKey);
 		}
 	}
 });
@@ -338,16 +388,16 @@ test("the row icon is a level of its own, quieter than its label", () => {
 	// Ours painted icon and label the same colour, so each row was one flat run.
 	const inactive = sidebar(theme, "unicode", "models").lines.find(l => strip(l).includes("Costs"))!;
 	expect(inksIn(inactive).slice(0, 2)).toEqual([
-		hexOf(SIDEBAR_INK.iconInactive),
-		hexOf(SIDEBAR_INK.rowInactive),
+		SIDEBAR_INK.iconInactive,
+		SIDEBAR_INK.rowInactive,
 	]);
 	expect(SIDEBAR_INK.iconInactive).not.toBe(SIDEBAR_INK.rowInactive);
 	// The ACTIVE row's icon is the ONE accent on the row (styles.css:557-559),
 	// and its LABEL is not: the active row is ink-1 with an accent glyph.
 	const active = sidebar(theme, "unicode", "costs").lines.find(l => strip(l).includes("Costs"))!;
-	expect(inksIn(active)[1]).toBe(hexOf(SIDEBAR_INK.iconActive));
-	expect(inksIn(active)[0]).toBe(hexOf(SIDEBAR_INK.rowActive));
-	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(active)[1]).toBe(SIDEBAR_INK.iconActive);
+	expect(inksIn(active)[0]).toBe(SIDEBAR_INK.rowActive);
+	expect(inksIn(active)[2]).toBe(SIDEBAR_INK.rowActive);
 	expect(SIDEBAR_INK.iconActive).not.toBe(SIDEBAR_INK.rowActive);
 });
 
@@ -364,12 +414,23 @@ test("hover and active share the band and the label ink, and differ by the three
 	const active = lines.find(l => strip(l).includes("Overview"))!;
 	// Same band, same label ink — exactly the web's ink-1.
 	expect(hovered).toContain(ACTIVE_BG);
-	expect(inksIn(hovered)[1]).toBe(hexOf(SIDEBAR_INK.rowHover));
-	expect(inksIn(active)[2]).toBe(hexOf(SIDEBAR_INK.rowActive));
+	expect(inksIn(hovered)[1]).toBe(SIDEBAR_INK.rowHover);
+	expect(inksIn(active)[2]).toBe(SIDEBAR_INK.rowActive);
 	// And three differences, none of them the fill.
 	expect(inksIn(hovered)[0]).not.toBe(inksIn(active)[1]); // icon: ink-3, not accent
 	expect(strip(hovered)).not.toStartWith(theme.nav.cursor); // no cursor
-	expect(hovered).not.toContain("\x1b[1m"); // no weight
+	// Weight, asserted against `theme.bold`'s OWN escape rather than a literal
+	// `\x1b[1m`: the host's styler is a no-op wherever colour is unavailable,
+	// which is every non-TTY runner — CI among them — so a literal would pass
+	// there without ever having looked at the row.
+	// `theme.bold` WRAPS rather than prefixes, so the opener is what precedes the
+	// payload and the closer what follows it; take the opener, or the assertion
+	// would look for two escapes adjacent in a string where they never are.
+	const BOLD = theme.bold("x").split("x")[0] ?? "";
+	if (BOLD) {
+		expect(active).toContain(BOLD);
+		expect(hovered).not.toContain(BOLD);
+	}
 	expect(hovered).not.toBe(active);
 	// A hovered ID that names a group HEADING paints nothing special: the
 	// heading is structure, not a target, so hovering it must not band it. The
@@ -377,6 +438,50 @@ test("hover and active share the band and the label ink, and differ by the three
 	const { lines: plain } = sidebar(theme, "unicode", "overview", "Usage");
 	expect(plain[0]).toBe(lines[0]);
 	expect(plain[0]).not.toContain(ACTIVE_BG);
+});
+
+test("the ink ladder reads the same tokens out of an 8-bit rendering", () => {
+	// The property every ink assertion in this file rests on: a run's identity is
+	// the TOKEN that asked for it, and an 8-bit host writing `38;5;242` where a
+	// truecolor host writes `38;2;95;102;115` has asked for the SAME token.
+	//
+	// Pinned here by BUILDING the 8-bit form out of `getColorHex` and Bun's own
+	// quantiser, so this test runs identically on a developer's truecolor
+	// terminal and on a TTY-less CI box, instead of inheriting whichever one the
+	// runner happened to be.
+	expect(eightBitInkEscape(SIDEBAR_INK.iconActive)).toStartWith(`${ESC}[38;5;`);
+	const ladder = [
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.iconActive,
+		SIDEBAR_INK.rowActive,
+		SIDEBAR_INK.jumpKey,
+	];
+	const eightBitRow = ladder.map(t => `${eightBitInkEscape(t)}X${FG_RESET}`).join("");
+	expect(resolveInks(eightBitRow, EIGHT_BIT_BY_ESCAPE)).toEqual(ladder);
+	// And the frames the sidebar REALLY renders, every foreground re-emitted at 8
+	// bits, resolve to the identical token sequence.
+	for (const id of ["overview", "costs", "requests"]) {
+		for (const line of sidebar(theme, "unicode", id, "models").lines) {
+			expect(resolveInks(asEightBit(line), EIGHT_BIT_BY_ESCAPE)).toEqual(inksIn(line));
+		}
+	}
+});
+
+test("the sidebar inks stay distinguishable at this terminal's colour depth", () => {
+	// `inksIn` reports tokens, so it cannot separate two inks the host has already
+	// quantised onto one 8-bit index — and at that point the ladder really has
+	// collapsed on this terminal. That is a real defect, so it gets one named
+	// assertion here rather than a baffling failure three tests further down.
+	const pairs: [what: string, a: ThemeColor, b: ThemeColor][] = [
+		["group heading: active vs inactive", SIDEBAR_INK.headingActive, SIDEBAR_INK.headingInactive],
+		["inactive row: icon vs label", SIDEBAR_INK.iconInactive, SIDEBAR_INK.rowInactive],
+		["active row: icon vs label", SIDEBAR_INK.iconActive, SIDEBAR_INK.rowActive],
+		["label vs jump hint", SIDEBAR_INK.rowInactive, SIDEBAR_INK.jumpKey],
+	];
+	for (const [what, a, b] of pairs) {
+		expect(a, `${what}: the roles must name different tokens`).not.toBe(b);
+		expect(inkEscape(a), `${what}: indistinguishable on this terminal`).not.toBe(inkEscape(b));
+	}
 });
 
 test("an omitted hover id paints byte-identical output to the 3-arg call", () => {
