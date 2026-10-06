@@ -1,6 +1,6 @@
 # Testing the terminal stats dashboard PR
 
-Review target: [UI refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2), from [the fork branch](https://github.com/mitnichiter/omp-stats-tui/tree/omp/dashboard-terminal-parity). [Dashboard workflow PR #1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1) is merged; its historical head does not contain the subsequent UI refinement.
+Review target: [dashboard composition PR #3](https://github.com/yuzu-octopus/omp-stats-tui/pull/3), from [the fork branch](https://github.com/mitnichiter/omp-stats-tui/tree/omp/dashboard-composition). [Workflow PR #1](https://github.com/yuzu-octopus/omp-stats-tui/pull/1) and [initial refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2) are merged; this revision addresses the subsequent twelve-screenshot feedback.
 
 ## 1. Check prerequisites
 
@@ -19,7 +19,7 @@ Use an interactive terminal, initially about 150 columns by 38 rows, then resize
 From a directory that does not already contain `omp-stats-tui-review`:
 
 ```sh
-git clone --branch omp/dashboard-terminal-parity --single-branch https://github.com/mitnichiter/omp-stats-tui.git omp-stats-tui-review
+git clone --branch omp/dashboard-composition --single-branch https://github.com/mitnichiter/omp-stats-tui.git omp-stats-tui-review
 cd omp-stats-tui-review
 bun install --frozen-lockfile
 bun run build
@@ -112,9 +112,9 @@ bun test
 bun run build
 ```
 
-Latest observed suite: **905 passed, 0 failed, 61 files**, 102,929 assertions. Production build and the dependency-patch check passed. After integrating current maintainer `main`, the UI was reviewed again on the compiled host at **40x30, 100x40 and 160x45** across all twelve routes; initialization was excluded from the settled-body review. Representative light/Unicode, dark/ASCII and custom/Nerd reviews also passed, including observed custom ANSI colors.
+Latest observed suite: **894 passed, 0 failed, 61 files**, 102,931 assertions. Production build, full default TypeScript and the dependency-patch check passed. Actual production controllers were mounted through `TUI`/`ProcessTerminal`: all twelve sparse routes at **150×38**, all routes resized at **100×38 and 40×38**, and a separate populated run across all twelve routes. Captured ANSI state was inspected as images under amethyst-theme ink; the image renderer does not reproduce Windows Terminal's fonts or translucent background.
 
-Mounted scenarios included literal `q[]` search/clear, populated and filtered-empty lists, real recorded savings and quota histories, blank trace-title fallback, nested child navigation, minimap range selection, quiet-day details, missing-judge quote dismissal and an intentional missing-Bun read failure. Ctrl+C restored zero overlays, the normal screen and a visible editor cursor. These are local/recorded scenarios, not paid judging or credentialed networking. Prior packed-install coverage is documented in the [workflow roadmap](plans/2026-10-05-dashboard-parity.md); UI review details are in the [refinement plan](plans/2026-10-06-ui-polish.md).
+Current mounted checks included project search/details, lazy request inspection and JSON expansion, analytics pane focus, and close. The final distribution also mounted through `/stats-tui` inside compiled omp 18.6.1: Overview → Requests, 150→100-column resize, a real isolated worker's empty/live state, and close back to the editor. Earlier recorded quota, nested-trace, minimap, quiet-day, missing-judge and missing-Bun coverage remains historical workflow evidence, not fresh visual acceptance. Prior packed-install coverage is in the [workflow roadmap](plans/2026-10-05-dashboard-parity.md); screenshot-driven evidence is in the [composition plan](plans/2026-10-06-ui-polish.md).
 
 Whole-repository TypeScript checking **passes** (`tsc --noEmit`, exit 0). The maintainer baseline's typing corrections were preserved, including the layout-test `DataNeed` import. The review machine's incomplete `@types/bun` installation needed a forced locked reinstall from an isolated cache; the subsequent default typecheck passed. The old 19-diagnostic list is historical, not the current UI branch's status.
 
@@ -140,4 +140,4 @@ If that also fails, report the full installer error and Bun version; do not bypa
 
 If an existing local `@types/bun` package contains metadata but lacks its declared typing entry, a normal locked install can report no changes. On the review machine, `bun install --force --frozen-lockfile --cache-dir "$(mktemp -d)"` restored the package; `bun run verify:patch`, build and the default TypeScript check then passed. This repairs the local installation without bypassing the dependency patch or deleting the global cache.
 
-Report on [UI refinement PR #2](https://github.com/yuzu-octopus/omp-stats-tui/pull/2): commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
+Report on [dashboard composition PR #3](https://github.com/yuzu-octopus/omp-stats-tui/pull/3): commit, omp/Bun versions, OS/architecture, terminal size and symbol preset/theme, route/range, exact key sequence, expected versus observed result, and whether the data-dependent prerequisite was present. Redact credentials, personal paths, account identifiers, request text and raw JSON before attaching screenshots/logs.
